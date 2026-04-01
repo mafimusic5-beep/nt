@@ -7,6 +7,7 @@ import com.v2ray.ang.dto.VpnConfigApiResponseBody
 import com.v2ray.ang.dto.VpnServerItemApiResponseBody
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryApiConfig
+import com.v2ray.ang.security.EmeryDeviceIdentity
 import com.v2ray.ang.util.JsonUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -20,7 +21,7 @@ import org.json.JSONObject
 
 /**
  * Authenticated Emery API calls after the access key is known.
- * Uses Authorization: Bearer &lt;access key&gt;.
+ * Uses Authorization: Bearer <access key> together with a device-bound request signature.
  */
 object EmeryBackendClient {
 
@@ -32,12 +33,35 @@ object EmeryBackendClient {
 
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
-    private fun authorizedGet(path: String, accessKey: String): Request =
-        Request.Builder()
+    private fun authorizedGet(path: String, accessKey: String): Request {
+        val credential = accessKey.trim()
+        val proof = EmeryDeviceIdentity.buildRequestProof(method = "GET", path = path, authSecret = credential)
+        return Request.Builder()
             .url("${baseUrl()}$path")
-            .header("Authorization", "Bearer $accessKey")
+            .header("Authorization", "Bearer $credential")
+            .header("X-Emery-Device-Id", proof.deviceId)
+            .header("X-Emery-Timestamp", proof.timestampMillis)
+            .header("X-Emery-Nonce", proof.nonce)
+            .header("X-Emery-Signature", proof.signatureBase64)
+            .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
             .get()
             .build()
+    }
+
+    private fun authorizedPost(path: String, accessKey: String, bodyJson: String): Request {
+        val credential = accessKey.trim()
+        val proof = EmeryDeviceIdentity.buildRequestProof(method = "POST", path = path, authSecret = credential)
+        return Request.Builder()
+            .url("${baseUrl()}$path")
+            .header("Authorization", "Bearer $credential")
+            .header("X-Emery-Device-Id", proof.deviceId)
+            .header("X-Emery-Timestamp", proof.timestampMillis)
+            .header("X-Emery-Nonce", proof.nonce)
+            .header("X-Emery-Signature", proof.signatureBase64)
+            .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+    }
 
     data class BackendServer(
         val id: Long,
@@ -79,6 +103,8 @@ object EmeryBackendClient {
                         routerEnabled = parsed.routerEnabled == true,
                         expiresAt = expires,
                         planName = parsed.planName.orEmpty(),
+                        deviceId = EmeryDeviceIdentity.deviceId(),
+                        deviceName = EmeryDeviceIdentity.deviceName(),
                     )
                 )
             }
@@ -153,11 +179,8 @@ object EmeryBackendClient {
     suspend fun connectServer(accessKey: String, serverId: Long): Result<ConnectPayload> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
         if (key.isEmpty() || serverId <= 0L) return@withContext Result.failure(IllegalStateException("bad_request"))
-        val bodyJson = JsonUtil.toJson(VpnConnectRequestBody(accessKey = key, serverId = serverId))
-        val request = Request.Builder()
-            .url("${baseUrl()}/api/v1/vpn/connect")
-            .post((bodyJson ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
-            .build()
+        val bodyJson = JsonUtil.toJson(VpnConnectRequestBody(accessKey = key, serverId = serverId)) ?: "{}"
+        val request = authorizedPost("/api/v1/vpn/connect", key, bodyJson)
         try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
