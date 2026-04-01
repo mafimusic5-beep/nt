@@ -1,16 +1,22 @@
 package com.v2ray.ang.network
 
-import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.dto.ProfileApiResponseBody
+import com.v2ray.ang.dto.VpnConnectApiResponseBody
+import com.v2ray.ang.dto.VpnConnectRequestBody
 import com.v2ray.ang.dto.VpnConfigApiResponseBody
+import com.v2ray.ang.dto.VpnServerItemApiResponseBody
 import com.v2ray.ang.handler.EmeryAccessProfile
+import com.v2ray.ang.handler.EmeryApiConfig
 import com.v2ray.ang.util.JsonUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import org.json.JSONObject
 
 /**
  * Authenticated Emery API calls after the access key is known.
@@ -24,7 +30,7 @@ object EmeryBackendClient {
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    private fun baseUrl(): String = BuildConfig.EMERY_API_BASE_URL.trimEnd('/')
+    private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
     private fun authorizedGet(path: String, accessKey: String): Request =
         Request.Builder()
@@ -32,6 +38,19 @@ object EmeryBackendClient {
             .header("Authorization", "Bearer $accessKey")
             .get()
             .build()
+
+    data class BackendServer(
+        val id: Long,
+        val city: String,
+        val healthStatus: String,
+        val isAvailable: Boolean,
+    )
+
+    data class ConnectPayload(
+        val serverId: Long,
+        val city: String,
+        val importText: String,
+    )
 
     suspend fun fetchProfile(accessKey: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
@@ -97,6 +116,80 @@ object EmeryBackendClient {
                     return@withContext Result.failure(IllegalStateException("parse_error"))
                 }
                 Result.success(text)
+            }
+        } catch (_: IOException) {
+            Result.failure(IllegalStateException("network"))
+        }
+    }
+
+    suspend fun fetchVpnServers(): Result<List<BackendServer>> = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("${baseUrl()}/api/v1/vpn/servers")
+            .get()
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("http_${response.code}"))
+                }
+                val parsed = JsonUtil.fromJson(raw, Array<VpnServerItemApiResponseBody>::class.java)?.toList()
+                    ?: return@withContext Result.failure(IllegalStateException("parse_error"))
+                val mapped = parsed.map {
+                    BackendServer(
+                        id = it.id,
+                        city = it.city?.ifBlank { "Unknown" } ?: "Unknown",
+                        healthStatus = it.healthStatus ?: "unknown",
+                        isAvailable = it.isAvailable != false,
+                    )
+                }
+                Result.success(mapped)
+            }
+        } catch (_: IOException) {
+            Result.failure(IllegalStateException("network"))
+        }
+    }
+
+    suspend fun connectServer(accessKey: String, serverId: Long): Result<ConnectPayload> = withContext(Dispatchers.IO) {
+        val key = accessKey.trim()
+        if (key.isEmpty() || serverId <= 0L) return@withContext Result.failure(IllegalStateException("bad_request"))
+        val bodyJson = JsonUtil.toJson(VpnConnectRequestBody(accessKey = key, serverId = serverId))
+        val request = Request.Builder()
+            .url("${baseUrl()}/api/v1/vpn/connect")
+            .post((bodyJson ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val parsed = JsonUtil.fromJson(raw, VpnConnectApiResponseBody::class.java)
+                val detail = try {
+                    JSONObject(raw).optString("detail")
+                } catch (_: Exception) {
+                    ""
+                }
+                if (response.code == 401) {
+                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "invalid_or_expired_key" }))
+                }
+                if (response.code == 404) {
+                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_not_found" }))
+                }
+                if (response.code == 409) {
+                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_config_unavailable" }))
+                }
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "http_${response.code}" }))
+                }
+                val importText = parsed?.importText?.trim().orEmpty()
+                if (importText.isEmpty()) {
+                    return@withContext Result.failure(IllegalStateException("server_config_unavailable"))
+                }
+                Result.success(
+                    ConnectPayload(
+                        serverId = parsed?.serverId ?: serverId,
+                        city = parsed?.city?.ifBlank { "Unknown" } ?: "Unknown",
+                        importText = importText,
+                    )
+                )
             }
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))

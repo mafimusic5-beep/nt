@@ -39,11 +39,11 @@ internal val EmeryDarkScheme = darkColorScheme(
     onError = Color(0xFFFAEAEA),
     errorContainer = Color(0xFF3D1A16),
     onErrorContainer = Color(0xFFE8B8B8),
-    background = Color(0xFF111B27),
+    background = Color(0xFF0B132B),
     onBackground = Color(0xFFD4DEE8),
-    surface = Color(0xFF17243A),
+    surface = Color(0xFF0B132B),
     onSurface = Color(0xFFD4DEE8),
-    surfaceVariant = Color(0xFF1D2F45),
+    surfaceVariant = Color(0xFF0B132B),
     onSurfaceVariant = Color(0xFF8299AD),
     outline = Color(0xFF2A3D52),
     outlineVariant = Color(0xFF1E2F40),
@@ -51,7 +51,7 @@ internal val EmeryDarkScheme = darkColorScheme(
     inverseOnSurface = Color(0xFF111B27),
     inversePrimary = Color(0xFF2A5A85),
     scrim = Color(0xFF000000),
-    surfaceTint = Color(0xFF4A7FB5),
+    surfaceTint = Color(0x00000000),
 )
 
 @Composable

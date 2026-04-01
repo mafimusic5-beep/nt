@@ -16,26 +16,67 @@ import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.service.V2RayProxyOnlyService
 import com.v2ray.ang.service.V2RayVpnService
+import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
+import org.json.JSONObject
 import java.lang.ref.SoftReference
 
 object V2RayServiceManager {
+    enum class VpnRuntimeState {
+        DISCONNECTED,
+        CONNECTING,
+        CONNECTED,
+        DISCONNECTING,
+        ERROR,
+    }
 
     private val coreController: CoreController = V2RayNativeManager.newCoreController(CoreCallback())
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
+    @Volatile
+    private var serviceReceiverRegistered = false
+    private val _vpnState = MutableStateFlow(if (coreController.isRunning) VpnRuntimeState.CONNECTED else VpnRuntimeState.DISCONNECTED)
+    val vpnState: StateFlow<VpnRuntimeState> = _vpnState.asStateFlow()
 
     var serviceControl: SoftReference<ServiceControl>? = null
         set(value) {
             field = value
             V2RayNativeManager.initCoreEnv(value?.get()?.getService())
+            syncVpnStateWithCore("service_control_set")
         }
+
+    private fun updateVpnState(newState: VpnRuntimeState, reason: String) {
+        if (_vpnState.value == newState) return
+        _vpnState.value = newState
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H1",
+            location = "V2RayServiceManager.kt:updateVpnState",
+            message = "vpn_state_transition",
+            data = JSONObject()
+                .put("state", newState.name)
+                .put("reason", reason)
+                .put("coreRunning", coreController.isRunning),
+        )
+        // #endregion
+    }
+
+    fun syncVpnStateWithCore(reason: String = "sync_with_core") {
+        if (coreController.isRunning) {
+            updateVpnState(VpnRuntimeState.CONNECTED, reason)
+        } else {
+            updateVpnState(VpnRuntimeState.DISCONNECTED, reason)
+        }
+    }
 
     /**
      * Starts the V2Ray service from a toggle action.
@@ -43,12 +84,49 @@ object V2RayServiceManager {
      * @return True if the service was started successfully, false otherwise.
      */
     fun startVServiceFromToggle(context: Context): Boolean {
+        // #region agent log
+        AgentDebugNdjsonLogger.log(
+            hypothesisId = "H3",
+            location = "V2RayServiceManager.kt:startVServiceFromToggle",
+            message = "start_toggle_called",
+            runId = "pre-fix",
+            data = JSONObject()
+                .put("coreRunning", coreController.isRunning)
+                .put("hasSelectedServer", !MmkvManager.getSelectServer().isNullOrEmpty()),
+        )
+        // #endregion
         if (MmkvManager.getSelectServer().isNullOrEmpty()) {
+            updateVpnState(VpnRuntimeState.ERROR, "start_rejected_no_selected_server")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.SELECTED_SERVER_MISSING_AFTER_IMPORT,
+                message = "No selected server to start",
+                source = "V2RayServiceManager",
+                details = "startVServiceFromToggle",
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startVServiceFromToggle",
+                message = "start_toggle_rejected_no_selected_server",
+                data = JSONObject(),
+            )
+            // #endregion
             context.toast(R.string.app_tile_first_use)
             return false
         }
-        startContextService(context)
-        return true
+        val started = startContextService(context)
+        if (!started) {
+            updateVpnState(VpnRuntimeState.ERROR, "start_context_service_failed")
+        }
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H4",
+            location = "V2RayServiceManager.kt:startVServiceFromToggle",
+            message = "start_toggle_exit",
+            data = JSONObject().put("started", started),
+        )
+        // #endregion
+        return started
     }
 
     /**
@@ -56,14 +134,26 @@ object V2RayServiceManager {
      * @param context The context from which the service is started.
      * @param guid The GUID of the server configuration to use (optional).
      */
-    fun startVService(context: Context, guid: String? = null) {
+    fun startVService(context: Context, guid: String? = null): Boolean {
         Log.i(AppConfig.TAG, "StartCore-Manager: startVService from ${context::class.java.simpleName}")
+        // #region agent log
+        AgentDebugNdjsonLogger.log(
+            hypothesisId = "H4",
+            location = "V2RayServiceManager.kt:startVService",
+            message = "start_vservice_called",
+            runId = "pre-fix",
+            data = JSONObject()
+                .put("coreRunning", coreController.isRunning)
+                .put("guidProvided", guid != null)
+                .put("selectedBefore", MmkvManager.getSelectServer().orEmpty()),
+        )
+        // #endregion
 
         if (guid != null) {
             MmkvManager.setSelectServer(guid)
         }
 
-        startContextService(context)
+        return startContextService(context)
     }
 
     /**
@@ -72,6 +162,7 @@ object V2RayServiceManager {
      */
     fun stopVService(context: Context) {
         //context.toast(R.string.toast_services_stop)
+        updateVpnState(VpnRuntimeState.DISCONNECTING, "stop_requested_by_ui")
         MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_STOP, "")
     }
 
@@ -92,22 +183,59 @@ object V2RayServiceManager {
      * Chooses between VPN service or Proxy-only service based on user settings.
      * @param context The context from which the service is started.
      */
-    private fun startContextService(context: Context) {
+    private fun startContextService(context: Context): Boolean {
         if (coreController.isRunning) {
             Log.w(AppConfig.TAG, "StartCore-Manager: Core already running")
-            return
+            updateVpnState(VpnRuntimeState.CONNECTED, "start_context_already_running")
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startContextService",
+                message = "start_context_already_running",
+                data = JSONObject(),
+            )
+            // #endregion
+            return true
         }
 
         val guid = MmkvManager.getSelectServer()
         if (guid == null) {
             Log.e(AppConfig.TAG, "StartCore-Manager: No server selected")
-            return
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.SELECTED_SERVER_MISSING_AFTER_IMPORT,
+                message = "No selected server to start",
+                source = "V2RayServiceManager",
+                details = "startContextService",
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startContextService",
+                message = "start_context_failed_no_selected_server",
+                data = JSONObject(),
+            )
+            // #endregion
+            return false
         }
 
         val config = MmkvManager.decodeServerConfig(guid)
         if (config == null) {
-            Log.e(AppConfig.TAG, "StartCore-Manager: Failed to decode server config")
-            return
+            Log.e(AppConfig.TAG, "StartCore-Manager: Failed to decode server config for $guid")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.SERVER_CONFIG_DECODE_FAILED,
+                message = "Failed to decode selected server config",
+                source = "V2RayServiceManager",
+                details = "guid=$guid",
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startContextService",
+                message = "start_context_failed_decode_selected_server",
+                data = JSONObject().put("guid", guid),
+            )
+            // #endregion
+            return false
         }
 
         if (config.configType != EConfigType.CUSTOM
@@ -115,11 +243,25 @@ object V2RayServiceManager {
             && !Utils.isValidUrl(config.server)
             && !Utils.isPureIpAddress(config.server.orEmpty())
         ) {
-            Log.e(AppConfig.TAG, "StartCore-Manager: Invalid server configuration")
-            return
+            Log.e(AppConfig.TAG, "StartCore-Manager: Invalid server host/ip: ${config.server}")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.SERVER_CONFIG_DECODE_FAILED,
+                message = "Invalid selected server address",
+                source = "V2RayServiceManager",
+                details = "guid=$guid; server=${config.server.orEmpty()}",
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startContextService",
+                message = "start_context_failed_invalid_server_host",
+                data = JSONObject()
+                    .put("guid", guid)
+                    .put("serverHost", config.server ?: ""),
+            )
+            // #endregion
+            return false
         }
-//        val result = V2rayConfigUtil.getV2rayConfig(context, guid)
-//        if (!result.status) return
 
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) {
             context.toast(R.string.toast_warning_pref_proxysharing_short)
@@ -136,10 +278,41 @@ object V2RayServiceManager {
             Intent(context.applicationContext, V2RayProxyOnlyService::class.java)
         }
 
-        try {
+        return try {
+            updateVpnState(VpnRuntimeState.CONNECTING, "start_foreground_service_requested")
             ContextCompat.startForegroundService(context, intent)
+            ManualModeDiagnostics.recordSuccessStep("VPN foreground service start requested")
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startContextService",
+                message = "start_foreground_service_called",
+                data = JSONObject()
+                    .put("guid", guid)
+                    .put("isVpnMode", isVpnMode),
+            )
+            // #endregion
+            true
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Failed to start service", e)
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.VPN_SERVICE_START_FAILED,
+                message = "Failed to start VPN foreground service",
+                source = "V2RayServiceManager",
+                details = e.message.orEmpty(),
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startContextService",
+                message = "start_foreground_service_exception",
+                data = JSONObject()
+                    .put("guid", guid)
+                    .put("error", e.message ?: ""),
+            )
+            // #endregion
+            updateVpnState(VpnRuntimeState.ERROR, "start_foreground_service_exception")
+            false
         }
     }
 
@@ -151,24 +324,28 @@ object V2RayServiceManager {
     fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
         if (coreController.isRunning) {
             Log.w(AppConfig.TAG, "StartCore-Manager: Core already running")
+            updateVpnState(VpnRuntimeState.CONNECTED, "start_core_loop_already_running")
             return false
         }
 
         val service = getService()
         if (service == null) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Service is null")
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_service_null")
             return false
         }
 
         val guid = MmkvManager.getSelectServer()
         if (guid == null) {
             Log.e(AppConfig.TAG, "StartCore-Manager: No server selected")
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_no_selected_server")
             return false
         }
 
         val config = MmkvManager.decodeServerConfig(guid)
         if (config == null) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Failed to decode server config")
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_decode_selected_server_failed")
             return false
         }
 
@@ -176,6 +353,21 @@ object V2RayServiceManager {
         val result = V2rayConfigManager.getV2rayConfig(service, guid)
         if (!result.status) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Failed to get V2Ray config")
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_build_runtime_config_failed")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.SERVER_CONFIG_DECODE_FAILED,
+                message = "Failed to build runtime server config",
+                source = "V2RayServiceManager",
+                details = "guid=$guid",
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startCoreLoop",
+                message = "core_start_failed_decode_server_config",
+                data = JSONObject().put("guid", guid),
+            )
+            // #endregion
             return false
         }
 
@@ -185,8 +377,11 @@ object V2RayServiceManager {
             mFilter.addAction(Intent.ACTION_SCREEN_OFF)
             mFilter.addAction(Intent.ACTION_USER_PRESENT)
             ContextCompat.registerReceiver(service, mMsgReceive, mFilter, Utils.receiverFlags())
+            serviceReceiverRegistered = true
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Failed to register receiver", e)
+            serviceReceiverRegistered = false
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_register_receiver_failed")
             return false
         }
 
@@ -201,6 +396,23 @@ object V2RayServiceManager {
             coreController.startLoop(result.content, tunFd)
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Failed to start core loop", e)
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_exception")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.CORE_START_FAILED,
+                message = "Exception while starting core loop",
+                source = "V2RayServiceManager",
+                details = e.message.orEmpty(),
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startCoreLoop",
+                message = "core_start_exception",
+                data = JSONObject()
+                    .put("guid", guid)
+                    .put("error", e.message ?: ""),
+            )
+            // #endregion
             return false
         }
 
@@ -208,6 +420,21 @@ object V2RayServiceManager {
             Log.e(AppConfig.TAG, "StartCore-Manager: Core failed to start")
             MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, "")
             NotificationManager.cancelNotification()
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_not_running_after_start")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.CORE_START_FAILED,
+                message = "Core loop did not enter running state",
+                source = "V2RayServiceManager",
+                details = "guid=$guid",
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startCoreLoop",
+                message = "core_start_returned_not_running",
+                data = JSONObject().put("guid", guid),
+            )
+            // #endregion
             return false
         }
 
@@ -215,8 +442,36 @@ object V2RayServiceManager {
             MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
             NotificationManager.startSpeedNotification(currentConfig)
             Log.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
+            updateVpnState(VpnRuntimeState.CONNECTED, "start_core_loop_success")
+            ManualModeDiagnostics.clearError()
+            ManualModeDiagnostics.recordSuccessStep("Core loop started")
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startCoreLoop",
+                message = "core_start_success",
+                data = JSONObject().put("guid", guid),
+            )
+            // #endregion
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "StartCore-Manager: Failed to complete startup", e)
+            updateVpnState(VpnRuntimeState.ERROR, "start_core_loop_post_start_exception")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.CORE_START_FAILED,
+                message = "Core startup post-processing failed",
+                source = "V2RayServiceManager",
+                details = e.message.orEmpty(),
+            )
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "V2RayServiceManager.kt:startCoreLoop",
+                message = "core_start_post_success_exception",
+                data = JSONObject()
+                    .put("guid", guid)
+                    .put("error", e.message ?: ""),
+            )
+            // #endregion
             return false
         }
         return true
@@ -230,6 +485,7 @@ object V2RayServiceManager {
     fun stopCoreLoop(): Boolean {
         val service = getService() ?: return false
 
+        updateVpnState(VpnRuntimeState.DISCONNECTING, "stop_core_loop_enter")
         if (coreController.isRunning) {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
@@ -242,11 +498,21 @@ object V2RayServiceManager {
 
         MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
         NotificationManager.cancelNotification()
+        updateVpnState(VpnRuntimeState.DISCONNECTED, "stop_core_loop_success")
 
-        try {
-            service.unregisterReceiver(mMsgReceive)
-        } catch (e: Exception) {
-            Log.e(AppConfig.TAG, "StartCore-Manager: Failed to unregister receiver", e)
+        if (serviceReceiverRegistered) {
+            try {
+                service.unregisterReceiver(mMsgReceive)
+                serviceReceiverRegistered = false
+            } catch (e: Exception) {
+                Log.e(AppConfig.TAG, "StartCore-Manager: Failed to unregister receiver", e)
+                ManualModeDiagnostics.reportError(
+                    code = ManualDiagnosticCodes.RECEIVER_CLEANUP_ERROR,
+                    message = "Failed to unregister service receiver",
+                    source = "V2RayServiceManager",
+                    details = e.message.orEmpty(),
+                )
+            }
         }
 
         return true
@@ -336,10 +602,13 @@ object V2RayServiceManager {
         override fun shutdown(): Long {
             val serviceControl = serviceControl?.get() ?: return -1
             return try {
+                updateVpnState(VpnRuntimeState.DISCONNECTING, "core_callback_shutdown")
                 serviceControl.stopService()
+                updateVpnState(VpnRuntimeState.DISCONNECTED, "core_callback_shutdown_completed")
                 0
             } catch (e: Exception) {
                 Log.e(AppConfig.TAG, "StartCore-Manager: Failed to stop service", e)
+                updateVpnState(VpnRuntimeState.ERROR, "core_callback_shutdown_exception")
                 -1
             }
         }
@@ -371,8 +640,10 @@ object V2RayServiceManager {
             when (intent?.getIntExtra("key", 0)) {
                 AppConfig.MSG_REGISTER_CLIENT -> {
                     if (coreController.isRunning) {
+                        updateVpnState(VpnRuntimeState.CONNECTED, "register_client_core_running")
                         MessageUtil.sendMsg2UI(serviceControl.getService(), AppConfig.MSG_STATE_RUNNING, "")
                     } else {
+                        updateVpnState(VpnRuntimeState.DISCONNECTED, "register_client_core_not_running")
                         MessageUtil.sendMsg2UI(serviceControl.getService(), AppConfig.MSG_STATE_NOT_RUNNING, "")
                     }
                 }
@@ -382,11 +653,12 @@ object V2RayServiceManager {
                 }
 
                 AppConfig.MSG_STATE_START -> {
-                    // nothing to do
+                    updateVpnState(VpnRuntimeState.CONNECTING, "msg_state_start")
                 }
 
                 AppConfig.MSG_STATE_STOP -> {
                     Log.i(AppConfig.TAG, "StartCore-Manager: Stop service")
+                    updateVpnState(VpnRuntimeState.DISCONNECTING, "msg_state_stop")
                     serviceControl.stopService()
                 }
 
