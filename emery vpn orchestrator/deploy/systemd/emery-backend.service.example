@@ -1,0 +1,19 @@
+[Unit]
+Description=Emery VPN Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=emery
+Group=emery
+WorkingDirectory=/opt/emery_vpn_orchestrator
+EnvironmentFile=/opt/emery_vpn_orchestrator/.env
+ExecStart=/opt/emery_vpn_orchestrator/.venv/bin/uvicorn src.backend.main:app --host 127.0.0.1 --port 9330
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -30,3 +30,22 @@ data class VpnConfigApiResponseBody(
     @SerializedName("import_text") val importText: String? = null,
     @SerializedName("error") val error: String? = null,
 )
+
+data class VpnServerItemApiResponseBody(
+    @SerializedName("id") val id: Long,
+    @SerializedName("city") val city: String? = null,
+    @SerializedName("health_status") val healthStatus: String? = null,
+    @SerializedName("is_available") val isAvailable: Boolean? = null,
+)
+
+data class VpnConnectRequestBody(
+    @SerializedName("access_key") val accessKey: String,
+    @SerializedName("server_id") val serverId: Long,
+)
+
+data class VpnConnectApiResponseBody(
+    @SerializedName("server_id") val serverId: Long? = null,
+    @SerializedName("city") val city: String? = null,
+    @SerializedName("import_text") val importText: String? = null,
+    @SerializedName("error") val error: String? = null,
+)

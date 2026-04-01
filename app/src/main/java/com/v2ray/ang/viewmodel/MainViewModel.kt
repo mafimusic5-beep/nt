@@ -24,6 +24,7 @@ import com.v2ray.ang.extension.serializable
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.ManualModeDiagnostics
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
@@ -458,6 +459,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 AppConfig.MSG_STATE_START_FAILURE -> {
                     getApplication<AngApplication>().toastError(R.string.toast_services_failure)
+                    val diag = ManualModeDiagnostics.getLastError()
+                    if (diag != null) {
+                        updateTestResultAction.value = "${diag.code}: ${diag.message}\n${diag.source} | ${diag.details}"
+                    }
                     isRunning.value = false
                 }
 

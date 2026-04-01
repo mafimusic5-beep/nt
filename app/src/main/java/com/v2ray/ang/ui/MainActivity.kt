@@ -29,6 +29,9 @@ import com.v2ray.ang.enums.PermissionType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.ManualDiagnosticCodes
+import com.v2ray.ang.handler.ManualModeDebugLogger
+import com.v2ray.ang.handler.ManualModeDiagnostics
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
@@ -39,6 +42,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelectedListener {
     private val binding by lazy {
@@ -133,6 +137,16 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
     }
 
     private fun handleFabAction() {
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H4",
+            location = "MainActivity.kt:handleFabAction",
+            message = "connect_toggle_pressed",
+            data = JSONObject()
+                .put("isRunningState", mainViewModel.isRunning.value == true)
+                .put("selectedServerExists", !MmkvManager.getSelectServer().isNullOrEmpty()),
+        )
+        // #endregion
         applyRunningState(isLoading = true, isRunning = false)
 
         if (mainViewModel.isRunning.value == true) {
@@ -160,10 +174,28 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
     private fun startV2Ray() {
         if (MmkvManager.getSelectServer().isNullOrEmpty()) {
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H4",
+                location = "MainActivity.kt:startV2Ray",
+                message = "start_rejected_no_selected_server",
+                data = JSONObject(),
+            )
+            // #endregion
             toast(R.string.title_file_chooser)
             return
         }
-        V2RayServiceManager.startVService(this)
+        val started = V2RayServiceManager.startVService(this)
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H4",
+            location = "MainActivity.kt:startV2Ray",
+            message = "start_attempt_finished",
+            data = JSONObject()
+                .put("started", started)
+                .put("selectedServer", MmkvManager.getSelectServer().orEmpty()),
+        )
+        // #endregion
     }
 
     fun restartV2Ray() {
@@ -390,25 +422,93 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
 
     private fun importBatchConfig(server: String?) {
         showLoading()
+        val rawInput = server.orEmpty()
+        val normalized = rawInput.trim()
+        if (normalized.isEmpty()) {
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.MANUAL_IMPORT_EMPTY,
+                message = "Manual import input is empty",
+                source = "MainActivity",
+                details = "importBatchConfig",
+            )
+            hideLoading()
+            toastError(R.string.toast_failure)
+            return
+        }
+        if (normalized.lines().size == 1
+            && !normalized.contains("://")
+            && !normalized.contains("\n")
+            && !normalized.contains("\r")
+        ) {
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.MANUAL_IMPORT_INVALID_SCHEME,
+                message = "Manual import has invalid scheme",
+                source = "MainActivity",
+                details = normalized.take(120),
+            )
+        }
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H1",
+            location = "MainActivity.kt:importBatchConfig",
+            message = "manual_import_requested",
+            data = JSONObject()
+                .put("isEmpty", normalized.isEmpty())
+                .put("startsWithVless", normalized.startsWith(AppConfig.VLESS, ignoreCase = true))
+                .put("lineCount", rawInput.lineSequence().count()),
+        )
+        // #endregion
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val (count, countSub) = AngConfigManager.importBatchConfig(server, mainViewModel.subscriptionId, true)
+                // #region agent log
+                ManualModeDebugLogger.log(
+                    hypothesisId = "H2",
+                    location = "MainActivity.kt:importBatchConfig",
+                    message = "manual_import_result",
+                    data = JSONObject()
+                        .put("count", count)
+                        .put("countSub", countSub)
+                        .put("selectedServer", MmkvManager.getSelectServer().orEmpty()),
+                )
+                // #endregion
                 delay(500L)
                 withContext(Dispatchers.Main) {
                     when {
                         count > 0 -> {
+                            ManualModeDiagnostics.clearError()
+                            ManualModeDiagnostics.recordSuccessStep("Manual import completed")
                             toast(getString(R.string.title_import_config_count, count))
                             mainViewModel.reloadServerList()
                         }
 
                         countSub > 0 -> setupGroupTab()
-                        else -> toastError(R.string.toast_failure)
+                        else -> {
+                            val code = if (normalized.startsWith(AppConfig.VLESS, ignoreCase = true)) {
+                                ManualDiagnosticCodes.MANUAL_IMPORT_PARSE_FAILED
+                            } else {
+                                ManualDiagnosticCodes.MANUAL_IMPORT_ZERO_PROFILES
+                            }
+                            ManualModeDiagnostics.reportError(
+                                code = code,
+                                message = "Manual import failed",
+                                source = "MainActivity",
+                                details = "count=$count; countSub=$countSub",
+                            )
+                            toastError(R.string.toast_failure)
+                        }
                     }
                     hideLoading()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
+                    ManualModeDiagnostics.reportError(
+                        code = ManualDiagnosticCodes.MANUAL_IMPORT_PARSE_FAILED,
+                        message = "Manual import exception",
+                        source = "MainActivity",
+                        details = e.message.orEmpty(),
+                    )
                     toastError(R.string.toast_failure)
                     hideLoading()
                 }

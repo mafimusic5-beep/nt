@@ -25,6 +25,7 @@ import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.QRCodeDecoder
 import com.v2ray.ang.util.Utils
+import org.json.JSONObject
 import java.net.URI
 
 object AngConfigManager {
@@ -162,23 +163,108 @@ object AngConfigManager {
      * @return A pair containing the number of configurations and subscriptions imported.
      */
     fun importBatchConfig(server: String?, subid: String, append: Boolean): Pair<Int, Int> {
-        var count = parseBatchConfig(Utils.decode(server), subid, append)
-        if (count <= 0) {
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H1",
+            location = "AngConfigManager.kt:importBatchConfig",
+            message = "import_batch_enter",
+            data = JSONObject()
+                .put("subId", subid)
+                .put("append", append)
+                .put("inputLength", server?.length ?: 0),
+        )
+        // #endregion
+        val isDirectConfig = hasDirectConfigScheme(server)
+        var count = if (isDirectConfig) {
+            parseBatchConfig(server, subid, append)
+        } else {
+            parseBatchConfig(tryDecodeMaybeBase64(server), subid, append)
+        }
+        if (count <= 0 && !isDirectConfig) {
             count = parseBatchConfig(server, subid, append)
         }
         if (count <= 0) {
             count = parseCustomConfigServer(server, subid)
         }
 
+        if (isDirectConfig) {
+            if (count > 0) {
+                val selectedGuid = MmkvManager.decodeServerList(subid).firstOrNull()
+                if (!selectedGuid.isNullOrBlank()) {
+                    MmkvManager.setSelectServer(selectedGuid)
+                    ManualModeDiagnostics.recordSuccessStep("Manual import profile selected")
+                } else {
+                    ManualModeDiagnostics.reportError(
+                        code = ManualDiagnosticCodes.SELECTED_SERVER_MISSING_AFTER_IMPORT,
+                        message = "Selected server missing after import",
+                        source = "AngConfigManager",
+                        details = "subId=$subid; importedCount=$count",
+                    )
+                }
+            } else {
+                ManualModeDiagnostics.reportError(
+                    code = ManualDiagnosticCodes.MANUAL_IMPORT_ZERO_PROFILES,
+                    message = "Import returned zero profiles",
+                    source = "AngConfigManager",
+                    details = "subId=$subid; directConfig=true",
+                )
+            }
+        }
+
         var countSub = parseBatchSubscription(server)
-        if (countSub <= 0) {
-            countSub = parseBatchSubscription(Utils.decode(server))
+        if (countSub <= 0 && !isDirectConfig) {
+            countSub = parseBatchSubscription(tryDecodeMaybeBase64(server))
         }
         if (countSub > 0) {
             updateConfigViaSubAll()
         }
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H2",
+            location = "AngConfigManager.kt:importBatchConfig",
+            message = "import_batch_exit",
+            data = JSONObject()
+                .put("count", count)
+                .put("countSub", countSub)
+                .put("selectedServer", MmkvManager.getSelectServer().orEmpty()),
+        )
+        // #endregion
 
         return count to countSub
+    }
+
+    private fun hasDirectConfigScheme(server: String?): Boolean {
+        val raw = server?.trim()?.lowercase() ?: return false
+        if (raw.isEmpty()) return false
+        val directSchemes = listOf(
+            EConfigType.VMESS.protocolScheme,
+            EConfigType.VLESS.protocolScheme,
+            EConfigType.SHADOWSOCKS.protocolScheme,
+            EConfigType.SOCKS.protocolScheme,
+            EConfigType.TROJAN.protocolScheme,
+            EConfigType.WIREGUARD.protocolScheme,
+            EConfigType.HYSTERIA2.protocolScheme,
+            HY2,
+        )
+        if (directSchemes.any { raw.startsWith(it) }) return true
+        return raw.lineSequence().any { line ->
+            val value = line.trim().lowercase()
+            directSchemes.any { value.startsWith(it) }
+        }
+    }
+
+    private fun shouldTryBase64Decode(server: String?): Boolean {
+        val raw = server?.trim() ?: return false
+        if (raw.isEmpty()) return false
+        if (raw.contains("://")) return false
+        // Keep base64 decode for subscription blobs/batch payloads only.
+        val compact = raw.replace("\\s+".toRegex(), "")
+        return compact.length > 16 && compact.matches(Regex("^[A-Za-z0-9+/=_-]+$"))
+    }
+
+    private fun tryDecodeMaybeBase64(server: String?): String? {
+        if (!shouldTryBase64Decode(server)) return server
+        return Utils.decode(server)
     }
 
     /**
@@ -244,6 +330,18 @@ object AngConfigManager {
                         configs.add(config)
                     }
                 }
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H2",
+                location = "AngConfigManager.kt:parseBatchConfig",
+                message = "parsed_profiles",
+                data = JSONObject()
+                    .put("subId", subid)
+                    .put("append", append)
+                    .put("parsedCount", configs.size)
+                    .put("removedSelectedExists", removedSelected != null),
+            )
+            // #endregion
 
             // Batch save all parsed configs (only one serverList read/write)
             if (configs.isNotEmpty()) {
@@ -253,6 +351,17 @@ object AngConfigManager {
                 val keyToProfile = batchSaveConfigs(configs, subid)
                 val matchKey = findMatchedProfileKey(keyToProfile, removedSelected)
                 matchKey?.let { MmkvManager.setSelectServer(it) }
+                // #region agent log
+                ManualModeDebugLogger.log(
+                    hypothesisId = "H3",
+                    location = "AngConfigManager.kt:parseBatchConfig",
+                    message = "selected_server_after_parse_batch",
+                    data = JSONObject()
+                        .put("matchKey", matchKey ?: "")
+                        .put("selectedServer", MmkvManager.getSelectServer().orEmpty())
+                        .put("savedKeysCount", keyToProfile.size),
+                )
+                // #endregion
             }
 
             return configs.size
@@ -291,6 +400,19 @@ object AngConfigManager {
             }
             keyToProfile[key] = config
         }
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H3",
+            location = "AngConfigManager.kt:batchSaveConfigs",
+            message = "batch_saved_profiles",
+            data = JSONObject()
+                .put("subId", subid)
+                .put("serverListSize", serverList.size)
+                .put("savedCount", keyToProfile.size)
+                .put("firstSavedGuid", keyToProfile.keys.firstOrNull().orEmpty())
+                .put("selectedServer", MmkvManager.getSelectServer().orEmpty()),
+        )
+        // #endregion
 
         // Write serverList once
         MmkvManager.encodeServerList(serverList, subid)

@@ -5,9 +5,11 @@ import com.v2ray.ang.dto.ProfileItem
 import com.v2ray.ang.dto.V2rayConfig.OutboundBean
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.idnHost
+import com.v2ray.ang.handler.ManualModeDebugLogger
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.V2rayConfigManager
 import com.v2ray.ang.util.Utils
+import org.json.JSONObject
 import java.net.URI
 
 object VlessFmt : FmtBase() {
@@ -33,6 +35,21 @@ object VlessFmt : FmtBase() {
         config.method = queryParam["encryption"] ?: "none"
 
         getItemFormQuery(config, queryParam, allowInsecure)
+        // #region agent log
+        ManualModeDebugLogger.log(
+            hypothesisId = "H5",
+            location = "VlessFmt.kt:parse",
+            message = "vless_parsed_fields",
+            data = JSONObject()
+                .put("hasFlow", !config.flow.isNullOrEmpty())
+                .put("security", config.security ?: "")
+                .put("hasSni", !config.sni.isNullOrEmpty())
+                .put("fp", config.fingerPrint ?: "")
+                .put("hasPublicKey", !config.publicKey.isNullOrEmpty())
+                .put("hasShortId", !config.shortId.isNullOrEmpty())
+                .put("network", config.network ?: ""),
+        )
+        // #endregion
 
         return config
     }

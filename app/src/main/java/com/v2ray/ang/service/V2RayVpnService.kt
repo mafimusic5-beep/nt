@@ -22,10 +22,14 @@ import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.contracts.Tun2SocksControl
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.ManualDiagnosticCodes
+import com.v2ray.ang.handler.ManualModeDebugLogger
+import com.v2ray.ang.handler.ManualModeDiagnostics
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.util.MyContextWrapper
+import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
 import java.lang.ref.SoftReference
 
@@ -34,6 +38,10 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private lateinit var mInterface: ParcelFileDescriptor
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
+    @Volatile
+    private var stopInProgress = false
+    @Volatile
+    private var vpnInterfaceClosed = false
 
     /**destroy
      * Unfortunately registerDefaultNetworkCallback is going to return our VPN interface: https://android.googlesource.com/platform/frameworks/base/+/dda156ab0c5d66ad82bdcf76cda07cbc0a9c8a2e
@@ -98,8 +106,23 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(AppConfig.TAG, "StartCore-VPN: Service command received")
-        setupVpnService()
-        startService()
+        try {
+            // Promote to foreground immediately to avoid FGS timeout
+            NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
+            if (setupVpnService()) {
+                startService()
+            }
+        } catch (e: Throwable) {
+            Log.e(AppConfig.TAG, "StartCore-VPN: Unhandled exception in onStartCommand", e)
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.UNKNOWN_EXCEPTION,
+                message = "Unhandled exception while starting VPN service",
+                source = "V2RayVpnService",
+                details = e.message.orEmpty(),
+            )
+            MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
+            stopAllService()
+        }
         return START_STICKY
         //return super.onStartCommand(intent, flags, startId)
     }
@@ -139,21 +162,33 @@ class V2RayVpnService : VpnService(), ServiceControl {
      * Sets up the VPN service.
      * Prepares the VPN and configures it if preparation is successful.
      */
-    private fun setupVpnService() {
+    private fun setupVpnService(): Boolean {
         val prepare = prepare(this)
         if (prepare != null) {
             Log.e(AppConfig.TAG, "StartCore-VPN: Permission not granted")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.VPN_PERMISSION_DENIED,
+                message = "VPN permission is not granted",
+                source = "V2RayVpnService",
+                details = "prepare() returned non-null intent",
+            )
             stopSelf()
-            return
+            return false
         }
 
         if (configureVpnService() != true) {
             Log.e(AppConfig.TAG, "StartCore-VPN: Configuration failed")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.VPN_SERVICE_START_FAILED,
+                message = "VPN interface configuration failed",
+                source = "V2RayVpnService",
+                details = "configureVpnService returned false",
+            )
             stopSelf()
-            return
+            return false
         }
 
-        runTun2socks()
+        return runTun2socks()
     }
 
     /**
@@ -184,6 +219,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // Create a new interface using the builder and save the parameters
         try {
             mInterface = builder.establish()!!
+            vpnInterfaceClosed = false
             isRunning = true
             return true
         } catch (e: Exception) {
@@ -314,7 +350,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
      * Runs the tun2socks process.
      * Starts the tun2socks process with the appropriate parameters.
      */
-    private fun runTun2socks() {
+    private fun runTun2socks(): Boolean {
         if (SettingsManager.isUsingHevTun()) {
             tun2SocksService = TProxyService(
                 context = applicationContext,
@@ -326,43 +362,83 @@ class V2RayVpnService : VpnService(), ServiceControl {
             tun2SocksService = null
         }
 
-        tun2SocksService?.startTun2Socks()
+        val tunStarted = tun2SocksService?.startTun2Socks() ?: true
+        if (!tunStarted) {
+            // #region agent log
+            ManualModeDebugLogger.log(
+                hypothesisId = "H1",
+                location = "V2RayVpnService.kt:runTun2socks",
+                message = "tun2socks_start_rejected",
+                data = org.json.JSONObject()
+                    .put("usingHevTun", SettingsManager.isUsingHevTun()),
+            )
+            // #endregion
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.VPN_SERVICE_START_FAILED,
+                message = "TUN startup rejected due to native init failure",
+                source = "V2RayVpnService",
+                details = "usingHevTun=${SettingsManager.isUsingHevTun()}",
+            )
+            MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
+            stopAllService()
+            return false
+        }
+        ManualModeDiagnostics.recordSuccessStep("VPN tunnel service started")
+        return true
     }
 
     private fun stopAllService(isForced: Boolean = true) {
+        if (stopInProgress) {
+            return
+        }
+        stopInProgress = true
+        try {
 //        val configName = defaultDPreference.getPrefString(PREF_CURR_CONFIG_GUID, "")
 //        val emptyInfo = VpnNetworkInfo()
 //        val info = loadVpnNetworkInfo(configName, emptyInfo)!! + (lastNetworkInfo ?: emptyInfo)
 //        saveVpnNetworkInfo(configName, info)
-        isRunning = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                connectivity.unregisterNetworkCallback(defaultNetworkCallback)
-            } catch (e: Exception) {
-                Log.w(AppConfig.TAG, "StartCore-VPN: Failed to unregister callback", e)
-            }
-        }
-
-        tun2SocksService?.stopTun2Socks()
-        tun2SocksService = null
-
-        V2RayServiceManager.stopCoreLoop()
-
-        if (isForced) {
-            //stopSelf has to be called ahead of mInterface.close(). otherwise v2ray core cannot be stooped
-            //It's strage but true.
-            //This can be verified by putting stopself() behind and call stopLoop and startLoop
-            //in a row for several times. You will find that later created v2ray core report port in use
-            //which means the first v2ray core somehow failed to stop and release the port.
-            stopSelf()
-
-            try {
-                if (::mInterface.isInitialized) {
-                    mInterface.close()
+            isRunning = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    connectivity.unregisterNetworkCallback(defaultNetworkCallback)
+                } catch (e: Exception) {
+                    Log.w(AppConfig.TAG, "StartCore-VPN: Failed to unregister callback", e)
                 }
-            } catch (e: Exception) {
-                Log.e(AppConfig.TAG, "StartCore-VPN: Failed to close interface", e)
             }
+
+            tun2SocksService?.stopTun2Socks()
+            tun2SocksService = null
+
+            V2RayServiceManager.stopCoreLoop()
+
+            if (isForced) {
+                //stopSelf has to be called ahead of mInterface.close(). otherwise v2ray core cannot be stooped
+                //It's strage but true.
+                //This can be verified by putting stopself() behind and call stopLoop and startLoop
+                //in a row for several times. You will find that later created v2ray core report port in use
+                //which means the first v2ray core somehow failed to stop and release the port.
+                stopSelf()
+
+                try {
+                    if (::mInterface.isInitialized && !vpnInterfaceClosed) {
+                        mInterface.close()
+                        vpnInterfaceClosed = true
+                    }
+                } catch (e: IllegalStateException) {
+                    vpnInterfaceClosed = true
+                    ManualModeDiagnostics.reportError(
+                        code = ManualDiagnosticCodes.VPN_FD_ALREADY_CLOSED,
+                        message = "VPN interface already closed",
+                        source = "V2RayVpnService",
+                        details = e.message.orEmpty(),
+                    )
+                    Log.w(AppConfig.TAG, "StartCore-VPN: Interface already closed", e)
+                } catch (e: Exception) {
+                    Log.e(AppConfig.TAG, "StartCore-VPN: Failed to close interface", e)
+                }
+            }
+        } finally {
+            stopInProgress = false
         }
     }
 }

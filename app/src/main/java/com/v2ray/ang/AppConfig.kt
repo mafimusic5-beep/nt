@@ -77,6 +77,7 @@ object AppConfig {
     const val EMERY_BACKEND_SUBSCRIPTION_ID = "__emery_backend_subscription__"
 
     const val PREF_EMERY_ACCESS_KEY = "pref_emery_access_key"
+    const val PREF_EMERY_API_BASE_URL = "pref_emery_api_base_url"
     const val PREF_EMERY_VPN_ENABLED = "pref_emery_vpn_enabled"
     const val PREF_EMERY_ROUTER_ENABLED = "pref_emery_router_enabled"
     const val PREF_EMERY_EXPIRES_AT = "pref_emery_expires_at"
@@ -88,6 +89,8 @@ object AppConfig {
     const val PREF_HEV_TUNNEL_RW_TIMEOUT = "pref_hev_tunnel_rw_timeout_v2"
     const val PREF_AUTO_REMOVE_INVALID_AFTER_TEST = "pref_auto_remove_invalid_after_test"
     const val PREF_AUTO_SORT_AFTER_TEST = "pref_auto_sort_after_test"
+    const val PREF_MANUAL_LAST_SUCCESS_STEP = "pref_manual_last_success_step"
+    const val PREF_MANUAL_LAST_ERROR_JSON = "pref_manual_last_error_json"
 
     /** Cache keys. */
     const val CACHE_SUBSCRIPTION_ID = "cache_subscription_id"

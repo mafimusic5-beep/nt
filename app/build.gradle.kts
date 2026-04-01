@@ -2,6 +2,7 @@ import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
+import java.util.zip.ZipInputStream
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
@@ -75,8 +76,12 @@ android {
 
     sourceSets {
         getByName("main") {
-            // Use srcDir(Any), not srcDirectory() — the latter is not part of [AndroidSourceDirectorySet] in AGP 9.1.
-            jniLibs.srcDir(layout.projectDirectory.dir("libs"))
+            // Explicitly include both conventional and legacy prebuilt native folders.
+            jniLibs.srcDirs(
+                layout.projectDirectory.dir("src/main/jniLibs"),
+                layout.projectDirectory.dir("libs"),
+                "$buildDir/generated/hev-jniLibs",
+            )
         }
     }
 
@@ -239,6 +244,86 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
 
 tasks.named("preBuild").configure {
     dependsOn(downloadLibv2ray)
+}
+
+val hevLibFileName = "libhev-socks5-tunnel.so"
+val hevRequiredAbi = "arm64-v8a"
+val hevOptionalAbi = "armeabi-v7a"
+val hevGeneratedDir = file("$buildDir/generated/hev-jniLibs")
+
+fun existingHevLibCandidates(abi: String): List<java.io.File> {
+    val localJni = layout.projectDirectory.file("src/main/jniLibs/$abi/$hevLibFileName").asFile
+    val localLegacy = layout.projectDirectory.file("libs/$abi/$hevLibFileName").asFile
+    val generated = File(hevGeneratedDir, "$abi/$hevLibFileName")
+    return listOf(localJni, localLegacy, generated)
+}
+
+fun hasHevLib(abi: String): Boolean {
+    return existingHevLibCandidates(abi).any { it.exists() && it.length() > 0L }
+}
+
+fun downloadAndExtractHevLib(url: String, abi: String, targetFile: java.io.File) {
+    val tmpFile = targetFile.parentFile.resolve("$abi.apk.tmp")
+    tmpFile.parentFile?.mkdirs()
+    URI(url).toURL().openStream().use { input ->
+        tmpFile.outputStream().use { output -> input.copyTo(output) }
+    }
+    var extracted = false
+    ZipInputStream(tmpFile.inputStream().buffered()).use { zip ->
+        var entry = zip.nextEntry
+        while (entry != null) {
+            if (!entry.isDirectory && entry.name == "lib/$abi/$hevLibFileName") {
+                targetFile.parentFile.mkdirs()
+                targetFile.outputStream().use { out -> zip.copyTo(out) }
+                extracted = true
+                break
+            }
+            entry = zip.nextEntry
+        }
+    }
+    tmpFile.delete()
+    if (!extracted || !targetFile.exists() || targetFile.length() == 0L) {
+        throw GradleException("Failed to extract $hevLibFileName for ABI $abi from $url")
+    }
+}
+
+val syncHevNativeLibs = tasks.register("syncHevNativeLibs") {
+    group = "setup"
+    description = "Ensures hev native libs exist for arm64-v8a (and optional armeabi-v7a)."
+    doLast {
+        val outDir = hevGeneratedDir
+        val requiredTarget = outDir.resolve("$hevRequiredAbi/$hevLibFileName")
+        val optionalTarget = outDir.resolve("$hevOptionalAbi/$hevLibFileName")
+
+        if (!hasHevLib(hevRequiredAbi)) {
+            logger.lifecycle("HEV native lib for $hevRequiredAbi not found locally. Downloading from upstream APK...")
+            downloadAndExtractHevLib(
+                "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_arm64-v8a.apk",
+                hevRequiredAbi,
+                requiredTarget,
+            )
+        }
+        if (!hasHevLib(hevRequiredAbi)) {
+            throw GradleException("Missing required $hevLibFileName for ABI $hevRequiredAbi")
+        }
+
+        if (!hasHevLib(hevOptionalAbi)) {
+            try {
+                logger.lifecycle("HEV native lib for $hevOptionalAbi not found locally. Downloading optional ABI...")
+                downloadAndExtractHevLib(
+                    "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_armeabi-v7a.apk",
+                    hevOptionalAbi,
+                    optionalTarget,
+                )
+            } catch (e: Exception) {
+                logger.warn("Optional ABI $hevOptionalAbi HEV lib download failed: ${e.message}")
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(syncHevNativeLibs)
 }
 
 tasks.withType<KotlinCompile>().configureEach {
