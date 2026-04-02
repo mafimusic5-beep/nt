@@ -1,12 +1,12 @@
 package com.v2ray.ang.ui.premium.vpn
 
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.Composable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
@@ -47,7 +47,6 @@ private fun VpnMainScreenConnectedPreview() {
         VpnMainScreen(
             uiState = VpnDemoData.connectedState(),
             locations = VpnDemoData.locations,
-            onActivationKeyChanged = {},
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},
@@ -69,7 +68,6 @@ private fun VpnMainScreenDisconnectedPreview() {
         VpnMainScreen(
             uiState = VpnDemoData.disconnectedState(),
             locations = VpnDemoData.locations,
-            onActivationKeyChanged = {},
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},
