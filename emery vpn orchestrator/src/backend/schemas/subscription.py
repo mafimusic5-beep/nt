@@ -60,17 +60,22 @@ class VpnServerItemResponse(BaseModel):
     city: str
     health_status: str
     is_available: bool
+    region_code: str | None = None
+    region_name: str | None = None
+    available_nodes: int = 0
 
 
 class VpnConnectRequest(BaseModel):
     access_key: str = Field(min_length=1, max_length=128)
     server_id: int
+    device_fingerprint: str | None = Field(default=None, min_length=6, max_length=128)
 
 
 class VpnConnectResponse(BaseModel):
     server_id: int
     city: str
     import_text: str
+    region_code: str | None = None
 
 
 class UserDeviceResponse(BaseModel):
