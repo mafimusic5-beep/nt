@@ -26,8 +26,8 @@ android {
         versionName = "2.0.15"
         multiDexEnabled = true
 
-        // Emery orchestrator API (override in device builds via your LAN IP, e.g. http://192.168.1.10:9330)
-        buildConfigField("String", "EMERY_API_BASE_URL", "\"http://10.0.2.2:9330\"")
+        // Emery orchestrator API on deployed VPS backend.
+        buildConfigField("String", "EMERY_API_BASE_URL", "\"http://80.71.159.221:9330\"")
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {

@@ -66,6 +66,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.ui.AccessKeyActivity
 import com.v2ray.ang.ui.MainActivity
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
@@ -73,10 +75,6 @@ import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-
-// ──────────────────────────────────────────────
-// Navigation & State
-// ──────────────────────────────────────────────
 
 private enum class EmeryRoute { Splash, Home, Devices, Support }
 
@@ -91,10 +89,6 @@ private val navItems = listOf(
     NavItem(EmeryRoute.Devices, Icons.Default.Devices, "Устройства"),
     NavItem(EmeryRoute.Support, Icons.Default.SupportAgent, "Поддержка")
 )
-
-// ──────────────────────────────────────────────
-// Activity
-// ──────────────────────────────────────────────
 
 class PremiumActivity : ComponentActivity() {
 
@@ -111,6 +105,11 @@ class PremiumActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!EmeryAccessManager.isActivated()) {
+            startActivity(Intent(this, AccessKeyActivity::class.java))
+            finish()
+            return
+        }
         enableEdgeToEdge()
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
@@ -133,10 +132,6 @@ class PremiumActivity : ComponentActivity() {
         }
     }
 }
-
-// ──────────────────────────────────────────────
-// App Shell
-// ──────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -245,10 +240,6 @@ private fun EmeryApp(
         }
     }
 }
-
-// ──────────────────────────────────────────────
-// Screens
-// ──────────────────────────────────────────────
 
 @Composable
 private fun SplashScreen(onFinish: () -> Unit) {
