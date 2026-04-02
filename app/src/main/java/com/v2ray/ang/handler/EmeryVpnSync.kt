@@ -49,14 +49,10 @@ object EmeryVpnSync {
     )
 
     suspend fun syncProfileAndVpnConfig(accessKey: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
-        // #region agent log
         Log.i(AppConfig.TAG, "EmerySync[H1]: starting sync, baseUrl=${EmeryApiConfig.baseUrl()}")
-        // #endregion
         val profileResult = EmeryBackendClient.fetchProfile(accessKey)
         val profile = profileResult.getOrElse {
-            // #region agent log
             Log.e(AppConfig.TAG, "EmerySync[H1]: fetchProfile failed: ${it.message}")
-            // #endregion
             return@withContext Result.failure(it)
         }
         EmeryAccessManager.saveProfile(profile)
@@ -65,14 +61,19 @@ object EmeryVpnSync {
         val cfgResult = EmeryBackendClient.fetchVpnConfigImportText(accessKey)
         val importText = cfgResult.getOrElse { e ->
             when (e.message) {
-                "no_allocation", "no_import_text", "no_vpn_config", "no_active_allocation", "vpn_disabled" ->
-                    Log.w(AppConfig.TAG, "Emery sync: skip VPN import (${e.message})")
-                "network" ->
-                    Log.w(AppConfig.TAG, "Emery sync: VPN config fetch failed (network)")
-                else ->
+                "no_allocation", "no_import_text", "no_vpn_config", "no_active_allocation", "vpn_disabled" -> {
+                    Log.w(AppConfig.TAG, "Emery sync: no VPN config yet (${e.message}), keeping activation successful")
+                    return@withContext Result.success(profile)
+                }
+                "network" -> {
+                    Log.w(AppConfig.TAG, "Emery sync: VPN config fetch failed (network), keeping activation successful")
+                    return@withContext Result.success(profile)
+                }
+                else -> {
                     Log.w(AppConfig.TAG, "Emery sync: VPN import skipped (${e.message})")
+                    return@withContext Result.failure(IllegalStateException("import_failed: ${e.message}"))
+                }
             }
-            return@withContext Result.failure(IllegalStateException("import_failed: ${e.message}"))
         }
 
         val (count, _) = AngConfigManager.importBatchConfig(
@@ -83,22 +84,16 @@ object EmeryVpnSync {
         Log.i(AppConfig.TAG, "Emery sync: imported $count profile(s) into Emery subscription")
 
         if (count <= 0) {
-            // #region agent log
             Log.e(AppConfig.TAG, "EmerySync[H2]: import returned count=$count, failing")
-            // #endregion
             return@withContext Result.failure(IllegalStateException("import_failed"))
         }
 
         if (!ensureEmeryServerSelected()) {
-            // #region agent log
             Log.e(AppConfig.TAG, "EmerySync[H3]: ensureEmeryServerSelected returned false")
-            // #endregion
             return@withContext Result.failure(IllegalStateException("server_not_selected"))
         }
 
-        // #region agent log
         Log.i(AppConfig.TAG, "EmerySync: sync complete, count=$count, selected=${MmkvManager.getSelectServer()}")
-        // #endregion
         Result.success(profile)
     }
 
@@ -117,7 +112,6 @@ object EmeryVpnSync {
                 source = "EmeryVpnSync.connectToServer",
                 details = "serverId=$serverId reason=${err.message}",
             )
-            // #region agent log
             ManualModeDebugLogger.log(
                 hypothesisId = "H2",
                 location = "EmeryVpnSync.kt:connectToServer",
@@ -126,7 +120,6 @@ object EmeryVpnSync {
                     .put("serverId", serverId)
                     .put("reason", err.message ?: "unknown"),
             )
-            // #endregion
             return@withContext Result.failure(err)
         }
 
@@ -158,7 +151,6 @@ object EmeryVpnSync {
         MmkvManager.setSelectServer(selectedGuid)
         ManualModeDiagnostics.clearError()
         ManualModeDiagnostics.recordSuccessStep("Server selected: ${payload.city}")
-        // #region agent log
         ManualModeDebugLogger.log(
             hypothesisId = "H4",
             location = "EmeryVpnSync.kt:connectToServer",
@@ -168,7 +160,6 @@ object EmeryVpnSync {
                 .put("city", payload.city)
                 .put("selectedGuid", selectedGuid),
         )
-        // #endregion
         Result.success(
             ConnectServerResult(
                 serverId = payload.serverId,
