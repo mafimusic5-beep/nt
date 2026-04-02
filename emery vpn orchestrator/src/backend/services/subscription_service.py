@@ -8,7 +8,6 @@ from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.repositories.subscription_repo import SubscriptionRepository
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.utils.debug_log import agent_log
-from src.backend.utils.node_city import normalize_node_city
 from src.backend.schemas.subscription import (
     HeartbeatRequest,
     RedeemActivationCodeRequest,
@@ -16,7 +15,13 @@ from src.backend.schemas.subscription import (
     RegisterDeviceRequest,
     RegisterDeviceResponse,
     SubscriptionStatusResponse,
+    UnbindDeviceRequest,
+    UserCodeResponse,
+    UserDeviceResponse,
     VpnConfigResponse,
+    VpnConnectRequest,
+    VpnConnectResponse,
+    VpnServerItemResponse,
 )
 from src.backend.utils.security import hash_activation_code
 
@@ -95,6 +100,19 @@ class SubscriptionService:
                 raise HTTPException(status_code=409, detail="device_limit_reached")
         return self.repo.upsert_device(subscription_id, fingerprint, platform, device_name)
 
+    def _resolve_device_for_subscription(self, subscription_id: int, device_fingerprint: str | None):
+        devices = self.repo.list_devices(subscription_id)
+        if not devices:
+            raise HTTPException(status_code=409, detail="device_not_registered")
+        if not device_fingerprint:
+            if len(devices) == 1:
+                return devices[0]
+            raise HTTPException(status_code=409, detail="device_fingerprint_required")
+        device = self.repo.find_active_device(subscription_id, device_fingerprint)
+        if not device:
+            raise HTTPException(status_code=404, detail="device_not_registered")
+        return device
+
     def heartbeat(self, req: HeartbeatRequest) -> None:
         user = self.repo.get_or_create_user(req.telegram_id)
         sub = self.repo.get_active_subscription(user.id)
@@ -115,56 +133,36 @@ class SubscriptionService:
         self.audit.write("user", str(user.id), "device_unbind", "subscription", str(sub.id))
         self.db.commit()
 
-    def get_vpn_config(self, telegram_id: int) -> VpnConfigResponse:
-        # #region agent log
+    def get_vpn_config(self, telegram_id: int, device_fingerprint: str | None = None) -> VpnConfigResponse:
         agent_log(
             hypothesis_id="H2",
             location="subscription_service.py:get_vpn_config",
             message="get_vpn_config_enter",
-            data={"telegram_id": telegram_id},
+            data={"telegram_id": telegram_id, "has_device_fingerprint": bool(device_fingerprint)},
         )
-        # #endregion
         user = self.repo.get_or_create_user(telegram_id)
         sub = self.repo.get_active_subscription(user.id)
         if not sub:
-            # #region agent log
             agent_log(
                 hypothesis_id="H2",
                 location="subscription_service.py:get_vpn_config",
                 message="get_vpn_config_no_active_subscription",
                 data={"telegram_id": telegram_id, "user_id": user.id},
             )
-            # #endregion
             return VpnConfigResponse(error="subscription_inactive")
-        devices = self.repo.list_devices(sub.id)
-        device = devices[0] if devices else None
-        # #region agent log
-        agent_log(
-            hypothesis_id="H2",
-            location="subscription_service.py:get_vpn_config",
-            message="get_vpn_config_device_selection",
-            data={
-                "subscription_id": sub.id,
-                "device_count": len(devices),
-                "device_fp_prefix": (device.device_fingerprint[:10] if device else ""),
-            },
-        )
-        # #endregion
         try:
+            device = self._resolve_device_for_subscription(sub.id, device_fingerprint)
             cfg = self.node_orchestrator.build_user_config(sub.id, device)
         except HTTPException as exc:
-            # #region agent log
             agent_log(
                 hypothesis_id="H2",
                 location="subscription_service.py:get_vpn_config",
                 message="get_vpn_config_build_failed",
                 data={"subscription_id": sub.id, "error": str(exc.detail)},
             )
-            # #endregion
-            return VpnConfigResponse(error=exc.detail)
+            return VpnConfigResponse(error=str(exc.detail))
         self.audit.write("user", str(user.id), "vpn_config_requested", "vpn_node", str(cfg["node_id"]))
         self.db.commit()
-        # #region agent log
         agent_log(
             hypothesis_id="H2",
             location="subscription_service.py:get_vpn_config",
@@ -175,7 +173,6 @@ class SubscriptionService:
                 "import_text_len": len(cfg.get("import_text", "")),
             },
         )
-        # #endregion
         return VpnConfigResponse(import_text=cfg["import_text"])
 
     def list_user_devices(self, telegram_id: int) -> list[dict]:
@@ -225,55 +222,42 @@ class SubscriptionService:
         return code, sub
 
     def list_vpn_servers(self) -> list[dict]:
-        nodes = self.node_orchestrator.list_connectable_nodes()
-        rows: list[dict] = []
-        for node in nodes:
-            rows.append(
-                {
-                    "id": node.id,
-                    "city": normalize_node_city(node),
-                    "health_status": node.health_status,
-                    "is_available": True,
-                }
-            )
-        # #region agent log
+        rows = self.node_orchestrator.list_region_entries()
         agent_log(
             hypothesis_id="H1",
             location="subscription_service.py:list_vpn_servers",
-            message="vpn servers listed",
+            message="vpn regions listed",
             data={"count": len(rows)},
         )
-        # #endregion
         return rows
 
-    def connect_to_server(self, access_key: str, server_id: int) -> dict:
+    def connect_to_server(self, access_key: str, server_id: int, device_fingerprint: str | None = None) -> dict:
         code, sub = self.resolve_subscription_by_access_key(access_key)
         if not code or not sub:
-            # #region agent log
             agent_log(
                 hypothesis_id="H2",
                 location="subscription_service.py:connect_to_server",
                 message="access key validation failed",
                 data={"server_id": server_id},
             )
-            # #endregion
             raise HTTPException(status_code=401, detail="invalid_or_expired_key")
 
-        devices = self.repo.list_devices(sub.id)
-        device = devices[0] if devices else None
+        device = self._resolve_device_for_subscription(sub.id, device_fingerprint)
         cfg = self.node_orchestrator.build_user_config_for_node(sub.id, server_id, device)
-        city = normalize_node_city(cfg["node"])
         self.audit.write("user", str(code.user_id), "vpn_connect_requested", "vpn_node", str(server_id))
         self.db.commit()
-        # #region agent log
         agent_log(
             hypothesis_id="H4",
             location="subscription_service.py:connect_to_server",
             message="vpn connect payload built",
-            data={"server_id": server_id, "city": city, "import_len": len(cfg["import_text"])},
+            data={"server_id": server_id, "region_code": cfg["node"].region_code, "import_len": len(cfg["import_text"])},
         )
-        # #endregion
-        return {"server_id": server_id, "city": city, "import_text": cfg["import_text"]}
+        return {
+            "server_id": server_id,
+            "city": cfg["node"].region_code,
+            "region_code": cfg["node"].region_code,
+            "import_text": cfg["import_text"],
+        }
 
     @staticmethod
     def _as_utc_naive(value: datetime) -> datetime:
