@@ -79,16 +79,14 @@ def unbind_device(payload: UnbindDeviceRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/vpn/config", response_model=VpnConfigResponse)
-def get_vpn_config(telegram_id: int, db: Session = Depends(get_db)):
-    # #region agent log
+def get_vpn_config(telegram_id: int, device_fingerprint: str | None = None, db: Session = Depends(get_db)):
     agent_log(
         hypothesis_id="H2",
         location="routes.py:get_vpn_config",
         message="vpn_config_requested",
-        data={"telegram_id": telegram_id},
+        data={"telegram_id": telegram_id, "has_device_fingerprint": bool(device_fingerprint)},
     )
-    # #endregion
-    return SubscriptionService(db).get_vpn_config(telegram_id)
+    return SubscriptionService(db).get_vpn_config(telegram_id, device_fingerprint)
 
 
 @router.get("/vpn/servers", response_model=list[VpnServerItemResponse])
@@ -98,7 +96,7 @@ def get_vpn_servers(db: Session = Depends(get_db)):
 
 @router.post("/vpn/connect", response_model=VpnConnectResponse)
 def connect_vpn_server(payload: VpnConnectRequest, db: Session = Depends(get_db)):
-    return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id)
+    return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id, payload.device_fingerprint)
 
 
 @router.get("/user/devices", response_model=list[UserDeviceResponse])
@@ -122,7 +120,6 @@ def internal_create_order(payload: CreateOrderRequest, db: Session = Depends(get
     dependencies=[Depends(require_internal_api_key)],
 )
 def internal_confirm_payment(payload: ConfirmPaymentRequest, db: Session = Depends(get_db)):
-    # #region agent log
     agent_log(
         hypothesis_id="H1",
         location="routes.py:internal_confirm_payment",
@@ -133,7 +130,6 @@ def internal_confirm_payment(payload: ConfirmPaymentRequest, db: Session = Depen
             "provider_payment_id_prefix": payload.provider_payment_id[:8],
         },
     )
-    # #endregion
     return OrderService(db).confirm_payment(payload)
 
 

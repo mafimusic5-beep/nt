@@ -22,6 +22,7 @@ class AuthKeyRequestBody(BaseModel):
 class VpnConnectRequestBody(BaseModel):
     access_key: str = Field(min_length=1, max_length=128)
     server_id: int
+    device_fingerprint: str | None = Field(default=None, min_length=6, max_length=128)
 
 
 def _resolve_subscription_by_key(db: Session, key: str):
@@ -66,19 +67,26 @@ def profile(access_key: str = Depends(_bearer_key), db: Session = Depends(get_db
 
 
 @compat_router.get("/vpn/config")
-def vpn_config(access_key: str = Depends(_bearer_key), db: Session = Depends(get_db)):
+def vpn_config(
+    access_key: str = Depends(_bearer_key),
+    device_fingerprint: str | None = None,
+    x_device_fingerprint: str | None = Header(default=None, alias="X-Device-Fingerprint"),
+    db: Session = Depends(get_db),
+):
     resolved = _resolve_subscription_by_key(db, access_key)
     if not resolved:
         return {"error": "invalid_or_expired_key"}
     _, sub = resolved
+    service = SubscriptionService(db)
     orchestrator = NodeOrchestrationService(db)
     try:
-        cfg = orchestrator.build_user_config(sub.id, device=None)
+        device = service._resolve_device_for_subscription(sub.id, device_fingerprint or x_device_fingerprint)
+        cfg = orchestrator.build_user_config(sub.id, device=device)
         return {"import_text": cfg.get("import_text"), "error": None}
     except HTTPException as exc:
         if exc.detail in {"no_healthy_node", "node_not_found"}:
             raise HTTPException(status_code=404, detail="no_allocation")
-        raise
+        return {"error": str(exc.detail)}
 
 
 @compat_router.get("/vpn/servers")
@@ -89,7 +97,11 @@ def vpn_servers(db: Session = Depends(get_db)):
 @compat_router.post("/vpn/connect")
 def vpn_connect(payload: VpnConnectRequestBody, db: Session = Depends(get_db)):
     try:
-        return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id)
+        return SubscriptionService(db).connect_to_server(
+            payload.access_key,
+            payload.server_id,
+            payload.device_fingerprint,
+        )
     except HTTPException as exc:
         if exc.detail == "server_config_unavailable":
             return {"error": "server_config_unavailable"}

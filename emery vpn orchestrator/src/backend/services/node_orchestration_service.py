@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -15,6 +16,7 @@ from src.backend.services.node_adapters import (
 )
 from src.backend.services.node_interfaces import NodeConfigService, NodeProvisioningService
 from src.backend.utils.debug_log import agent_log
+from src.backend.utils.node_city import normalize_node_city
 from src.common.config import settings
 from src.common.models import Device
 
@@ -40,6 +42,30 @@ class NodeOrchestrationService:
             return FirstVdsBillManagerProvisioningService()
         return ShellScriptNodeProvisioningService()
 
+    @staticmethod
+    def _is_connectable(node) -> bool:
+        return (
+            node.status == "active"
+            and node.health_status in {"healthy", "degraded"}
+            and node.current_clients < node.capacity_clients
+        )
+
+    @staticmethod
+    def _node_sort_key(node) -> tuple[int, int, int, int]:
+        return (
+            0 if node.health_status == "healthy" else 1,
+            node.load_score,
+            -node.priority,
+            node.id,
+        )
+
+    def _eligible_nodes(self, region_code: str | None = None) -> list:
+        return [
+            n
+            for n in self.repo.list_nodes(region_code)
+            if self._is_connectable(n)
+        ]
+
     def choose_best_moscow_node(self):
         node = self.repo.best_active_node("moscow")
         logger.debug("best_moscow_node selected: %s", node.id if node else None)
@@ -49,44 +75,24 @@ class NodeOrchestrationService:
         subscription = self.repo.get_subscription(subscription_id)
         if not subscription:
             raise HTTPException(status_code=404, detail="subscription_not_found")
-        nodes = [
-            n
-            for n in self.repo.list_nodes(None)
-            if n.status == "active"
-            and n.health_status in {"healthy", "degraded"}
-            and n.current_clients < n.capacity_clients
-        ]
+
+        nodes = self._eligible_nodes(subscription.region_code)
         if not nodes:
             raise HTTPException(status_code=404, detail="no_healthy_node")
-        node = sorted(
-            nodes,
-            key=lambda n: (
-                0 if n.health_status == "healthy" else 1,
-                n.load_score,
-                -n.priority,
-                n.id,
-            ),
-        )[0]
+
+        node = sorted(nodes, key=self._node_sort_key)[0]
         if device:
             self.repo.assign_device_to_node(device, node)
-        links: list[str] = []
-        seen: set[str] = set()
-        for candidate in nodes:
-            if not candidate.config_payload.strip() and candidate.provider == "firstvds" and hasattr(self.provisioning, "bootstrap_existing_node"):
-                logger.info("lazy bootstrap for firstvds node %s (no config_payload)", candidate.id)
-                bootstrap_result = self.provisioning.bootstrap_existing_node(candidate)
-                logger.info(
-                    "lazy bootstrap node %s result=%s config_ready=%s",
-                    candidate.id, bootstrap_result.get("status"), bool(candidate.config_payload.strip()),
-                )
-            link = self.config_service.build_import_text(candidate, subscription, device).strip()
-            if link and link not in seen:
-                seen.add(link)
-                links.append(link)
-        import_text = "\n".join(links)
+
+        import_text = self.config_service.build_import_text(node, subscription, device).strip()
+        if not import_text:
+            raise HTTPException(status_code=409, detail="server_config_unavailable")
+
         logger.info(
-            "built vpn config: sub=%s nodes=%d links=%d primary_node=%s",
-            subscription.id, len(nodes), len(links), node.id,
+            "built vpn config: sub=%s region=%s node=%s",
+            subscription.id,
+            subscription.region_code,
+            node.id,
         )
         self.audit.write(
             "system",
@@ -94,7 +100,7 @@ class NodeOrchestrationService:
             "vpn_config_built",
             "subscription",
             str(subscription.id),
-            {"node_id": node.id},
+            {"node_id": node.id, "region_code": subscription.region_code},
         )
         self.db.commit()
         return {
@@ -105,14 +111,31 @@ class NodeOrchestrationService:
             "node_health_status": node.health_status,
         }
 
-    def list_connectable_nodes(self) -> list:
-        return [
-            n
-            for n in self.repo.list_nodes(None)
-            if n.status == "active"
-            and n.health_status in {"healthy", "degraded"}
-            and n.current_clients < n.capacity_clients
-        ]
+    def list_connectable_nodes(self, region_code: str | None = None) -> list:
+        return self._eligible_nodes(region_code)
+
+    def list_region_entries(self) -> list[dict]:
+        grouped: dict[str, list] = defaultdict(list)
+        for node in self._eligible_nodes():
+            grouped[node.region_code].append(node)
+
+        rows: list[dict] = []
+        for region_code, nodes in grouped.items():
+            best = sorted(nodes, key=self._node_sort_key)[0]
+            region_name = normalize_node_city(best)
+            rows.append(
+                {
+                    "id": best.id,
+                    "city": region_name,
+                    "health_status": best.health_status,
+                    "is_available": True,
+                    "region_code": region_code,
+                    "region_name": region_name,
+                    "available_nodes": len(nodes),
+                }
+            )
+
+        return sorted(rows, key=lambda row: (row["region_name"] or "", row["region_code"] or "", row["id"]))
 
     def build_user_config_for_node(self, subscription_id: int, node_id: int, device: Device | None) -> dict:
         subscription = self.repo.get_subscription(subscription_id)
@@ -121,12 +144,9 @@ class NodeOrchestrationService:
         node = self.repo.get_node(node_id)
         if not node:
             raise HTTPException(status_code=404, detail="server_not_found")
-        if (
-            node.status != "active"
-            or node.health_status not in {"healthy", "degraded"}
-            or node.current_clients >= node.capacity_clients
-        ):
-            # #region agent log
+        if subscription.region_code and node.region_code != subscription.region_code:
+            raise HTTPException(status_code=409, detail="server_region_mismatch")
+        if not self._is_connectable(node):
             agent_log(
                 hypothesis_id="H3",
                 location="node_orchestration_service.py:build_user_config_for_node",
@@ -139,21 +159,18 @@ class NodeOrchestrationService:
                     "capacity_clients": node.capacity_clients,
                 },
             )
-            # #endregion
             raise HTTPException(status_code=409, detail="server_unavailable")
 
         if device:
             self.repo.assign_device_to_node(device, node)
         import_text = self.config_service.build_import_text(node, subscription, device).strip()
         if not import_text:
-            # #region agent log
             agent_log(
                 hypothesis_id="H5",
                 location="node_orchestration_service.py:build_user_config_for_node",
                 message="server config unavailable",
                 data={"node_id": node_id},
             )
-            # #endregion
             raise HTTPException(status_code=409, detail="server_config_unavailable")
         return {"node": node, "import_text": import_text}
 
