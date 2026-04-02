@@ -1,7 +1,7 @@
 package com.v2ray.ang.ui.premium.vpn
 
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
+import androidx.xifecycle.ViewModel
+import androidx.xifecycle.viewModelScope
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -57,11 +57,8 @@ class VpnMainViewModel : ViewModel() {
             hypothesisId = "H1",
             location = "VpnMainViewModel.kt:onConnectClick",
             message = "premium_connect_clicked",
-            runId = "pre-fix",
-            data = JSONObject()
-                .put("state", currentState.connectionState.name)
-                .put("activationKeyLen", currentState.activationKey.length)
-                .put("activationKeyBlank", currentState.activationKey.isBlank()),
+            runId = "remove-activation-field",
+            data = JSONObject().put("state", currentState.connectionState.name),
         )
         // #endregion
         if (currentState.connectionState != VpnConnectionState.Disconnected) {
@@ -71,17 +68,6 @@ class VpnMainViewModel : ViewModel() {
                 location = "VpnMainViewModel.kt:onConnectClick",
                 message = "connect ignored due to state",
                 data = JSONObject().put("state", currentState.connectionState.name),
-            )
-            // #endregion
-            return
-        }
-        if (currentState.activationKey.isBlank()) {
-            // #region agent log
-            VpnUiDebugLogger.log(
-                hypothesisId = "H3",
-                location = "VpnMainViewModel.kt:onConnectClick",
-                message = "connect blocked by empty activation key",
-                data = JSONObject(),
             )
             // #endregion
             return
@@ -118,7 +104,7 @@ class VpnMainViewModel : ViewModel() {
                 hypothesisId = "H2",
                 location = "VpnMainViewModel.kt:onConnectClick",
                 message = "premium_state_set_connected",
-                runId = "pre-fix",
+                runId = "remove-activation-field",
                 data = JSONObject(),
             )
             // #endregion
@@ -142,7 +128,7 @@ class VpnMainViewModel : ViewModel() {
             hypothesisId = "H2",
             location = "VpnMainViewModel.kt:onDisconnectClick",
             message = "premium_disconnect_clicked",
-            runId = "pre-fix",
+            runId = "remove-activation-field",
             data = JSONObject().put("prevState", _uiState.value.connectionState.name),
         )
         // #endregion
