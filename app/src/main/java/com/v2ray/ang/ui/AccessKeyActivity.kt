@@ -9,44 +9,37 @@ import com.v2ray.ang.databinding.ActivityAccessKeyBinding
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.network.EmeryAuthClient
+import com.v2ray.ang.ui.premium.PremiumActivity
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 class AccessKeyActivity : BaseActivity() {
-
     private lateinit var binding: ActivityAccessKeyBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityAccessKeyBinding.inflate(layoutInflater)
         setContentViewWithToolbar(binding.root, showHomeAsUp = false, title = getString(R.string.title_access_key))
-
         if (EmeryAccessManager.isActivated()) {
-            openHubAndFinish()
+            openPremiumAndFinish()
             return
         }
-
         binding.buttonActivate.setOnClickListener { onActivateClicked() }
     }
 
-    private fun openHubAndFinish() {
-        startActivity(Intent(this, HubActivity::class.java))
+    private fun openPremiumAndFinish() {
+        startActivity(Intent(this, PremiumActivity::class.java))
         finish()
     }
 
-    private fun messageForError(reason: String?): Int {
-        return when (reason) {
-            "invalid_or_expired_key" -> R.string.emery_error_invalid_key
-            "bad_request" -> R.string.emery_error_bad_request
-            "network" -> R.string.emery_error_network
-            "device_limit_reached" -> R.string.emery_error_invalid_key
-            "device_signature_invalid",
-            "device_not_registered",
-            "device_mismatch" -> R.string.emery_error_unknown
-            "parse_error" -> R.string.emery_error_unknown
-            else -> R.string.emery_error_unknown
-        }
+    private fun messageForError(reason: String?): Int = when (reason) {
+        "invalid_or_expired_key" -> R.string.emery_error_invalid_key
+        "bad_request" -> R.string.emery_error_bad_request
+        "network" -> R.string.emery_error_network
+        "device_limit_reached" -> R.string.emery_error_invalid_key
+        "device_signature_invalid", "device_not_registered", "device_mismatch", "parse_error" -> R.string.emery_error_unknown
+        else -> R.string.emery_error_unknown
     }
 
     private fun onActivateClicked() {
@@ -88,7 +81,7 @@ class AccessKeyActivity : BaseActivity() {
                     hideLoading()
                     binding.buttonActivate.isEnabled = true
                     sync.fold(
-                        onSuccess = { openHubAndFinish() },
+                        onSuccess = { openPremiumAndFinish() },
                         onFailure = { e ->
                             AgentDebugNdjsonLogger.log(
                                 hypothesisId = "H3",
