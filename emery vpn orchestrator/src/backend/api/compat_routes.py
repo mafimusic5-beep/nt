@@ -36,10 +36,9 @@ def _bearer_key(authorization: str = Header(default="")) -> str:
 
 @compat_router.post("/auth/key")
 def auth_key(payload: AuthKeyRequestBody, db: Session = Depends(get_db)):
-    resolved = _resolve_subscription_by_key(db, payload.key)
-    if not resolved:
+    code, sub = _resolve_subscription_by_key(db, payload.key)
+    if not code or not sub:
         return {"valid": False, "error": "invalid_or_expired_key"}
-    _, sub = resolved
     return {
         "valid": True,
         "vpn_enabled": True,
@@ -52,10 +51,9 @@ def auth_key(payload: AuthKeyRequestBody, db: Session = Depends(get_db)):
 
 @compat_router.get("/profile")
 def profile(access_key: str = Depends(_bearer_key), db: Session = Depends(get_db)):
-    resolved = _resolve_subscription_by_key(db, access_key)
-    if not resolved:
+    code, sub = _resolve_subscription_by_key(db, access_key)
+    if not code or not sub:
         return {"error": "invalid_or_expired_key"}
-    code, sub = resolved
     return {
         "user_id": code.user_id,
         "vpn_enabled": True,
@@ -67,10 +65,9 @@ def profile(access_key: str = Depends(_bearer_key), db: Session = Depends(get_db
 
 @compat_router.get("/vpn/config")
 def vpn_config(access_key: str = Depends(_bearer_key), db: Session = Depends(get_db)):
-    resolved = _resolve_subscription_by_key(db, access_key)
-    if not resolved:
+    code, sub = _resolve_subscription_by_key(db, access_key)
+    if not code or not sub:
         return {"error": "invalid_or_expired_key"}
-    _, sub = resolved
     orchestrator = NodeOrchestrationService(db)
     try:
         cfg = orchestrator.build_user_config(sub.id, device=None)
