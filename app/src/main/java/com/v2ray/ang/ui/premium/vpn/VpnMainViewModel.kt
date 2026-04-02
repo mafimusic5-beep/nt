@@ -1,7 +1,7 @@
 package com.v2ray.ang.ui.premium.vpn
 
-import androidx.xifecycle.ViewModel
-import androidx.xifecycle.viewModelScope
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -22,14 +22,12 @@ class VpnMainViewModel : ViewModel() {
     private var timerJob: Job? = null
 
     fun onActivationKeyChanged(value: String) {
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H4",
             location = "VpnMainViewModel.kt:onActivationKeyChanged",
             message = "activation key changed",
             data = JSONObject().put("length", value.length),
         )
-        // #endregion
         _uiState.update { state ->
             state.copy(activationKey = value)
         }
@@ -37,14 +35,12 @@ class VpnMainViewModel : ViewModel() {
 
     fun onLocationSelected(location: String) {
         val selected = VpnDemoData.locations.firstOrNull { it.title == location } ?: return
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H5",
             location = "VpnMainViewModel.kt:onLocationSelected",
             message = "location selected",
             data = JSONObject().put("location", selected.title),
         )
-        // #endregion
         _uiState.update { state ->
             state.copy(selectedLocation = selected)
         }
@@ -52,24 +48,20 @@ class VpnMainViewModel : ViewModel() {
 
     fun onConnectClick() {
         val currentState = _uiState.value
-        // #region agent log
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H1",
             location = "VpnMainViewModel.kt:onConnectClick",
             message = "premium_connect_clicked",
-            runId = "remove-activation-field",
+            runId = "regions-no-activation-field",
             data = JSONObject().put("state", currentState.connectionState.name),
         )
-        // #endregion
         if (currentState.connectionState != VpnConnectionState.Disconnected) {
-            // #region agent log
             VpnUiDebugLogger.log(
                 hypothesisId = "H3",
                 location = "VpnMainViewModel.kt:onConnectClick",
                 message = "connect ignored due to state",
                 data = JSONObject().put("state", currentState.connectionState.name),
             )
-            // #endregion
             return
         }
 
@@ -82,14 +74,12 @@ class VpnMainViewModel : ViewModel() {
                 elapsedSeconds = 0L,
             )
         }
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H3",
             location = "VpnMainViewModel.kt:onConnectClick",
             message = "state moved to connecting",
             data = JSONObject(),
         )
-        // #endregion
 
         connectJob = viewModelScope.launch {
             delay(1600L)
@@ -99,23 +89,19 @@ class VpnMainViewModel : ViewModel() {
                     elapsedSeconds = 0L,
                 )
             }
-            // #region agent log
             AgentDebugNdjsonLogger.log(
                 hypothesisId = "H2",
                 location = "VpnMainViewModel.kt:onConnectClick",
                 message = "premium_state_set_connected",
-                runId = "remove-activation-field",
+                runId = "regions-no-activation-field",
                 data = JSONObject(),
             )
-            // #endregion
-            // #region agent log
             VpnUiDebugLogger.log(
                 hypothesisId = "H3",
                 location = "VpnMainViewModel.kt:onConnectClick",
                 message = "state moved to connected",
                 data = JSONObject(),
             )
-            // #endregion
             startTimer()
         }
     }
@@ -123,29 +109,25 @@ class VpnMainViewModel : ViewModel() {
     fun onDisconnectClick() {
         connectJob?.cancel()
         timerJob?.cancel()
-        // #region agent log
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H2",
             location = "VpnMainViewModel.kt:onDisconnectClick",
             message = "premium_disconnect_clicked",
-            runId = "remove-activation-field",
+            runId = "regions-no-activation-field",
             data = JSONObject().put("prevState", _uiState.value.connectionState.name),
         )
-        // #endregion
         _uiState.update { state ->
             state.copy(
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
             )
         }
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H3",
             location = "VpnMainViewModel.kt:onDisconnectClick",
             message = "state moved to disconnected",
             data = JSONObject(),
         )
-        // #endregion
     }
 
     private fun startTimer() {
@@ -155,14 +137,12 @@ class VpnMainViewModel : ViewModel() {
                 delay(1000L)
                 _uiState.update { state ->
                     if (state.connectionState == VpnConnectionState.Connected) {
-                        // #region agent log
                         VpnUiDebugLogger.log(
                             hypothesisId = "H3",
                             location = "VpnMainViewModel.kt:startTimer",
                             message = "timer tick",
                             data = JSONObject().put("nextElapsedSeconds", state.elapsedSeconds + 1L),
                         )
-                        // #endregion
                         state.copy(elapsedSeconds = state.elapsedSeconds + 1L)
                     } else {
                         state
