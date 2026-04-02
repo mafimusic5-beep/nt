@@ -75,7 +75,6 @@ fun VpnMainRoute(
     VpnMainScreen(
         uiState = uiState,
         locations = VpnDemoData.locations,
-        onActivationKeyChanged = viewModel::onActivationKeyChanged,
         onLocationSelected = viewModel::onLocationSelected,
         onConnectClick = viewModel::onConnectClick,
         onDisconnectClick = viewModel::onDisconnectClick,
@@ -88,7 +87,6 @@ fun VpnMainRoute(
 fun VpnMainScreen(
     uiState: VpnMainUiState,
     locations: List<VpnLocationOption>,
-    onActivationKeyChanged: (String) -> Unit,
     onLocationSelected: (String) -> Unit,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
@@ -103,7 +101,6 @@ fun VpnMainScreen(
         val compactHeight = maxHeight < 760.dp
         val heroHeight = (maxHeight * if (compactHeight) 0.62f else 0.68f).coerceIn(380.dp, 620.dp)
 
-        // #region agent log (runtime evidence)
         LaunchedEffect(uiState.connectionState, uiState.elapsedSeconds, uiState.selectedLocation.id) {
             VpnNdjsonDebugLogger.log(
                 location = "VpnMainScreen.kt:VpnMainScreen",
@@ -117,7 +114,6 @@ fun VpnMainScreen(
                 ),
             )
         }
-        // #endregion
 
         Column(
             modifier = Modifier
@@ -147,12 +143,6 @@ fun VpnMainScreen(
             Spacer(modifier = Modifier.height(VpnPremiumTokens.Spacing.HeroToBottom))
 
             Column {
-                ActivationKeyField(
-                    value = uiState.activationKey,
-                    onValueChange = onActivationKeyChanged,
-                    enabled = uiState.connectionState != VpnConnectionState.Connected,
-                )
-                Spacer(modifier = Modifier.height(VpnPremiumTokens.Spacing.BottomBlockGap))
                 PrimaryConnectButton(
                     state = uiState.connectionState,
                     enabled = uiState.connectButtonEnabled,
@@ -209,8 +199,6 @@ fun HologramManBlock(
         modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
-        // Central character MUST use the provided drawable resource.
-        // Draw subtle glow + main outline via layered images (no Canvas silhouette generation).
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -383,7 +371,6 @@ fun ConnectionStatusOverlay(
     val state = uiState.connectionState
     val chestYOffset = 0.06f
 
-    // #region agent log (runtime evidence)
     LaunchedEffect(state, uiState.timerVisible) {
         VpnNdjsonDebugLogger.log(
             location = "VpnMainScreen.kt:ConnectionStatusOverlay",
@@ -396,7 +383,6 @@ fun ConnectionStatusOverlay(
             ),
         )
     }
-    // #endregion
 
     BoxWithConstraints(modifier = modifier) {
         Column(
@@ -489,12 +475,12 @@ fun ActivationKeyField(
 private fun LocationFlagEmoji(locationId: String, modifier: Modifier = Modifier) {
     val flag = remember(locationId) {
         when (locationId.lowercase()) {
-            "switzerland" -> "\uD83C\uDDE8\uD83C\uDDED" // CH
-            "netherlands" -> "\uD83C\uDDF3\uD83C\uDDF1" // NL
-            "germany" -> "\uD83C\uDDE9\uD83C\uDDEA" // DE
-            "france" -> "\uD83C\uDDEB\uD83C\uDDF7" // FR
-            "poland" -> "\uD83C\uDDF5\uD83C\uDDF1" // PL
-            else -> "\uD83C\uDFF3\uFE0F" // white flag fallback
+            "switzerland" -> "\uD83C\uDDE8\uD83C\uDDED"
+            "netherlands" -> "\uD83C\uDDF3\uD83C\uDDF1"
+            "germany" -> "\uD83C\uDDE9\uD83C\uDDEA"
+            "france" -> "\uD83C\uDDEB\uD83C\uDDF7"
+            "poland" -> "\uD83C\uDDF5\uD83C\uDDF1"
+            else -> "\uD83C\uDFF3\uFE0F"
         }
     }
     Box(
