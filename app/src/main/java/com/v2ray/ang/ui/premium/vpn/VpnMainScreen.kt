@@ -1,6 +1,5 @@
 package com.v2ray.ang.ui.premium.vpn
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.EaseInOutSine
 import androidx.compose.animation.core.RepeatMode
@@ -28,8 +27,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
@@ -40,8 +39,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -72,10 +69,12 @@ fun VpnMainRoute(
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val locations by viewModel.availableRegions.collectAsState()
+    val selectedLocation by viewModel.selectedRegion.collectAsState()
     VpnMainScreen(
         uiState = uiState,
-        locations = VpnDemoData.locations,
-        onActivationKeyChanged = viewModel::onActivationKeyChanged,
+        selectedLocation = selectedLocation,
+        locations = locations,
         onLocationSelected = viewModel::onLocationSelected,
         onConnectClick = viewModel::onConnectClick,
         onDisconnectClick = viewModel::onDisconnectClick,
@@ -87,9 +86,9 @@ fun VpnMainRoute(
 @Composable
 fun VpnMainScreen(
     uiState: VpnMainUiState,
-    locations: List<VpnLocationOption>,
-    onActivationKeyChanged: (String) -> Unit,
-    onLocationSelected: (String) -> Unit,
+    selectedLocation: VpnServerRegionUi?,
+    locations: List<VpnServerRegionUi>,
+    onLocationSelected: (Long) -> Unit,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onSettingsClick: () -> Unit = {},
@@ -103,21 +102,19 @@ fun VpnMainScreen(
         val compactHeight = maxHeight < 760.dp
         val heroHeight = (maxHeight * if (compactHeight) 0.62f else 0.68f).coerceIn(380.dp, 620.dp)
 
-        // #region agent log (runtime evidence)
-        LaunchedEffect(uiState.connectionState, uiState.elapsedSeconds, uiState.selectedLocation.id) {
+        LaunchedEffect(uiState.connectionState, uiState.elapsedSeconds, selectedLocation?.serverId) {
             VpnNdjsonDebugLogger.log(
                 location = "VpnMainScreen.kt:VpnMainScreen",
                 message = "compose_screen_state",
                 hypothesisId = "H1_state_drives_ui",
-                runId = "pre-fix",
+                runId = "real-regions",
                 data = mapOf(
                     "connectionState" to uiState.connectionState.name,
                     "elapsedSeconds" to uiState.elapsedSeconds,
-                    "locationId" to uiState.selectedLocation.id,
+                    "serverId" to (selectedLocation?.serverId ?: -1L),
                 ),
             )
         }
-        // #endregion
 
         Column(
             modifier = Modifier
@@ -129,7 +126,7 @@ fun VpnMainScreen(
                 .padding(horizontal = VpnPremiumTokens.Spacing.ScreenHorizontal, vertical = VpnPremiumTokens.Spacing.TopPadding),
         ) {
             TopBarArea(
-                selectedLocation = uiState.selectedLocation,
+                selectedLocation = selectedLocation,
                 locations = locations,
                 onLocationSelected = onLocationSelected,
                 onSettingsClick = onSettingsClick,
@@ -147,15 +144,19 @@ fun VpnMainScreen(
             Spacer(modifier = Modifier.height(VpnPremiumTokens.Spacing.HeroToBottom))
 
             Column {
-                ActivationKeyField(
-                    value = uiState.activationKey,
-                    onValueChange = onActivationKeyChanged,
-                    enabled = uiState.connectionState != VpnConnectionState.Connected,
-                )
-                Spacer(modifier = Modifier.height(VpnPremiumTokens.Spacing.BottomBlockGap))
+                if (locations.isEmpty()) {
+                    Text(
+                        text = "Нет доступных регионов",
+                        color = VpnPremiumTokens.Colors.TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(modifier = Modifier.height(VpnPremiumTokens.Spacing.BottomBlockGap))
+                }
                 PrimaryConnectButton(
                     state = uiState.connectionState,
-                    enabled = uiState.connectButtonEnabled,
+                    enabled = uiState.connectButtonEnabled && selectedLocation != null,
                     onClick = {
                         if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick()
                     },
@@ -209,8 +210,6 @@ fun HologramManBlock(
         modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
-        // Central character MUST use the provided drawable resource.
-        // Draw subtle glow + main outline via layered images (no Canvas silhouette generation).
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -260,9 +259,9 @@ fun HologramManBlock(
 
 @Composable
 fun TopBarArea(
-    selectedLocation: VpnLocationOption,
-    locations: List<VpnLocationOption>,
-    onLocationSelected: (String) -> Unit,
+    selectedLocation: VpnServerRegionUi?,
+    locations: List<VpnServerRegionUi>,
+    onLocationSelected: (Long) -> Unit,
     onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -276,7 +275,7 @@ fun TopBarArea(
             onLocationSelected = onLocationSelected,
             modifier = Modifier
                 .weight(1f, fill = false)
-                .widthIn(max = VpnPremiumTokens.Sizes.TopSelectorMaxWidth),
+                .widthIn(max = 260.dp),
         )
         Spacer(modifier = Modifier.weight(1f, fill = true))
         SettingsCircleButton(onClick = onSettingsClick)
@@ -285,12 +284,14 @@ fun TopBarArea(
 
 @Composable
 fun LocationSelector(
-    selectedLocation: VpnLocationOption,
-    locations: List<VpnLocationOption>,
-    onLocationSelected: (String) -> Unit,
+    selectedLocation: VpnServerRegionUi?,
+    locations: List<VpnServerRegionUi>,
+    onLocationSelected: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val hasLocations = locations.isNotEmpty()
+    val currentLocation = selectedLocation ?: locations.firstOrNull()
     Box(modifier = modifier) {
         Row(
             modifier = Modifier
@@ -298,18 +299,19 @@ fun LocationSelector(
                 .clip(RoundedCornerShape(VpnPremiumTokens.Sizes.SelectorCorner))
                 .background(VpnPremiumTokens.Colors.Surface)
                 .border(1.dp, VpnPremiumTokens.Colors.BorderStrong, RoundedCornerShape(VpnPremiumTokens.Sizes.SelectorCorner))
-                .clickable { expanded = true }
+                .clickable(enabled = hasLocations) { expanded = true }
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LocationFlagEmoji(locationId = selectedLocation.id)
+            LocationFlagEmoji(location = currentLocation)
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = selectedLocation.title,
+                text = currentLocation?.title ?: "Нет региона",
                 style = MaterialTheme.typography.titleMedium,
                 color = VpnPremiumTokens.Colors.TextPrimary,
                 modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
             )
             Icon(
                 imageVector = Icons.Rounded.KeyboardArrowDown,
@@ -318,7 +320,7 @@ fun LocationSelector(
             )
         }
         DropdownMenu(
-            expanded = expanded,
+            expanded = expanded && hasLocations,
             onDismissRequest = { expanded = false },
             modifier = Modifier.background(VpnPremiumTokens.Colors.Background),
         ) {
@@ -326,12 +328,15 @@ fun LocationSelector(
                 DropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            LocationFlagEmoji(locationId = location.id)
+                            LocationFlagEmoji(location = location)
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(location.title, color = VpnPremiumTokens.Colors.TextPrimary)
                         }
                     },
-                    onClick = { expanded = false; onLocationSelected(location.title) },
+                    onClick = {
+                        expanded = false
+                        onLocationSelected(location.serverId)
+                    },
                 )
             }
         }
@@ -383,20 +388,18 @@ fun ConnectionStatusOverlay(
     val state = uiState.connectionState
     val chestYOffset = 0.06f
 
-    // #region agent log (runtime evidence)
     LaunchedEffect(state, uiState.timerVisible) {
         VpnNdjsonDebugLogger.log(
             location = "VpnMainScreen.kt:ConnectionStatusOverlay",
             message = "compose_overlay",
             hypothesisId = "H2_overlay_branching",
-            runId = "pre-fix",
+            runId = "real-regions",
             data = mapOf(
                 "connectionState" to state.name,
                 "timerVisible" to uiState.timerVisible,
             ),
         )
     }
-    // #endregion
 
     BoxWithConstraints(modifier = modifier) {
         Column(
@@ -458,44 +461,16 @@ fun PrimaryConnectButton(
 }
 
 @Composable
-fun ActivationKeyField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = modifier.fillMaxWidth(),
-        enabled = enabled,
-        singleLine = true,
-        shape = RoundedCornerShape(VpnPremiumTokens.Sizes.FieldCorner),
-        label = { Text("Activation key", color = VpnPremiumTokens.Colors.TextSecondary) },
-        colors = OutlinedTextFieldDefaults.colors(
-            unfocusedContainerColor = Color.Transparent,
-            focusedContainerColor = Color.Transparent,
-            focusedTextColor = Color.White,
-            unfocusedTextColor = Color.White,
-            disabledTextColor = VpnPremiumTokens.Colors.TextSecondary.copy(alpha = 0.9f),
-            unfocusedBorderColor = VpnPremiumTokens.Colors.BorderStrong,
-            focusedBorderColor = VpnPremiumTokens.Colors.BorderStrong.copy(alpha = 0.9f),
-            disabledBorderColor = VpnPremiumTokens.Colors.BorderSubtle,
-        ),
-    )
-}
-
-@Composable
-private fun LocationFlagEmoji(locationId: String, modifier: Modifier = Modifier) {
-    val flag = remember(locationId) {
-        when (locationId.lowercase()) {
-            "switzerland" -> "\uD83C\uDDE8\uD83C\uDDED" // CH
-            "netherlands" -> "\uD83C\uDDF3\uD83C\uDDF1" // NL
-            "germany" -> "\uD83C\uDDE9\uD83C\uDDEA" // DE
-            "france" -> "\uD83C\uDDEB\uD83C\uDDF7" // FR
-            "poland" -> "\uD83C\uDDF5\uD83C\uDDF1" // PL
-            else -> "\uD83C\uDFF3\uFE0F" // white flag fallback
-        }
+private fun LocationFlagEmoji(location: VpnServerRegionUi?, modifier: Modifier = Modifier) {
+    val raw = remember(location?.title) { location?.title?.lowercase().orEmpty() }
+    val flag = when {
+        raw.contains("moscow") || raw.contains("моск") || raw.contains("russia") || raw.contains("рос") -> "\uD83C\uDDF7\uD83C\uDDFA"
+        raw.contains("switzerland") || raw.contains("швейцар") -> "\uD83C\uDDE8\uD83C\uDDED"
+        raw.contains("netherlands") || raw.contains("нидерл") || raw.contains("голланд") -> "\uD83C\uDDF3\uD83C\uDDF1"
+        raw.contains("germany") || raw.contains("герман") -> "\uD83C\uDDE9\uD83C\uDDEA"
+        raw.contains("france") || raw.contains("франц") -> "\uD83C\uDDEB\uD83C\uDDF7"
+        raw.contains("poland") || raw.contains("поль") -> "\uD83C\uDDF5\uD83C\uDDF1"
+        else -> "\uD83C\uDFF3\uFE0F"
     }
     Box(
         modifier = modifier
