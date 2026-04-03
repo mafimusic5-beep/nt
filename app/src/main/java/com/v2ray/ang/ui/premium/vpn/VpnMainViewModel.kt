@@ -2,6 +2,10 @@ package com.v2ray.ang.ui.premium.vpn
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -21,30 +25,33 @@ class VpnMainViewModel : ViewModel() {
     private var connectJob: Job? = null
     private var timerJob: Job? = null
 
+    init {
+        val storedKey = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY).orEmpty()
+        if (storedKey.isNotBlank()) {
+            _uiState.update { it.copy(activationKey = storedKey) }
+        }
+    }
+
     fun onActivationKeyChanged(value: String) {
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H4",
             location = "VpnMainViewModel.kt:onActivationKeyChanged",
             message = "activation key changed",
             data = JSONObject().put("length", value.length),
         )
-        // #endregion
         _uiState.update { state ->
-            state.copy(activationKey = value)
+            state.copy(activationKey = value, errorMessage = null)
         }
     }
 
     fun onLocationSelected(location: String) {
         val selected = VpnDemoData.locations.firstOrNull { it.title == location } ?: return
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H5",
             location = "VpnMainViewModel.kt:onLocationSelected",
             message = "location selected",
             data = JSONObject().put("location", selected.title),
         )
-        // #endregion
         _uiState.update { state ->
             state.copy(selectedLocation = selected)
         }
@@ -52,38 +59,32 @@ class VpnMainViewModel : ViewModel() {
 
     fun onConnectClick() {
         val currentState = _uiState.value
-        // #region agent log
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H1",
             location = "VpnMainViewModel.kt:onConnectClick",
             message = "premium_connect_clicked",
-            runId = "pre-fix",
+            runId = "post-fix",
             data = JSONObject()
                 .put("state", currentState.connectionState.name)
                 .put("activationKeyLen", currentState.activationKey.length)
                 .put("activationKeyBlank", currentState.activationKey.isBlank()),
         )
-        // #endregion
         if (currentState.connectionState != VpnConnectionState.Disconnected) {
-            // #region agent log
             VpnUiDebugLogger.log(
                 hypothesisId = "H3",
                 location = "VpnMainViewModel.kt:onConnectClick",
                 message = "connect ignored due to state",
                 data = JSONObject().put("state", currentState.connectionState.name),
             )
-            // #endregion
             return
         }
         if (currentState.activationKey.isBlank()) {
-            // #region agent log
             VpnUiDebugLogger.log(
                 hypothesisId = "H3",
                 location = "VpnMainViewModel.kt:onConnectClick",
                 message = "connect blocked by empty activation key",
                 data = JSONObject(),
             )
-            // #endregion
             return
         }
 
@@ -94,72 +95,80 @@ class VpnMainViewModel : ViewModel() {
             state.copy(
                 connectionState = VpnConnectionState.Connecting,
                 elapsedSeconds = 0L,
+                errorMessage = null,
             )
         }
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H3",
             location = "VpnMainViewModel.kt:onConnectClick",
-            message = "state moved to connecting",
+            message = "state moved to connecting, calling syncProfileAndVpnConfig",
             data = JSONObject(),
         )
-        // #endregion
 
+        val accessKey = currentState.activationKey
         connectJob = viewModelScope.launch {
-            delay(1600L)
-            _uiState.update { state ->
-                state.copy(
-                    connectionState = VpnConnectionState.Connected,
-                    elapsedSeconds = 0L,
-                )
-            }
-            // #region agent log
-            AgentDebugNdjsonLogger.log(
-                hypothesisId = "H2",
-                location = "VpnMainViewModel.kt:onConnectClick",
-                message = "premium_state_set_connected",
-                runId = "pre-fix",
-                data = JSONObject(),
+            val result = EmeryVpnSync.syncProfileAndVpnConfig(accessKey)
+            result.fold(
+                onSuccess = {
+                    AgentDebugNdjsonLogger.log(
+                        hypothesisId = "H2",
+                        location = "VpnMainViewModel.kt:onConnectClick",
+                        message = "premium_sync_success_setting_connected",
+                        runId = "post-fix",
+                        data = JSONObject(),
+                    )
+                    _uiState.update { state ->
+                        state.copy(
+                            connectionState = VpnConnectionState.Connected,
+                            elapsedSeconds = 0L,
+                            errorMessage = null,
+                        )
+                    }
+                    startTimer()
+                },
+                onFailure = { err ->
+                    AgentDebugNdjsonLogger.log(
+                        hypothesisId = "H2",
+                        location = "VpnMainViewModel.kt:onConnectClick",
+                        message = "premium_sync_failed",
+                        runId = "post-fix",
+                        data = JSONObject().put("error", err.message ?: "unknown"),
+                    )
+                    _uiState.update { state ->
+                        state.copy(
+                            connectionState = VpnConnectionState.Disconnected,
+                            elapsedSeconds = 0L,
+                            errorMessage = err.message ?: "Connection failed",
+                        )
+                    }
+                },
             )
-            // #endregion
-            // #region agent log
-            VpnUiDebugLogger.log(
-                hypothesisId = "H3",
-                location = "VpnMainViewModel.kt:onConnectClick",
-                message = "state moved to connected",
-                data = JSONObject(),
-            )
-            // #endregion
-            startTimer()
         }
     }
 
     fun onDisconnectClick() {
         connectJob?.cancel()
         timerJob?.cancel()
-        // #region agent log
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H2",
             location = "VpnMainViewModel.kt:onDisconnectClick",
             message = "premium_disconnect_clicked",
-            runId = "pre-fix",
+            runId = "post-fix",
             data = JSONObject().put("prevState", _uiState.value.connectionState.name),
         )
-        // #endregion
         _uiState.update { state ->
             state.copy(
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
+                errorMessage = null,
             )
         }
-        // #region agent log
         VpnUiDebugLogger.log(
             hypothesisId = "H3",
             location = "VpnMainViewModel.kt:onDisconnectClick",
             message = "state moved to disconnected",
             data = JSONObject(),
         )
-        // #endregion
     }
 
     private fun startTimer() {
@@ -169,14 +178,6 @@ class VpnMainViewModel : ViewModel() {
                 delay(1000L)
                 _uiState.update { state ->
                     if (state.connectionState == VpnConnectionState.Connected) {
-                        // #region agent log
-                        VpnUiDebugLogger.log(
-                            hypothesisId = "H3",
-                            location = "VpnMainViewModel.kt:startTimer",
-                            message = "timer tick",
-                            data = JSONObject().put("nextElapsedSeconds", state.elapsedSeconds + 1L),
-                        )
-                        // #endregion
                         state.copy(elapsedSeconds = state.elapsedSeconds + 1L)
                     } else {
                         state

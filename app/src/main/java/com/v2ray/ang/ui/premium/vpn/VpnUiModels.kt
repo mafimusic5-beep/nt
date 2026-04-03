@@ -18,6 +18,7 @@ data class VpnMainUiState(
     val selectedLocation: VpnLocationOption = VpnDemoData.locations.first(),
     val connectionState: VpnConnectionState = VpnConnectionState.Disconnected,
     val elapsedSeconds: Long = 0L,
+    val errorMessage: String? = null,
 ) {
     val formattedDuration: String
         get() {

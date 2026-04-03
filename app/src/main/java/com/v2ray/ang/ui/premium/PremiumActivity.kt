@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,22 +17,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SupportAgent
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -45,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,12 +55,12 @@ import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.ui.AccessKeyActivity
-import com.v2ray.ang.ui.MainActivity
+import com.v2ray.ang.ui.premium.vpn.VpnConnectionState
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
@@ -126,7 +118,13 @@ class PremiumActivity : ComponentActivity() {
                             onVpnPermissionGranted = onGranted
                             vpnPermissionLauncher.launch(intent)
                         }
-                    }
+                    },
+                    startVpnRuntime = {
+                        V2RayServiceManager.startVService(this)
+                    },
+                    stopVpnRuntime = {
+                        V2RayServiceManager.stopVService(this)
+                    },
                 )
             }
         }
@@ -137,6 +135,8 @@ class PremiumActivity : ComponentActivity() {
 @Composable
 private fun EmeryApp(
     requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
+    startVpnRuntime: () -> Unit,
+    stopVpnRuntime: () -> Unit,
 ) {
     val navController = rememberNavController()
     var showMenu by remember { mutableStateOf(false) }
@@ -160,6 +160,7 @@ private fun EmeryApp(
             }
             composable(EmeryRoute.Home.name) {
                 val vpnMainViewModel: VpnMainViewModel = viewModel()
+                val uiState by vpnMainViewModel.uiState.collectAsState()
                 LaunchedEffect(Unit) {
                     VpnUiDebugLogger.log(
                         hypothesisId = "H2",
@@ -167,6 +168,39 @@ private fun EmeryApp(
                         message = "home route switched to vpn compose screen",
                         data = JSONObject(),
                     )
+                }
+                // Observe connectionState transitions and drive the real VPN runtime.
+                // We skip the very first emission (initial Disconnected on composition) to
+                // avoid spuriously stopping a service that was never started from this screen.
+                var isFirstEmission by remember { mutableStateOf(true) }
+                LaunchedEffect(uiState.connectionState) {
+                    if (isFirstEmission) {
+                        isFirstEmission = false
+                        return@LaunchedEffect
+                    }
+                    when (uiState.connectionState) {
+                        VpnConnectionState.Connected -> {
+                            VpnUiDebugLogger.log(
+                                hypothesisId = "H_vpn_start",
+                                location = "PremiumActivity.kt:EmeryApp",
+                                message = "connectionState=Connected, requesting VPN permission then starting runtime",
+                                data = JSONObject(),
+                            )
+                            requestVpnPermission {
+                                startVpnRuntime()
+                            }
+                        }
+                        VpnConnectionState.Disconnected -> {
+                            VpnUiDebugLogger.log(
+                                hypothesisId = "H_vpn_stop",
+                                location = "PremiumActivity.kt:EmeryApp",
+                                message = "connectionState=Disconnected, stopping runtime",
+                                data = JSONObject(),
+                            )
+                            stopVpnRuntime()
+                        }
+                        else -> Unit
+                    }
                 }
                 VpnMainRoute(
                     viewModel = vpnMainViewModel,
