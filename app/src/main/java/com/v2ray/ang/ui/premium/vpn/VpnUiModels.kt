@@ -8,16 +8,10 @@ enum class VpnConnectionState {
     Connected,
 }
 
-data class VpnLocationOption(
-    val id: String,
-    val title: String,
-)
-
 data class VpnMainUiState(
-    val activationKey: String = "",
-    val selectedLocation: VpnLocationOption = VpnDemoData.locations.first(),
     val connectionState: VpnConnectionState = VpnConnectionState.Disconnected,
     val elapsedSeconds: Long = 0L,
+    val errorMessage: String? = null,
 ) {
     val formattedDuration: String
         get() {
@@ -43,7 +37,7 @@ data class VpnMainUiState(
 
     val connectButtonEnabled: Boolean
         get() = when (connectionState) {
-            VpnConnectionState.Disconnected -> activationKey.isNotBlank()
+            VpnConnectionState.Disconnected -> true
             VpnConnectionState.Connecting -> false
             VpnConnectionState.Connected -> true
         }
@@ -53,24 +47,18 @@ data class VpnMainUiState(
 }
 
 object VpnDemoData {
-    val locations: List<VpnLocationOption> = listOf(
-        VpnLocationOption(id = "switzerland", title = "Switzerland"),
-        VpnLocationOption(id = "netherlands", title = "Netherlands"),
-        VpnLocationOption(id = "germany", title = "Germany"),
-        VpnLocationOption(id = "france", title = "France"),
-        VpnLocationOption(id = "poland", title = "Poland"),
+    val previewRegions: List<VpnServerRegionUi> = listOf(
+        VpnServerRegionUi(serverId = 1L, title = "Switzerland", healthStatus = "ok"),
+        VpnServerRegionUi(serverId = 2L, title = "Netherlands", healthStatus = "ok"),
+        VpnServerRegionUi(serverId = 3L, title = "Germany", healthStatus = "ok"),
     )
 
     fun disconnectedState(): VpnMainUiState = VpnMainUiState(
-        activationKey = "EVPN-24H9-X2Q7",
-        selectedLocation = locations.first(),
         connectionState = VpnConnectionState.Disconnected,
         elapsedSeconds = 0L,
     )
 
     fun connectedState(): VpnMainUiState = VpnMainUiState(
-        activationKey = "EVPN-24H9-X2Q7",
-        selectedLocation = locations.first(),
         connectionState = VpnConnectionState.Connected,
         elapsedSeconds = 763L,
     )
