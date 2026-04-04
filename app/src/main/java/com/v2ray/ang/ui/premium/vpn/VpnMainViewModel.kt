@@ -1,4 +1,4 @@
-package com.v2ray.ang.ui.premium.vpn
+﻿package com.v2ray.ang.ui.premium.vpn
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,7 +15,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-internal data class VpnServerRegionUi(
+data class VpnServerRegionUi(
     val serverId: Long,
     val title: String,
     val healthStatus: String,
@@ -198,3 +198,4 @@ class VpnMainViewModel : ViewModel() {
         super.onCleared()
     }
 }
+
