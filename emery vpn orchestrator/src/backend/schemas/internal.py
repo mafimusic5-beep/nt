@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+﻿from pydantic import BaseModel, Field
 
 
 class CreateOrderRequest(BaseModel):
@@ -18,6 +18,8 @@ class ConfirmPaymentRequest(BaseModel):
     provider_payment_id: str
     idempotency_key: str
     paid: bool = True
+    target_code: str | None = None
+    issue_new_code: bool = False
 
 
 class ConfirmPaymentResponse(BaseModel):

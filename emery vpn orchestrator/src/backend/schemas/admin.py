@@ -96,7 +96,21 @@ class HealthcheckRunResponse(BaseModel):
     results: list[dict]
 
 
+class ActivationCodeListItemResponse(BaseModel):
+    id: int
+    code_hash: str
+    status: str
+    telegram_id: int
+    subscription_id: int
+    subscription_status: str
+    region_code: str
+    created_at: datetime
+    first_redeemed_at: datetime | None
+    subscription_ends_at: datetime
+
+
 class ActivationCodeInfoResponse(BaseModel):
+    id: int
     code_hash: str
     status: str
     user_id: int
@@ -110,6 +124,7 @@ class ActivationCodeInfoResponse(BaseModel):
 
 
 class ActivationCodeDeleteResponse(BaseModel):
+    id: int
     code_hash: str
     status: str
     deleted: bool

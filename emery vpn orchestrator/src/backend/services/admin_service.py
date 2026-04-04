@@ -1,18 +1,27 @@
 ﻿import logging
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.backend.repositories.admin_repo import AdminRepository
 from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.repositories.order_repo import OrderRepository
 from src.backend.repositories.subscription_repo import SubscriptionRepository
+from src.backend.schemas.admin import (
+    ActivationCodeDeleteResponse,
+    ActivationCodeInfoResponse,
+    ActivationCodeListItemResponse,
+    GrantSubscriptionRequest,
+    GrantSubscriptionResponse,
+    VpnNodeResponse,
+    VpnNodeUpsertRequest,
+)
 from src.backend.services.node_adapters import FirstVdsBillManagerProvisioningService
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.utils.security import generate_activation_code, hash_activation_code
-from src.backend.schemas.admin import ActivationCodeDeleteResponse, ActivationCodeInfoResponse, GrantSubscriptionRequest, GrantSubscriptionResponse, VpnNodeResponse, VpnNodeUpsertRequest
 from src.common.config import settings
-from src.common.models import User
+from src.common.models import ActivationCode, User
 
 logger = logging.getLogger(__name__)
 
@@ -110,19 +119,44 @@ class AdminService:
             for r in rows
         ]
 
-    def get_code_info(self, plain_code: str) -> ActivationCodeInfoResponse:
-        normalized = plain_code.strip().upper()
-        if not normalized:
-            raise HTTPException(status_code=400, detail="activation_code_required")
-        code_hash = hash_activation_code(normalized)
-        code = self.admin_repo.get_activation_code_by_hash(code_hash)
-        if not code:
-            raise HTTPException(status_code=404, detail="activation_code_not_found")
+    def list_codes(self, limit: int = 10, offset: int = 0) -> list[ActivationCodeListItemResponse]:
+        limit = max(1, min(limit, 50))
+        offset = max(0, offset)
+        codes = self.db.scalars(
+            select(ActivationCode)
+            .order_by(ActivationCode.created_at.desc(), ActivationCode.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        items: list[ActivationCodeListItemResponse] = []
+        for code in codes:
+            user = self.db.get(User, code.user_id)
+            sub = self.sub_repo.get_subscription(code.subscription_id)
+            if not user or not sub:
+                continue
+            items.append(
+                ActivationCodeListItemResponse(
+                    id=code.id,
+                    code_hash=code.code_hash,
+                    status=code.status,
+                    telegram_id=user.telegram_id,
+                    subscription_id=code.subscription_id,
+                    subscription_status=sub.status,
+                    region_code=sub.region_code,
+                    created_at=code.created_at,
+                    first_redeemed_at=code.first_redeemed_at,
+                    subscription_ends_at=sub.ends_at,
+                )
+            )
+        return items
+
+    def _build_code_info(self, code: ActivationCode) -> ActivationCodeInfoResponse:
         user = self.db.get(User, code.user_id)
         sub = self.sub_repo.get_subscription(code.subscription_id)
         if not user or not sub:
             raise HTTPException(status_code=404, detail="activation_code_relations_not_found")
         return ActivationCodeInfoResponse(
+            id=code.id,
             code_hash=code.code_hash,
             status=code.status,
             user_id=code.user_id,
@@ -135,6 +169,22 @@ class AdminService:
             subscription_ends_at=sub.ends_at,
         )
 
+    def get_code_info(self, plain_code: str) -> ActivationCodeInfoResponse:
+        normalized = plain_code.strip().upper()
+        if not normalized:
+            raise HTTPException(status_code=400, detail="activation_code_required")
+        code_hash = hash_activation_code(normalized)
+        code = self.admin_repo.get_activation_code_by_hash(code_hash)
+        if not code:
+            raise HTTPException(status_code=404, detail="activation_code_not_found")
+        return self._build_code_info(code)
+
+    def get_code_info_by_id(self, code_id: int) -> ActivationCodeInfoResponse:
+        code = self.db.get(ActivationCode, code_id)
+        if not code:
+            raise HTTPException(status_code=404, detail="activation_code_not_found")
+        return self._build_code_info(code)
+
     def delete_code(self, plain_code: str) -> ActivationCodeDeleteResponse:
         normalized = plain_code.strip().upper()
         if not normalized:
@@ -143,8 +193,14 @@ class AdminService:
         code = self.admin_repo.get_activation_code_by_hash(code_hash)
         if not code:
             raise HTTPException(status_code=404, detail="activation_code_not_found")
+        return self.delete_code_by_id(code.id)
+
+    def delete_code_by_id(self, code_id: int) -> ActivationCodeDeleteResponse:
+        code = self.db.get(ActivationCode, code_id)
+        if not code:
+            raise HTTPException(status_code=404, detail="activation_code_not_found")
         if code.status != "active":
-            return ActivationCodeDeleteResponse(code_hash=code.code_hash, status=code.status, deleted=False)
+            return ActivationCodeDeleteResponse(id=code.id, code_hash=code.code_hash, status=code.status, deleted=False)
         self.admin_repo.revoke_activation_code(code)
         self.audit_repo.write(
             "admin",
@@ -155,7 +211,27 @@ class AdminService:
             {"subscription_id": code.subscription_id},
         )
         self.db.commit()
-        return ActivationCodeDeleteResponse(code_hash=code.code_hash, status=code.status, deleted=True)
+        return ActivationCodeDeleteResponse(id=code.id, code_hash=code.code_hash, status=code.status, deleted=True)
+
+    def generate_code_for_code_id(self, code_id: int) -> dict:
+        code = self.db.get(ActivationCode, code_id)
+        if not code:
+            raise HTTPException(status_code=404, detail="activation_code_not_found")
+        sub = self.sub_repo.get_subscription(code.subscription_id)
+        if not sub:
+            raise HTTPException(status_code=404, detail="subscription_not_found")
+        plain = generate_activation_code(12)
+        self.order_repo.create_activation_code(code.user_id, sub.id, hash_activation_code(plain))
+        self.audit_repo.write(
+            "admin",
+            "api",
+            "manual_activation_code_generated_for_existing_subscription",
+            "subscription",
+            str(sub.id),
+            {"source_code_id": code.id},
+        )
+        self.db.commit()
+        return {"activation_code": plain, "subscription_id": sub.id}
 
     def best_moscow_node(self) -> dict:
         node = self.node_orchestrator.choose_best_moscow_node()
@@ -181,4 +257,3 @@ class AdminService:
 
     def run_healthcheck(self) -> dict:
         return self.node_orchestrator.run_healthcheck()
-
