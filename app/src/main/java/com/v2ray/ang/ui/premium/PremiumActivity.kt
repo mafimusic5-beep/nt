@@ -1,4 +1,4 @@
-package com.v2ray.ang.ui.premium
+﻿package com.v2ray.ang.ui.premium
 
 import android.content.Intent
 import android.net.VpnService
@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,22 +17,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SupportAgent
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -52,27 +43,29 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.ui.AccessKeyActivity
-import com.v2ray.ang.ui.MainActivity
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
+import com.v2ray.ang.ui.premium.vpn.VpnServiceCommand
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -85,9 +78,9 @@ private data class NavItem(
 )
 
 private val navItems = listOf(
-    NavItem(EmeryRoute.Home, Icons.Default.Home, "Главная"),
-    NavItem(EmeryRoute.Devices, Icons.Default.Devices, "Устройства"),
-    NavItem(EmeryRoute.Support, Icons.Default.SupportAgent, "Поддержка")
+    NavItem(EmeryRoute.Home, Icons.Default.Home, "Р“Р»Р°РІРЅР°СЏ"),
+    NavItem(EmeryRoute.Devices, Icons.Default.Devices, "РЈСЃС‚СЂРѕР№СЃС‚РІР°"),
+    NavItem(EmeryRoute.Support, Icons.Default.SupportAgent, "РџРѕРґРґРµСЂР¶РєР°")
 )
 
 class PremiumActivity : ComponentActivity() {
@@ -160,6 +153,8 @@ private fun EmeryApp(
             }
             composable(EmeryRoute.Home.name) {
                 val vpnMainViewModel: VpnMainViewModel = viewModel()
+                val context = LocalContext.current
+
                 LaunchedEffect(Unit) {
                     VpnUiDebugLogger.log(
                         hypothesisId = "H2",
@@ -168,6 +163,27 @@ private fun EmeryApp(
                         data = JSONObject(),
                     )
                 }
+
+                LaunchedEffect(vpnMainViewModel, context) {
+                    vpnMainViewModel.commands.collectLatest { command ->
+                        when (command) {
+                            VpnServiceCommand.Start -> {
+                                if (SettingsManager.isVpnMode()) {
+                                    requestVpnPermission {
+                                        V2RayServiceManager.startVService(context)
+                                    }
+                                } else {
+                                    V2RayServiceManager.startVService(context)
+                                }
+                            }
+
+                            VpnServiceCommand.Stop -> {
+                                V2RayServiceManager.stopVService(context)
+                            }
+                        }
+                    }
+                }
+
                 VpnMainRoute(
                     viewModel = vpnMainViewModel,
                     onSettingsClick = { showMenu = true },
@@ -192,7 +208,7 @@ private fun EmeryApp(
                         .padding(bottom = 24.dp)
                 ) {
                     Text(
-                        "Навигация",
+                        "РќР°РІРёРіР°С†РёСЏ",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         color = MaterialTheme.colorScheme.primary
@@ -203,7 +219,6 @@ private fun EmeryApp(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
                                 .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
                                 .clickable {
                                     scope.launch { sheetState.hide() }.invokeOnCompletion {
@@ -280,9 +295,9 @@ private fun DevicesScreen(onBack: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Устройства", style = MaterialTheme.typography.titleLarge)
+        Text("РЈСЃС‚СЂРѕР№СЃС‚РІР°", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(24.dp))
-        OutlinedButton(onClick = onBack) { Text("Назад") }
+        OutlinedButton(onClick = onBack) { Text("РќР°Р·Р°Рґ") }
     }
 }
 
@@ -295,8 +310,8 @@ private fun SupportScreen(onBack: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Поддержка", style = MaterialTheme.typography.titleLarge)
+        Text("РџРѕРґРґРµСЂР¶РєР°", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(24.dp))
-        OutlinedButton(onClick = onBack) { Text("Назад") }
+        OutlinedButton(onClick = onBack) { Text("РќР°Р·Р°Рґ") }
     }
 }

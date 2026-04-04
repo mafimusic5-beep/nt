@@ -4,12 +4,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
+import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -20,6 +25,11 @@ data class VpnServerRegionUi(
     val title: String,
     val healthStatus: String,
 )
+
+sealed class VpnServiceCommand {
+    object Start : VpnServiceCommand()
+    object Stop : VpnServiceCommand()
+}
 
 class VpnMainViewModel : ViewModel() {
 
@@ -32,11 +42,71 @@ class VpnMainViewModel : ViewModel() {
     private val _selectedRegion = MutableStateFlow<VpnServerRegionUi?>(null)
     val selectedRegion: StateFlow<VpnServerRegionUi?> = _selectedRegion.asStateFlow()
 
+    private val _commands = MutableSharedFlow<VpnServiceCommand>(extraBufferCapacity = 1)
+    val commands: SharedFlow<VpnServiceCommand> = _commands.asSharedFlow()
+
     private var connectJob: Job? = null
     private var timerJob: Job? = null
 
     init {
         refreshAvailableRegions()
+        observeVpnRuntimeState()
+    }
+
+    private fun observeVpnRuntimeState() {
+        viewModelScope.launch {
+            V2RayServiceManager.vpnState.collectLatest { runtimeState ->
+                when (runtimeState) {
+                    V2RayServiceManager.VpnRuntimeState.CONNECTING -> {
+                        timerJob?.cancel()
+                        _uiState.update { state ->
+                            state.copy(
+                                connectionState = VpnConnectionState.Connecting,
+                                errorMessage = null,
+                            )
+                        }
+                    }
+
+                    V2RayServiceManager.VpnRuntimeState.CONNECTED -> {
+                        val wasConnected = _uiState.value.connectionState == VpnConnectionState.Connected
+                        _uiState.update { state ->
+                            state.copy(
+                                connectionState = VpnConnectionState.Connected,
+                                errorMessage = null,
+                            )
+                        }
+                        if (!wasConnected) {
+                            startTimer()
+                        }
+                    }
+
+                    V2RayServiceManager.VpnRuntimeState.DISCONNECTING -> {
+                        // Keep the current UI state until the runtime reports DISCONNECTED.
+                    }
+
+                    V2RayServiceManager.VpnRuntimeState.DISCONNECTED -> {
+                        timerJob?.cancel()
+                        _uiState.update { state ->
+                            state.copy(
+                                connectionState = VpnConnectionState.Disconnected,
+                                elapsedSeconds = 0L,
+                            )
+                        }
+                    }
+
+                    V2RayServiceManager.VpnRuntimeState.ERROR -> {
+                        timerJob?.cancel()
+                        _uiState.update { state ->
+                            state.copy(
+                                connectionState = VpnConnectionState.Disconnected,
+                                elapsedSeconds = 0L,
+                                errorMessage = "VPN start failed",
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun refreshAvailableRegions() {
@@ -115,6 +185,7 @@ class VpnMainViewModel : ViewModel() {
             state.copy(
                 connectionState = VpnConnectionState.Connecting,
                 elapsedSeconds = 0L,
+                errorMessage = null,
             )
         }
 
@@ -122,27 +193,23 @@ class VpnMainViewModel : ViewModel() {
             val result = EmeryVpnSync.connectToServer(accessKey = accessKey, serverId = selectedRegion.serverId)
             result.fold(
                 onSuccess = {
-                    _uiState.update { state ->
-                        state.copy(
-                            connectionState = VpnConnectionState.Connected,
-                            elapsedSeconds = 0L,
-                        )
-                    }
-                    startTimer()
+                    _commands.tryEmit(VpnServiceCommand.Start)
                     VpnUiDebugLogger.log(
                         hypothesisId = "H3",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "server connected from backend payload",
+                        message = "server imported, waiting for runtime connected",
                         data = JSONObject()
                             .put("serverId", selectedRegion.serverId)
                             .put("title", selectedRegion.title),
                     )
                 },
                 onFailure = { error ->
+                    timerJob?.cancel()
                     _uiState.update { state ->
                         state.copy(
                             connectionState = VpnConnectionState.Disconnected,
                             elapsedSeconds = 0L,
+                            errorMessage = error.message ?: "connect_failed",
                         )
                     }
                     VpnUiDebugLogger.log(
@@ -160,18 +227,23 @@ class VpnMainViewModel : ViewModel() {
     }
 
     fun onDisconnectClick() {
-        connectJob?.cancel()
-        timerJob?.cancel()
-        _uiState.update { state ->
-            state.copy(
-                connectionState = VpnConnectionState.Disconnected,
-                elapsedSeconds = 0L,
-            )
+        if (!V2RayServiceManager.isRunning()) {
+            timerJob?.cancel()
+            _uiState.update { state ->
+                state.copy(
+                    connectionState = VpnConnectionState.Disconnected,
+                    elapsedSeconds = 0L,
+                )
+            }
+            return
         }
+
+        _commands.tryEmit(VpnServiceCommand.Stop)
+
         VpnUiDebugLogger.log(
             hypothesisId = "H3",
             location = "VpnMainViewModel.kt:onDisconnectClick",
-            message = "state moved to disconnected",
+            message = "stop requested, waiting for runtime disconnected",
             data = JSONObject(),
         )
     }
@@ -198,4 +270,3 @@ class VpnMainViewModel : ViewModel() {
         super.onCleared()
     }
 }
-
