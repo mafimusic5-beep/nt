@@ -1,4 +1,8 @@
-﻿package com.v2ray.ang.ui.premium.vpn
+$screen = Join-Path $PSScriptRoot '..\app\src\main\java\com\v2ray\ang\ui\premium\vpn\VpnMainScreen.kt'
+$screen = [System.IO.Path]::GetFullPath($screen)
+
+@'
+package com.v2ray.ang.ui.premium.vpn
 
 import android.content.pm.PackageManager
 import androidx.compose.animation.animateColorAsState
@@ -17,7 +21,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -199,7 +202,7 @@ private fun MobileVpnMainScreen(
             Column {
                 if (locations.isEmpty()) {
                     Text(
-                        text = "РќРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… СЂРµРіРёРѕРЅРѕРІ",
+                        text = "Нет доступных регионов",
                         color = VpnPremiumTokens.Colors.TextSecondary,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.fillMaxWidth(),
@@ -331,7 +334,7 @@ private fun TvControlPanel(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = if (uiState.connectionState == VpnConnectionState.Connected) "РџРѕРґРєР»СЋС‡РµРЅРёРµ Р°РєС‚РёРІРЅРѕ" else "РЈРїСЂР°РІР»РµРЅРёРµ РїРѕРґРєР»СЋС‡РµРЅРёРµРј",
+                    text = if (uiState.connectionState == VpnConnectionState.Connected) "Подключение активно" else "Управление подключением",
                     color = VpnPremiumTokens.Colors.TextSecondary,
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -341,13 +344,13 @@ private fun TvControlPanel(
 
         TvInfoCard {
             Text(
-                text = "Р РµРіРёРѕРЅ",
+                text = "Регион",
                 color = VpnPremiumTokens.Colors.TextSecondary,
                 style = MaterialTheme.typography.labelLarge,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = selectedLocation?.title ?: "РќРµС‚ РґРѕСЃС‚СѓРїРЅРѕРіРѕ СЂРµРіРёРѕРЅР°",
+                text = selectedLocation?.title ?: "Нет доступного региона",
                 color = VpnPremiumTokens.Colors.TextPrimary,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
@@ -372,9 +375,9 @@ private fun TvControlPanel(
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = when (uiState.connectionState) {
-                    VpnConnectionState.Disconnected -> "РќР°Р¶РјРё, С‡С‚РѕР±С‹ РїРѕРґРєР»СЋС‡РёС‚СЊ VPN"
-                    VpnConnectionState.Connecting -> "РРґС‘С‚ РїРѕРґРєР»СЋС‡РµРЅРёРµ"
-                    VpnConnectionState.Connected -> "Р—Р°С‰РёС‰С‘РЅРЅРѕРµ РїРѕРґРєР»СЋС‡РµРЅРёРµ Р°РєС‚РёРІРЅРѕ"
+                    VpnConnectionState.Disconnected -> "Нажми, чтобы подключить VPN"
+                    VpnConnectionState.Connecting -> "Идёт подключение"
+                    VpnConnectionState.Connected -> "Защищённое подключение активно"
                 },
                 color = VpnPremiumTokens.Colors.TextSecondary,
                 style = MaterialTheme.typography.titleMedium,
@@ -402,7 +405,7 @@ private fun TvControlPanel(
 @Composable
 private fun TvInfoCard(
     modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
+    content: @Composable Column.() -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -495,9 +498,9 @@ private fun TvPrimaryActionButton(
         label = "tvConnectButtonBorder",
     )
     val label = when (state) {
-        VpnConnectionState.Disconnected -> "РџРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ"
+        VpnConnectionState.Disconnected -> "Подключиться"
         VpnConnectionState.Connecting -> "Connecting..."
-        VpnConnectionState.Connected -> "РћС‚РєР»СЋС‡РёС‚СЊ"
+        VpnConnectionState.Connected -> "Отключить"
     }
 
     Button(
@@ -683,7 +686,7 @@ fun LocationSelector(
             LocationFlagEmoji(location = currentLocation)
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = currentLocation?.title ?: "РќРµС‚ СЂРµРіРёРѕРЅР°",
+                text = currentLocation?.title ?: "Нет региона",
                 style = MaterialTheme.typography.titleMedium,
                 color = VpnPremiumTokens.Colors.TextPrimary,
                 modifier = Modifier.weight(1f),
@@ -819,9 +822,9 @@ fun PrimaryConnectButton(
     )
 
     val label = when (state) {
-        VpnConnectionState.Disconnected -> "РџРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ"
+        VpnConnectionState.Disconnected -> "Подключиться"
         VpnConnectionState.Connecting -> "Connecting..."
-        VpnConnectionState.Connected -> "РћС‚РєР»СЋС‡РёС‚СЊ"
+        VpnConnectionState.Connected -> "Отключить"
     }
 
     Button(
@@ -841,12 +844,12 @@ fun PrimaryConnectButton(
 private fun LocationFlagEmoji(location: VpnServerRegionUi?, modifier: Modifier = Modifier) {
     val raw = remember(location?.title) { location?.title?.lowercase().orEmpty() }
     val flag = when {
-        raw.contains("moscow") || raw.contains("РјРѕСЃРє") || raw.contains("russia") || raw.contains("СЂРѕСЃ") -> "\uD83C\uDDF7\uD83C\uDDFA"
-        raw.contains("switzerland") || raw.contains("С€РІРµР№С†Р°СЂ") -> "\uD83C\uDDE8\uD83C\uDDED"
-        raw.contains("netherlands") || raw.contains("РЅРёРґРµСЂР»") || raw.contains("РіРѕР»Р»Р°РЅРґ") -> "\uD83C\uDDF3\uD83C\uDDF1"
-        raw.contains("germany") || raw.contains("РіРµСЂРјР°РЅ") -> "\uD83C\uDDE9\uD83C\uDDEA"
-        raw.contains("france") || raw.contains("С„СЂР°РЅС†") -> "\uD83C\uDDEB\uD83C\uDDF7"
-        raw.contains("poland") || raw.contains("РїРѕР»СЊ") -> "\uD83C\uDDF5\uD83C\uDDF1"
+        raw.contains("moscow") || raw.contains("моск") || raw.contains("russia") || raw.contains("рос") -> "\uD83C\uDDF7\uD83C\uDDFA"
+        raw.contains("switzerland") || raw.contains("швейцар") -> "\uD83C\uDDE8\uD83C\uDDED"
+        raw.contains("netherlands") || raw.contains("нидерл") || raw.contains("голланд") -> "\uD83C\uDDF3\uD83C\uDDF1"
+        raw.contains("germany") || raw.contains("герман") -> "\uD83C\uDDE9\uD83C\uDDEA"
+        raw.contains("france") || raw.contains("франц") -> "\uD83C\uDDEB\uD83C\uDDF7"
+        raw.contains("poland") || raw.contains("поль") -> "\uD83C\uDDF5\uD83C\uDDF1"
         else -> "\uD83C\uDFF3\uFE0F"
     }
     Box(
@@ -859,4 +862,6 @@ private fun LocationFlagEmoji(location: VpnServerRegionUi?, modifier: Modifier =
         Text(text = flag, fontSize = 16.sp)
     }
 }
+'@ | Set-Content $screen -Encoding UTF8
 
+Write-Host 'patched VpnMainScreen.kt with TV adaptation only'

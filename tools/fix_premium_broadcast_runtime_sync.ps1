@@ -1,4 +1,11 @@
-﻿package com.v2ray.ang.ui.premium
+$premium = Join-Path $PSScriptRoot '..\app\src\main\java\com\v2ray\ang\ui\premium\PremiumActivity.kt'
+$viewModel = Join-Path $PSScriptRoot '..\app\src\main\java\com\v2ray\ang\ui\premium\vpn\VpnMainViewModel.kt'
+
+$premium = [System.IO.Path]::GetFullPath($premium)
+$viewModel = [System.IO.Path]::GetFullPath($viewModel)
+
+@'
+package com.v2ray.ang.ui.premium
 
 import android.content.Intent
 import android.net.VpnService
@@ -78,9 +85,9 @@ private data class NavItem(
 )
 
 private val navItems = listOf(
-    NavItem(EmeryRoute.Home, Icons.Default.Home, "Р“Р»Р°РІРЅР°СЏ"),
-    NavItem(EmeryRoute.Devices, Icons.Default.Devices, "РЈСЃС‚СЂРѕР№СЃС‚РІР°"),
-    NavItem(EmeryRoute.Support, Icons.Default.SupportAgent, "РџРѕРґРґРµСЂР¶РєР°")
+    NavItem(EmeryRoute.Home, Icons.Default.Home, "Главная"),
+    NavItem(EmeryRoute.Devices, Icons.Default.Devices, "Устройства"),
+    NavItem(EmeryRoute.Support, Icons.Default.SupportAgent, "Поддержка")
 )
 
 class PremiumActivity : ComponentActivity() {
@@ -208,7 +215,7 @@ private fun EmeryApp(
                         .padding(bottom = 24.dp)
                 ) {
                     Text(
-                        "РќР°РІРёРіР°С†РёСЏ",
+                        "Навигация",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         color = MaterialTheme.colorScheme.primary
@@ -295,9 +302,9 @@ private fun DevicesScreen(onBack: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("РЈСЃС‚СЂРѕР№СЃС‚РІР°", style = MaterialTheme.typography.titleLarge)
+        Text("Устройства", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(24.dp))
-        OutlinedButton(onClick = onBack) { Text("РќР°Р·Р°Рґ") }
+        OutlinedButton(onClick = onBack) { Text("Назад") }
     }
 }
 
@@ -310,8 +317,299 @@ private fun SupportScreen(onBack: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("РџРѕРґРґРµСЂР¶РєР°", style = MaterialTheme.typography.titleLarge)
+        Text("Поддержка", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(24.dp))
-        OutlinedButton(onClick = onBack) { Text("РќР°Р·Р°Рґ") }
+        OutlinedButton(onClick = onBack) { Text("Назад") }
     }
 }
+'@ | Set-Content $premium -Encoding UTF8
+
+@'
+package com.v2ray.ang.ui.premium.vpn
+
+import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AngApplication
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.handler.EmeryVpnSync
+import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.util.MessageUtil
+import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+
+data class VpnServerRegionUi(
+    val serverId: Long,
+    val title: String,
+    val healthStatus: String,
+)
+
+sealed class VpnServiceCommand {
+    object Start : VpnServiceCommand()
+    object Stop : VpnServiceCommand()
+}
+
+class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val _uiState = MutableStateFlow(VpnMainUiState())
+    val uiState: StateFlow<VpnMainUiState> = _uiState.asStateFlow()
+
+    private val _availableRegions = MutableStateFlow<List<VpnServerRegionUi>>(emptyList())
+    val availableRegions: StateFlow<List<VpnServerRegionUi>> = _availableRegions.asStateFlow()
+
+    private val _selectedRegion = MutableStateFlow<VpnServerRegionUi?>(null)
+    val selectedRegion: StateFlow<VpnServerRegionUi?> = _selectedRegion.asStateFlow()
+
+    private val _commands = MutableSharedFlow<VpnServiceCommand>(extraBufferCapacity = 1)
+    val commands: SharedFlow<VpnServiceCommand> = _commands.asSharedFlow()
+
+    private var connectJob: Job? = null
+    private var timerJob: Job? = null
+
+    init {
+        refreshAvailableRegions()
+        startListenBroadcast()
+    }
+
+    private fun startListenBroadcast() {
+        val filter = IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY)
+        ContextCompat.registerReceiver(getApplication(), mMsgReceiver, filter, Utils.receiverFlags())
+        MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_REGISTER_CLIENT, "")
+    }
+
+    fun refreshAvailableRegions() {
+        viewModelScope.launch {
+            val currentSelectedId = _selectedRegion.value?.serverId
+            val regions = EmeryBackendClient.fetchVpnServers()
+                .getOrElse { emptyList() }
+                .filter { it.isAvailable }
+                .map {
+                    VpnServerRegionUi(
+                        serverId = it.id,
+                        title = it.city,
+                        healthStatus = it.healthStatus,
+                    )
+                }
+
+            _availableRegions.value = regions
+            _selectedRegion.value = regions.firstOrNull { it.serverId == currentSelectedId } ?: regions.firstOrNull()
+
+            VpnUiDebugLogger.log(
+                hypothesisId = "H6",
+                location = "VpnMainViewModel.kt:refreshAvailableRegions",
+                message = "available regions refreshed",
+                data = JSONObject()
+                    .put("count", regions.size)
+                    .put("selectedServerId", _selectedRegion.value?.serverId ?: -1),
+            )
+        }
+    }
+
+    fun onLocationSelected(serverId: Long) {
+        val selected = _availableRegions.value.firstOrNull { it.serverId == serverId } ?: return
+        _selectedRegion.value = selected
+        VpnUiDebugLogger.log(
+            hypothesisId = "H5",
+            location = "VpnMainViewModel.kt:onLocationSelected",
+            message = "location selected",
+            data = JSONObject().put("serverId", selected.serverId).put("title", selected.title),
+        )
+    }
+
+    fun onConnectClick() {
+        val currentState = _uiState.value
+        val selectedRegion = _selectedRegion.value ?: run {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H3",
+                location = "VpnMainViewModel.kt:onConnectClick",
+                message = "connect blocked by missing region",
+                data = JSONObject(),
+            )
+            return
+        }
+        val accessKey = EmeryAccessManager.loadProfile()?.accessKey?.trim().orEmpty()
+        if (accessKey.isBlank()) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H3",
+                location = "VpnMainViewModel.kt:onConnectClick",
+                message = "connect blocked by missing saved access key",
+                data = JSONObject(),
+            )
+            return
+        }
+        if (currentState.connectionState != VpnConnectionState.Disconnected) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H3",
+                location = "VpnMainViewModel.kt:onConnectClick",
+                message = "connect ignored due to state",
+                data = JSONObject().put("state", currentState.connectionState.name),
+            )
+            return
+        }
+
+        connectJob?.cancel()
+        timerJob?.cancel()
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Connecting,
+                elapsedSeconds = 0L,
+                errorMessage = null,
+            )
+        }
+
+        connectJob = viewModelScope.launch {
+            val result = EmeryVpnSync.connectToServer(accessKey = accessKey, serverId = selectedRegion.serverId)
+            result.fold(
+                onSuccess = {
+                    _commands.tryEmit(VpnServiceCommand.Start)
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H3",
+                        location = "VpnMainViewModel.kt:onConnectClick",
+                        message = "server imported, waiting for broadcast start success",
+                        data = JSONObject()
+                            .put("serverId", selectedRegion.serverId)
+                            .put("title", selectedRegion.title),
+                    )
+                },
+                onFailure = { error ->
+                    timerJob?.cancel()
+                    _uiState.update { state ->
+                        state.copy(
+                            connectionState = VpnConnectionState.Disconnected,
+                            elapsedSeconds = 0L,
+                            errorMessage = error.message ?: "connect_failed",
+                        )
+                    }
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H3",
+                        location = "VpnMainViewModel.kt:onConnectClick",
+                        message = "backend connect failed",
+                        data = JSONObject()
+                            .put("serverId", selectedRegion.serverId)
+                            .put("reason", error.message ?: "unknown"),
+                    )
+                    refreshAvailableRegions()
+                },
+            )
+        }
+    }
+
+    fun onDisconnectClick() {
+        if (_uiState.value.connectionState == VpnConnectionState.Disconnected) {
+            timerJob?.cancel()
+            _uiState.update { state ->
+                state.copy(
+                    connectionState = VpnConnectionState.Disconnected,
+                    elapsedSeconds = 0L,
+                )
+            }
+            return
+        }
+
+        _commands.tryEmit(VpnServiceCommand.Stop)
+
+        VpnUiDebugLogger.log(
+            hypothesisId = "H3",
+            location = "VpnMainViewModel.kt:onDisconnectClick",
+            message = "stop requested, waiting for broadcast stop success",
+            data = JSONObject(),
+        )
+    }
+
+    private fun handleServiceConnected() {
+        val wasConnected = _uiState.value.connectionState == VpnConnectionState.Connected
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Connected,
+                errorMessage = null,
+            )
+        }
+        if (!wasConnected) {
+            startTimer()
+        }
+    }
+
+    private fun handleServiceDisconnected() {
+        timerJob?.cancel()
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Disconnected,
+                elapsedSeconds = 0L,
+            )
+        }
+    }
+
+    private fun handleServiceStartFailure() {
+        timerJob?.cancel()
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Disconnected,
+                elapsedSeconds = 0L,
+                errorMessage = "VPN start failed",
+            )
+        }
+    }
+
+    private fun startTimer() {
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            while (isActive) {
+                delay(1000L)
+                _uiState.update { state ->
+                    if (state.connectionState == VpnConnectionState.Connected) {
+                        state.copy(elapsedSeconds = state.elapsedSeconds + 1L)
+                    } else {
+                        state
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        getApplication<AngApplication>().unregisterReceiver(mMsgReceiver)
+        connectJob?.cancel()
+        timerJob?.cancel()
+        super.onCleared()
+    }
+
+    private val mMsgReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            when (intent?.getIntExtra("key", 0)) {
+                AppConfig.MSG_STATE_RUNNING,
+                AppConfig.MSG_STATE_START_SUCCESS -> {
+                    handleServiceConnected()
+                }
+
+                AppConfig.MSG_STATE_NOT_RUNNING,
+                AppConfig.MSG_STATE_STOP_SUCCESS -> {
+                    handleServiceDisconnected()
+                }
+
+                AppConfig.MSG_STATE_START_FAILURE -> {
+                    handleServiceStartFailure()
+                }
+            }
+        }
+    }
+}
+'@ | Set-Content $viewModel -Encoding UTF8
+
+Write-Host 'patched premium runtime state to use activity broadcasts'
