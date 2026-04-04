@@ -1,11 +1,20 @@
 ﻿package com.v2ray.ang.ui.premium.vpn
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AngApplication
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
-import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.util.MessageUtil
+import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -14,7 +23,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -31,7 +39,7 @@ sealed class VpnServiceCommand {
     object Stop : VpnServiceCommand()
 }
 
-class VpnMainViewModel : ViewModel() {
+class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(VpnMainUiState())
     val uiState: StateFlow<VpnMainUiState> = _uiState.asStateFlow()
@@ -50,63 +58,13 @@ class VpnMainViewModel : ViewModel() {
 
     init {
         refreshAvailableRegions()
-        observeVpnRuntimeState()
+        startListenBroadcast()
     }
 
-    private fun observeVpnRuntimeState() {
-        viewModelScope.launch {
-            V2RayServiceManager.vpnState.collectLatest { runtimeState ->
-                when (runtimeState) {
-                    V2RayServiceManager.VpnRuntimeState.CONNECTING -> {
-                        timerJob?.cancel()
-                        _uiState.update { state ->
-                            state.copy(
-                                connectionState = VpnConnectionState.Connecting,
-                                errorMessage = null,
-                            )
-                        }
-                    }
-
-                    V2RayServiceManager.VpnRuntimeState.CONNECTED -> {
-                        val wasConnected = _uiState.value.connectionState == VpnConnectionState.Connected
-                        _uiState.update { state ->
-                            state.copy(
-                                connectionState = VpnConnectionState.Connected,
-                                errorMessage = null,
-                            )
-                        }
-                        if (!wasConnected) {
-                            startTimer()
-                        }
-                    }
-
-                    V2RayServiceManager.VpnRuntimeState.DISCONNECTING -> {
-                        // Keep the current UI state until the runtime reports DISCONNECTED.
-                    }
-
-                    V2RayServiceManager.VpnRuntimeState.DISCONNECTED -> {
-                        timerJob?.cancel()
-                        _uiState.update { state ->
-                            state.copy(
-                                connectionState = VpnConnectionState.Disconnected,
-                                elapsedSeconds = 0L,
-                            )
-                        }
-                    }
-
-                    V2RayServiceManager.VpnRuntimeState.ERROR -> {
-                        timerJob?.cancel()
-                        _uiState.update { state ->
-                            state.copy(
-                                connectionState = VpnConnectionState.Disconnected,
-                                elapsedSeconds = 0L,
-                                errorMessage = "VPN start failed",
-                            )
-                        }
-                    }
-                }
-            }
-        }
+    private fun startListenBroadcast() {
+        val filter = IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY)
+        ContextCompat.registerReceiver(getApplication(), mMsgReceiver, filter, Utils.receiverFlags())
+        MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_REGISTER_CLIENT, "")
     }
 
     fun refreshAvailableRegions() {
@@ -197,7 +155,7 @@ class VpnMainViewModel : ViewModel() {
                     VpnUiDebugLogger.log(
                         hypothesisId = "H3",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "server imported, waiting for runtime connected",
+                        message = "server imported, waiting for broadcast start success",
                         data = JSONObject()
                             .put("serverId", selectedRegion.serverId)
                             .put("title", selectedRegion.title),
@@ -227,7 +185,7 @@ class VpnMainViewModel : ViewModel() {
     }
 
     fun onDisconnectClick() {
-        if (!V2RayServiceManager.isRunning()) {
+        if (_uiState.value.connectionState == VpnConnectionState.Disconnected) {
             timerJob?.cancel()
             _uiState.update { state ->
                 state.copy(
@@ -243,9 +201,43 @@ class VpnMainViewModel : ViewModel() {
         VpnUiDebugLogger.log(
             hypothesisId = "H3",
             location = "VpnMainViewModel.kt:onDisconnectClick",
-            message = "stop requested, waiting for runtime disconnected",
+            message = "stop requested, waiting for broadcast stop success",
             data = JSONObject(),
         )
+    }
+
+    private fun handleServiceConnected() {
+        val wasConnected = _uiState.value.connectionState == VpnConnectionState.Connected
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Connected,
+                errorMessage = null,
+            )
+        }
+        if (!wasConnected) {
+            startTimer()
+        }
+    }
+
+    private fun handleServiceDisconnected() {
+        timerJob?.cancel()
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Disconnected,
+                elapsedSeconds = 0L,
+            )
+        }
+    }
+
+    private fun handleServiceStartFailure() {
+        timerJob?.cancel()
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Disconnected,
+                elapsedSeconds = 0L,
+                errorMessage = "VPN start failed",
+            )
+        }
     }
 
     private fun startTimer() {
@@ -265,8 +257,29 @@ class VpnMainViewModel : ViewModel() {
     }
 
     override fun onCleared() {
+        getApplication<AngApplication>().unregisterReceiver(mMsgReceiver)
         connectJob?.cancel()
         timerJob?.cancel()
         super.onCleared()
+    }
+
+    private val mMsgReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            when (intent?.getIntExtra("key", 0)) {
+                AppConfig.MSG_STATE_RUNNING,
+                AppConfig.MSG_STATE_START_SUCCESS -> {
+                    handleServiceConnected()
+                }
+
+                AppConfig.MSG_STATE_NOT_RUNNING,
+                AppConfig.MSG_STATE_STOP_SUCCESS -> {
+                    handleServiceDisconnected()
+                }
+
+                AppConfig.MSG_STATE_START_FAILURE -> {
+                    handleServiceStartFailure()
+                }
+            }
+        }
     }
 }
