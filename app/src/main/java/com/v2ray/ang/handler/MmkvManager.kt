@@ -1,8 +1,10 @@
-package com.v2ray.ang.handler
+﻿package com.v2ray.ang.handler
 
 import com.tencent.mmkv.MMKV
 import com.v2ray.ang.AppConfig.DEFAULT_SUBSCRIPTION_ID
 import com.v2ray.ang.AppConfig.PREF_IS_BOOTED
+import com.v2ray.ang.AppConfig.PREF_AUTO_RECONNECT
+import com.v2ray.ang.AppConfig.PREF_AUTO_START_VPN
 import com.v2ray.ang.AppConfig.PREF_ROUTING_RULESET
 import com.v2ray.ang.dto.AssetUrlCache
 import com.v2ray.ang.dto.AssetUrlItem
@@ -697,6 +699,22 @@ object MmkvManager {
         return decodeSettingsBool(PREF_IS_BOOTED, false)
     }
 
+    fun encodeAutoStartVpnEnabled(enabled: Boolean) {
+        encodeSettings(PREF_AUTO_START_VPN, enabled)
+    }
+
+    fun decodeAutoStartVpnEnabled(): Boolean {
+        return decodeSettingsBool(PREF_AUTO_START_VPN, false)
+    }
+
+    fun encodeAutoReconnectEnabled(enabled: Boolean) {
+        encodeSettings(PREF_AUTO_RECONNECT, enabled)
+    }
+
+    fun decodeAutoReconnectEnabled(defaultValue: Boolean = true): Boolean {
+        return decodeSettingsBool(PREF_AUTO_RECONNECT, defaultValue)
+    }
+
     //endregion
 
     //region WebDAV
@@ -718,3 +736,8 @@ object MmkvManager {
 
     //endregion
 }
+
+
+
+
+
