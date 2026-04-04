@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
@@ -107,5 +107,21 @@ class BackendClient:
         return await self._request(
             "GET",
             "/api/v1/admin/activations/problems",
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_code_info(self, code: str) -> dict:
+        return await self._request(
+            "GET",
+            "/api/v1/admin/codes/info",
+            params={"code": code},
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_delete_code(self, code: str) -> dict:
+        return await self._request(
+            "DELETE",
+            "/api/v1/admin/codes",
+            params={"code": code},
             headers={"X-Admin-Api-Key": self.admin_api_key},
         )

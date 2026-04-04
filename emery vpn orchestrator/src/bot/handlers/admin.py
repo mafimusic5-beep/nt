@@ -1,7 +1,8 @@
-import logging
+﻿import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.filters.command import CommandObject
 from aiogram.types import CallbackQuery, Message
 
 from src.bot.api.backend_client import BackendClient, BackendClientError
@@ -90,3 +91,4 @@ async def admin_callbacks_handler(callback: CallbackQuery) -> None:
             reply_markup=admin_menu_keyboard(),
         )
         await callback.answer()
+

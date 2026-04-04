@@ -1,4 +1,4 @@
-from sqlalchemy import select
+﻿from sqlalchemy import select
 
 from src.backend.repositories.base import BaseRepository
 from src.common.models import ActivationCode, AuditLog, Device, Order, Payment, Subscription, User, VpnNode
@@ -67,3 +67,10 @@ class AdminRepository(BaseRepository):
             .order_by(AuditLog.created_at.desc())
             .limit(limit)
         ).all()
+
+    def get_activation_code_by_hash(self, code_hash: str) -> ActivationCode | None:
+        return self.db.scalar(select(ActivationCode).where(ActivationCode.code_hash == code_hash))
+
+    def revoke_activation_code(self, code: ActivationCode) -> ActivationCode:
+        code.status = "deleted"
+        return code

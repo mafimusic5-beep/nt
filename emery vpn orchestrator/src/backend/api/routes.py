@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends
+﻿from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.backend.deps.auth import require_admin_api_key, require_internal_api_key
 from src.backend.deps.db import get_db
 from src.backend.schemas.admin import (
+    ActivationCodeDeleteResponse,
+    ActivationCodeInfoResponse,
     AdminStatsResponse,
     BestNodeResponse,
     GrantSubscriptionRequest,
@@ -201,3 +203,4 @@ def admin_deprovision_node(node_id: int, db: Session = Depends(get_db)):
 )
 def admin_run_healthcheck(db: Session = Depends(get_db)):
     return AdminService(db).run_healthcheck()
+
