@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from src.backend.deps.auth import require_admin_api_key, require_internal_api_key
 from src.backend.deps.db import get_db
 from src.backend.schemas.admin import (
+    AdminCodeDetailResponse,
+    AdminCodeItemResponse,
     AdminStatsResponse,
     BestNodeResponse,
     GrantSubscriptionRequest,
@@ -17,7 +19,6 @@ from src.backend.schemas.admin import (
     VpnNodeUpsertRequest,
 )
 from src.backend.schemas.internal import ConfirmPaymentRequest, ConfirmPaymentResponse, CreateOrderRequest, CreateOrderResponse
-from src.backend.utils.debug_log import agent_log
 from src.backend.schemas.subscription import (
     HeartbeatRequest,
     RedeemActivationCodeRequest,
@@ -28,14 +29,15 @@ from src.backend.schemas.subscription import (
     UnbindDeviceRequest,
     UserCodeResponse,
     UserDeviceResponse,
+    VpnConfigResponse,
     VpnConnectRequest,
     VpnConnectResponse,
-    VpnConfigResponse,
     VpnServerItemResponse,
 )
 from src.backend.services.admin_service import AdminService
 from src.backend.services.order_service import OrderService
 from src.backend.services.subscription_service import SubscriptionService
+from src.backend.utils.debug_log import agent_log
 
 router = APIRouter(prefix="/api/v1")
 
@@ -155,6 +157,16 @@ def admin_create_node(payload: VpnNodeUpsertRequest, db: Session = Depends(get_d
 @router.get("/admin/stats", response_model=AdminStatsResponse, dependencies=[Depends(require_admin_api_key)])
 def admin_stats(db: Session = Depends(get_db)):
     return AdminService(db).stats()
+
+
+@router.get("/admin/codes", response_model=list[AdminCodeItemResponse], dependencies=[Depends(require_admin_api_key)])
+def admin_codes(limit: int = 20, offset: int = 0, db: Session = Depends(get_db)):
+    return AdminService(db).list_codes(limit=limit, offset=offset)
+
+
+@router.get("/admin/codes/{code_id}", response_model=AdminCodeDetailResponse, dependencies=[Depends(require_admin_api_key)])
+def admin_code_detail(code_id: int, db: Session = Depends(get_db)):
+    return AdminService(db).code_detail(code_id)
 
 
 @router.post("/admin/codes/generate", response_model=ManualCodeResponse, dependencies=[Depends(require_admin_api_key)])
