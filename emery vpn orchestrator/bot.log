@@ -1,0 +1,18 @@
+nohup: ignoring input
+INFO:aiogram.dispatcher:Start polling
+INFO:aiogram.dispatcher:Run polling for bot @UuNorthVpn_bot id=8754662103 - 'North Link'
+INFO:aiogram.event:Update id=2859367 is handled. Duration 243 ms by bot id=8754662103
+INFO:aiogram.event:Update id=2859368 is handled. Duration 318 ms by bot id=8754662103
+INFO:httpx:HTTP Request: GET http://80.71.159.221:9330/api/v1/subscription/status?telegram_id=8219372387 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://80.71.159.221:9330/api/v1/internal/orders "HTTP/1.1 200 OK"
+INFO:aiogram.event:Update id=2859369 is handled. Duration 637 ms by bot id=8754662103
+INFO:httpx:HTTP Request: GET http://80.71.159.221:9330/api/v1/subscription/status?telegram_id=8219372387 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://80.71.159.221:9330/api/v1/internal/payments/confirm "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET http://80.71.159.221:9330/api/v1/subscription/status?telegram_id=8219372387 "HTTP/1.1 200 OK"
+INFO:aiogram.event:Update id=2859370 is handled. Duration 873 ms by bot id=8754662103
+INFO:aiogram.event:Update id=2859371 is handled. Duration 179 ms by bot id=8754662103
+INFO:httpx:HTTP Request: GET http://80.71.159.221:9330/api/v1/vpn/config?telegram_id=8219372387 "HTTP/1.1 200 OK"
+INFO:aiogram.event:Update id=2859372 is handled. Duration 455 ms by bot id=8754662103
+WARNING:aiogram.dispatcher:Received SIGTERM signal
+INFO:aiogram.dispatcher:Polling stopped for bot @UuNorthVpn_bot id=8754662103 - 'North Link'
+INFO:aiogram.dispatcher:Polling stopped

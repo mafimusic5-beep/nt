@@ -1,0 +1,480 @@
+nohup: ignoring input
+INFO:     Started server process [22470]
+INFO:     Waiting for application startup.
+INFO:src.backend.core.bootstrap:seed_plans: existing=4 target=4
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:9330 (Press CTRL+C to quit)
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 1 nodes (no billmanager auth): {1: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 1 nodes (no billmanager auth): {1: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 1 nodes (no billmanager auth): {1: 'down'}
+INFO:     127.0.0.1:50290 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 1 nodes (no billmanager auth): {1: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 1 nodes (no billmanager auth): {1: 'down'}
+INFO:     80.71.159.221:39608 - "GET /api/v1/subscription/status?telegram_id=8219372387 HTTP/1.1" 200 OK
+INFO:     80.71.159.221:39620 - "POST /api/v1/internal/orders HTTP/1.1" 200 OK
+INFO:     80.71.159.221:39622 - "GET /api/v1/subscription/status?telegram_id=8219372387 HTTP/1.1" 200 OK
+INFO:src.backend.services.order_service:created draft node 2 (auto-node-20260402-132801) for auto-provision
+INFO:src.backend.services.node_orchestration_service:provision_node invoked for node_id=2
+INFO:src.backend.services.order_service:auto-provision node 2 result=failed
+INFO:src.backend.services.order_service:payment confirmed: order=27 sub=3 allocation=auto_provision_attempted
+INFO:     80.71.159.221:39628 - "POST /api/v1/internal/payments/confirm HTTP/1.1" 200 OK
+INFO:     80.71.159.221:39638 - "GET /api/v1/subscription/status?telegram_id=8219372387 HTTP/1.1" 200 OK
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:     80.71.159.221:50240 - "GET /api/v1/vpn/config?telegram_id=8219372387 HTTP/1.1" 200 OK
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:     85.174.150.233:35828 - "POST /auth/key HTTP/1.1" 200 OK
+INFO:     85.174.150.233:35759 - "GET /profile HTTP/1.1" 200 OK
+INFO:     85.174.150.233:35759 - "GET /vpn/config HTTP/1.1" 404 Not Found
+INFO:     85.174.150.233:35768 - "POST /auth/key HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+  + Exception Group Traceback (most recent call last):
+  |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_utils.py", line 79, in collapse_excgroups
+  |     yield
+  |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 183, in __call__
+  |     async with anyio.create_task_group() as task_group:
+  |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 799, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    |     result = await app(  # type: ignore[func-returns-value]
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    |     return await self.app(scope, receive, send)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
+    |     await super().__call__(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
+    |     await self.middleware_stack(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    |     await self.app(scope, receive, _send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 182, in __call__
+    |     with recv_stream, send_stream, collapse_excgroups():
+    |   File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    |     self.gen.throw(value)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 184, in __call__
+    |     response = await self.dispatch_func(request, call_next)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/src/backend/middleware/rate_limit.py", line 31, in dispatch
+    |     return await call_next(request)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 159, in call_next
+    |     raise app_exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    |     await self.app(scope, receive_or_disconnect, send_no_error)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    |     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    |     await app(scope, receive, sender)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 716, in __call__
+    |     await self.middleware_stack(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 736, in app
+    |     await route.handle(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 290, in handle
+    |     await self.app(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 78, in app
+    |     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    |     await app(scope, receive, sender)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 75, in app
+    |     response = await f(request)
+    |                ^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 302, in app
+    |     raw_response = await run_endpoint_function(
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 215, in run_endpoint_function
+    |     return await run_in_threadpool(dependant.call, **values)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    |     return await anyio.to_thread.run_sync(func)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/to_thread.py", line 63, in run_sync
+    |     return await get_async_backend().run_sync_in_worker_thread(
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2518, in run_sync_in_worker_thread
+    |     return await future
+    |            ^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 1002, in run
+    |     result = context.run(func, *args)
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/src/backend/api/compat_routes.py", line 47, in auth_key
+    |     "expires_at": sub.ends_at,
+    |                   ^^^^^^^^^^^
+    | AttributeError: 'NoneType' object has no attribute 'ends_at'
+    +------------------------------------
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 182, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 184, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/src/backend/middleware/rate_limit.py", line 31, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 159, in call_next
+    raise app_exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 78, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 75, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 302, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 215, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/to_thread.py", line 63, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2518, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 1002, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/src/backend/api/compat_routes.py", line 47, in auth_key
+    "expires_at": sub.ends_at,
+                  ^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'ends_at'
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:     85.174.150.233:37325 - "POST /auth/key HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+  + Exception Group Traceback (most recent call last):
+  |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_utils.py", line 79, in collapse_excgroups
+  |     yield
+  |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 183, in __call__
+  |     async with anyio.create_task_group() as task_group:
+  |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 799, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    |     result = await app(  # type: ignore[func-returns-value]
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    |     return await self.app(scope, receive, send)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
+    |     await super().__call__(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
+    |     await self.middleware_stack(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    |     await self.app(scope, receive, _send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 182, in __call__
+    |     with recv_stream, send_stream, collapse_excgroups():
+    |   File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    |     self.gen.throw(value)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 184, in __call__
+    |     response = await self.dispatch_func(request, call_next)
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/src/backend/middleware/rate_limit.py", line 31, in dispatch
+    |     return await call_next(request)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 159, in call_next
+    |     raise app_exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    |     await self.app(scope, receive_or_disconnect, send_no_error)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    |     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    |     await app(scope, receive, sender)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 716, in __call__
+    |     await self.middleware_stack(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 736, in app
+    |     await route.handle(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 290, in handle
+    |     await self.app(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 78, in app
+    |     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    |     raise exc
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    |     await app(scope, receive, sender)
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 75, in app
+    |     response = await f(request)
+    |                ^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 302, in app
+    |     raw_response = await run_endpoint_function(
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 215, in run_endpoint_function
+    |     return await run_in_threadpool(dependant.call, **values)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    |     return await anyio.to_thread.run_sync(func)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/to_thread.py", line 63, in run_sync
+    |     return await get_async_backend().run_sync_in_worker_thread(
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2518, in run_sync_in_worker_thread
+    |     return await future
+    |            ^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 1002, in run
+    |     result = context.run(func, *args)
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/opt/emery/emery vpn orchestrator/src/backend/api/compat_routes.py", line 47, in auth_key
+    |     "expires_at": sub.ends_at,
+    |                   ^^^^^^^^^^^
+    | AttributeError: 'NoneType' object has no attribute 'ends_at'
+    +------------------------------------
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/applications.py", line 113, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 182, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 184, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/src/backend/middleware/rate_limit.py", line 31, in dispatch
+    return await call_next(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 159, in call_next
+    raise app_exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 78, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/routing.py", line 75, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 302, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 215, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/to_thread.py", line 63, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2518, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 1002, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/emery/emery vpn orchestrator/src/backend/api/compat_routes.py", line 47, in auth_key
+    "expires_at": sub.ends_at,
+                  ^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'ends_at'
+INFO:     85.174.150.233:37337 - "POST /auth/key HTTP/1.1" 200 OK
+INFO:     85.174.150.233:37295 - "GET /profile HTTP/1.1" 200 OK
+INFO:     85.174.150.233:37295 - "GET /vpn/config HTTP/1.1" 404 Not Found
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:src.backend.services.node_adapters:healthcheck_nodes checked 2 nodes (no billmanager auth): {1: 'down', 2: 'down'}
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [22470]
