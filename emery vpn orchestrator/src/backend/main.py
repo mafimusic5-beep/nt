@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from src.backend.api.admin_codes_routes import router as admin_codes_router
 from src.backend.api.compat_routes import compat_router
 from src.backend.api.routes import router as api_router
 from src.backend.core.bootstrap import seed_plans
@@ -13,6 +14,7 @@ app = FastAPI(title="Emery VPN Orchestrator Backend", version="0.1.0")
 app.add_middleware(RateLimitMiddleware)
 app.include_router(compat_router)
 app.include_router(api_router)
+app.include_router(admin_codes_router)
 
 
 @app.on_event("startup")
