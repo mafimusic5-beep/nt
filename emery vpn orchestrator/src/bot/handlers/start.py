@@ -8,7 +8,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from src.bot.api.backend_client import BackendClient, BackendClientError
-from src.bot.ui.keyboards import main_menu_keyboard, pay_keyboard, plans_keyboard
+from src.bot.ui.keyboards import admin_menu_keyboard, main_menu_keyboard, pay_keyboard, plans_keyboard
+from src.bot.utils.access import is_admin
 from src.bot.utils.formatters import format_dt, parse_dt, plan_name
 from src.common.config import settings
 
@@ -17,18 +18,32 @@ logger = logging.getLogger(__name__)
 router = Router(name="user_menu")
 client = BackendClient()
 
+
+def _main_menu(user_id: int):
+    return main_menu_keyboard(show_admin=is_admin(user_id))
+
+
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     await message.answer(
         f"Добро пожаловать в {settings.brand_name}.\n"
         "Выберите действие в меню ниже.",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=_main_menu(message.from_user.id),
     )
 
 
 @router.callback_query(F.data == "menu_back")
 async def menu_back_handler(callback: CallbackQuery) -> None:
-    await callback.message.edit_text("Главное меню", reply_markup=main_menu_keyboard())
+    await callback.message.edit_text("Главное меню", reply_markup=_main_menu(callback.from_user.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_admin")
+async def menu_admin_handler(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Доступ запрещен.", show_alert=True)
+        return
+    await callback.message.edit_text("Админ-панель", reply_markup=admin_menu_keyboard())
     await callback.answer()
 
 
@@ -51,7 +66,7 @@ async def help_handler(callback: CallbackQuery) -> None:
         "1) Выберите «Купить подписку».\n"
         "2) Оплатите счет и нажмите «Я оплатил».\n"
         "3) Сохраните код активации — он показывается один раз полностью.",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=_main_menu(callback.from_user.id),
     )
     await callback.answer()
 
@@ -64,7 +79,7 @@ async def vpn_config_handler(callback: CallbackQuery) -> None:
     except BackendClientError as exc:
         await callback.message.edit_text(
             f"Не удалось получить VPN-конфиг: {exc.detail}",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=_main_menu(callback.from_user.id),
         )
         await callback.answer()
         return
@@ -74,7 +89,7 @@ async def vpn_config_handler(callback: CallbackQuery) -> None:
     if error or not import_text:
         await callback.message.edit_text(
             f"VPN-конфиг пока недоступен: {error or 'empty_config'}",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=_main_menu(callback.from_user.id),
         )
         await callback.answer()
         return
@@ -83,7 +98,7 @@ async def vpn_config_handler(callback: CallbackQuery) -> None:
         "Ваш VPN-конфиг:\n"
         f"<code>{import_text}</code>",
         parse_mode="HTML",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=_main_menu(callback.from_user.id),
     )
     await callback.answer("Конфиг готов")
 
@@ -94,11 +109,14 @@ async def my_subscription_handler(callback: CallbackQuery) -> None:
     try:
         status = await client.get_subscription_status(telegram_id)
     except BackendClientError as exc:
-        await callback.message.edit_text(f"Не удалось получить подписку: {exc.detail}", reply_markup=main_menu_keyboard())
+        await callback.message.edit_text(
+            f"Не удалось получить подписку: {exc.detail}",
+            reply_markup=_main_menu(callback.from_user.id),
+        )
         await callback.answer()
         return
     if not status.get("active"):
-        await callback.message.edit_text("Активной подписки нет.", reply_markup=main_menu_keyboard())
+        await callback.message.edit_text("Активной подписки нет.", reply_markup=_main_menu(callback.from_user.id))
         await callback.answer()
         return
     await callback.message.edit_text(
@@ -106,7 +124,7 @@ async def my_subscription_handler(callback: CallbackQuery) -> None:
         f"- Тариф: {plan_name(status.get('plan_code'))}\n"
         f"- Действует до: {format_dt(status.get('ends_at'))}\n"
         f"- Устройства: {status.get('devices_used', 0)}/{status.get('devices_limit', 5)}",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=_main_menu(callback.from_user.id),
     )
     await callback.answer()
 
@@ -117,11 +135,14 @@ async def my_devices_handler(callback: CallbackQuery) -> None:
     try:
         devices = await client.get_user_devices(telegram_id)
     except BackendClientError as exc:
-        await callback.message.edit_text(f"Не удалось получить список устройств: {exc.detail}", reply_markup=main_menu_keyboard())
+        await callback.message.edit_text(
+            f"Не удалось получить список устройств: {exc.detail}",
+            reply_markup=_main_menu(callback.from_user.id),
+        )
         await callback.answer()
         return
     if not devices:
-        await callback.message.edit_text("Активных устройств пока нет.", reply_markup=main_menu_keyboard())
+        await callback.message.edit_text("Активных устройств пока нет.", reply_markup=_main_menu(callback.from_user.id))
         await callback.answer()
         return
     lines = ["Мои устройства:"]
@@ -131,7 +152,7 @@ async def my_devices_handler(callback: CallbackQuery) -> None:
             f"   fp: {dev.get('device_fingerprint', '')[:10]}...\n"
             f"   heartbeat: {format_dt(dev.get('last_seen_at'))}"
         )
-    await callback.message.edit_text("\n".join(lines), reply_markup=main_menu_keyboard())
+    await callback.message.edit_text("\n".join(lines), reply_markup=_main_menu(callback.from_user.id))
     await callback.answer()
 
 
@@ -141,11 +162,14 @@ async def my_codes_handler(callback: CallbackQuery) -> None:
     try:
         codes = await client.get_user_codes(telegram_id)
     except BackendClientError as exc:
-        await callback.message.edit_text(f"Не удалось получить коды: {exc.detail}", reply_markup=main_menu_keyboard())
+        await callback.message.edit_text(
+            f"Не удалось получить коды: {exc.detail}",
+            reply_markup=_main_menu(callback.from_user.id),
+        )
         await callback.answer()
         return
     if not codes:
-        await callback.message.edit_text("Кодов пока нет.", reply_markup=main_menu_keyboard())
+        await callback.message.edit_text("Кодов пока нет.", reply_markup=_main_menu(callback.from_user.id))
         await callback.answer()
         return
     lines = ["Мои коды (история):"]
@@ -155,7 +179,7 @@ async def my_codes_handler(callback: CallbackQuery) -> None:
             f"   Создан: {format_dt(code.get('created_at'))}\n"
             f"   Первое использование: {format_dt(code.get('first_redeemed_at'))}"
         )
-    await callback.message.edit_text("\n".join(lines), reply_markup=main_menu_keyboard())
+    await callback.message.edit_text("\n".join(lines), reply_markup=_main_menu(callback.from_user.id))
     await callback.answer()
 
 
@@ -170,7 +194,7 @@ async def plan_selected_handler(callback: CallbackQuery) -> None:
         logger.warning("order creation failed: tg=%s plan=%s err=%s", telegram_id, plan_code, exc.detail)
         await callback.message.edit_text(
             f"Не удалось создать заказ: {exc.detail}\nПроверьте настройки и попробуйте позже.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=_main_menu(callback.from_user.id),
         )
         await callback.answer()
         return
@@ -206,7 +230,7 @@ async def payment_confirm_handler(callback: CallbackQuery) -> None:
         logger.warning("payment confirm failed: tg=%s order=%s err=%s", telegram_id, order_id, exc.detail)
         await callback.message.edit_text(
             f"Не удалось подтвердить оплату: {exc.detail}\nПопробуйте позже.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=_main_menu(callback.from_user.id),
         )
         await callback.answer()
         return
@@ -223,7 +247,7 @@ async def payment_confirm_handler(callback: CallbackQuery) -> None:
         f"Ваш код активации (показывается один раз):\n<code>{code}</code>\n\n"
         f"Тариф: {plan_name(plan_code)}\n"
         f"Действует до: {ends_at}",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=_main_menu(callback.from_user.id),
         parse_mode="HTML",
     )
     await callback.answer("Готово")

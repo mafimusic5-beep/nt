@@ -84,6 +84,21 @@ class BackendClient:
     async def admin_stats(self) -> dict:
         return await self._request("GET", "/api/v1/admin/stats", headers={"X-Admin-Api-Key": self.admin_api_key})
 
+    async def admin_codes(self, limit: int = 20, offset: int = 0) -> list[dict]:
+        return await self._request(
+            "GET",
+            "/api/v1/admin/codes",
+            params={"limit": limit, "offset": offset},
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_code_detail(self, code_id: int) -> dict:
+        return await self._request(
+            "GET",
+            f"/api/v1/admin/codes/{code_id}",
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
     async def admin_nodes(self) -> list[dict]:
         return await self._request("GET", "/api/v1/admin/nodes", headers={"X-Admin-Api-Key": self.admin_api_key})
 
