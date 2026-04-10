@@ -8,7 +8,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from src.bot.api.backend_client import BackendClient, BackendClientError
-from src.bot.ui.keyboards import main_menu_keyboard, pay_keyboard, plans_keyboard
+from src.bot.ui.keyboards import main_menu_keyboard, pay_keyboard, plans_keyboard, reply_menu_keyboard
+from src.bot.utils.access import is_admin
 from src.bot.utils.formatters import format_dt, parse_dt, plan_name
 from src.common.config import settings
 
@@ -17,12 +18,13 @@ logger = logging.getLogger(__name__)
 router = Router(name="user_menu")
 client = BackendClient()
 
+
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     await message.answer(
         f"Добро пожаловать в {settings.brand_name}.\n"
         "Выберите действие в меню ниже.",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=reply_menu_keyboard(show_admin=is_admin(message.from_user.id)),
     )
 
 
