@@ -64,6 +64,39 @@ class ManualCodeResponse(BaseModel):
     subscription_id: int
 
 
+class AdminCodeItemResponse(BaseModel):
+    code_id: int
+    code_hash_prefix: str
+    status: str
+    subscription_id: int
+    telegram_id: int | None = None
+    plan_code: str | None = None
+    ends_at: datetime | None = None
+    created_at: datetime
+    first_redeemed_at: datetime | None = None
+
+
+class AdminCodeDetailResponse(BaseModel):
+    code_id: int
+    code_hash_prefix: str
+    status: str
+    subscription_id: int
+    user_id: int
+    telegram_id: int | None = None
+    plan_code: str | None = None
+    ends_at: datetime | None = None
+    created_at: datetime
+    first_redeemed_at: datetime | None = None
+    devices_used: int = 0
+    devices_limit: int = 0
+
+
+class AdminCodeDeleteResponse(BaseModel):
+    code_id: int
+    status: str
+    deleted: bool = True
+
+
 class ProblemActivationResponse(BaseModel):
     created_at: datetime
     actor_id: str

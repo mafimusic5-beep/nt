@@ -3,6 +3,7 @@ import logging
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.api.backend_client import BackendClient, BackendClientError
 from src.bot.ui.keyboards import admin_menu_keyboard, main_menu_keyboard
@@ -13,6 +14,27 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="admin_menu")
 client = BackendClient()
+
+
+def _admin_codes_keyboard(rows: list[dict]):
+    kb = InlineKeyboardBuilder()
+    for row in rows:
+        kb.button(
+            text=f"#{row.get('code_id')} | sub {row.get('subscription_id')} | {row.get('code_hash_prefix')}",
+            callback_data=f"admin_code_view_{row.get('code_id')}",
+        )
+    kb.button(text="Назад в админку", callback_data="admin_back")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def _admin_code_detail_keyboard(code_id: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Удалить", callback_data=f"admin_code_delete_{code_id}")
+    kb.button(text="К списку ключей", callback_data="admin_codes")
+    kb.button(text="Назад в админку", callback_data="admin_back")
+    kb.adjust(1)
+    return kb.as_markup()
 
 
 @router.message(Command("admin"))
@@ -30,7 +52,9 @@ async def admin_callbacks_handler(callback: CallbackQuery) -> None:
         return
     data = callback.data
     try:
-        if data == "admin_stats":
+        if data == "admin_back":
+            await callback.message.edit_text("Админ-панель", reply_markup=admin_menu_keyboard())
+        elif data == "admin_stats":
             stats = await client.admin_stats()
             await callback.message.edit_text(
                 "Статистика:\n"
@@ -40,6 +64,55 @@ async def admin_callbacks_handler(callback: CallbackQuery) -> None:
                 f"- Заказы: {stats.get('orders', 0)}\n"
                 f"- Оплаты: {stats.get('payments', 0)}\n"
                 f"- Коды: {stats.get('codes', 0)}",
+                reply_markup=admin_menu_keyboard(),
+            )
+        elif data == "admin_codes":
+            rows = await client.admin_codes(limit=50, offset=0)
+            if not rows:
+                text = "Записей ключей пока нет."
+                markup = admin_menu_keyboard()
+            else:
+                lines = ["Все ключи (записи):"]
+                for row in rows:
+                    lines.append(
+                        f"- #{row.get('code_id')} | tg={row.get('telegram_id') or '-'} | "
+                        f"sub={row.get('subscription_id')} | {row.get('status')} | "
+                        f"hash={row.get('code_hash_prefix')} | до {format_dt(row.get('ends_at'))}"
+                    )
+                text = "\n".join(lines)
+                markup = _admin_codes_keyboard(rows)
+            await callback.message.edit_text(text, reply_markup=markup)
+        elif data.startswith("admin_code_view_"):
+            try:
+                code_id = int(data.rsplit("_", 1)[1])
+            except ValueError:
+                await callback.answer("Некорректный ID ключа.", show_alert=True)
+                return
+            row = await client.admin_code_detail(code_id)
+            await callback.message.edit_text(
+                "Карточка ключа:\n"
+                f"- Code ID: {row.get('code_id')}\n"
+                f"- Hash prefix: {row.get('code_hash_prefix')}\n"
+                f"- Статус: {row.get('status')}\n"
+                f"- Telegram ID: {row.get('telegram_id')}\n"
+                f"- User ID: {row.get('user_id')}\n"
+                f"- Subscription ID: {row.get('subscription_id')}\n"
+                f"- Тариф: {row.get('plan_code') or '-'}\n"
+                f"- Действует до: {format_dt(row.get('ends_at'))}\n"
+                f"- Устройства: {row.get('devices_used', 0)}/{row.get('devices_limit', 0)}\n"
+                f"- Создан: {format_dt(row.get('created_at'))}\n"
+                f"- Первое использование: {format_dt(row.get('first_redeemed_at'))}",
+                reply_markup=_admin_code_detail_keyboard(code_id),
+            )
+        elif data.startswith("admin_code_delete_"):
+            try:
+                code_id = int(data.rsplit("_", 1)[1])
+            except ValueError:
+                await callback.answer("Некорректный ID ключа.", show_alert=True)
+                return
+            result = await client.admin_delete_code(code_id)
+            await callback.message.edit_text(
+                f"Код #{result.get('code_id')} удалён. Новый статус: {result.get('status')}",
                 reply_markup=admin_menu_keyboard(),
             )
         elif data == "admin_nodes":
