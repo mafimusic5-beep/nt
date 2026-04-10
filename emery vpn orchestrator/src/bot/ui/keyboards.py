@@ -1,7 +1,23 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.common.config import settings
+
+
+def reply_menu_keyboard(*, show_admin: bool = False) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text="🚀 Купить / продлить"), KeyboardButton(text="📦 Мои доступы")],
+        [KeyboardButton(text="🧠 Справочник"), KeyboardButton(text="💬 Поддержка")],
+        [KeyboardButton(text="🌐 Язык")],
+    ]
+    if show_admin:
+        rows.append([KeyboardButton(text="👑 Админ")])
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выберите действие",
+    )
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
