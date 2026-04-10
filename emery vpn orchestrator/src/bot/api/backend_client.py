@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
@@ -68,16 +68,27 @@ class BackendClient:
             headers={"X-Internal-Api-Key": self.internal_api_key},
         )
 
-    async def confirm_payment(self, order_id: int, provider_payment_id: str, idempotency_key: str) -> dict:
+    async def confirm_payment(
+        self,
+        order_id: int,
+        provider_payment_id: str,
+        idempotency_key: str,
+        target_code: str | None = None,
+        issue_new_code: bool = False,
+    ) -> dict:
+        payload = {
+            "order_id": order_id,
+            "provider_payment_id": provider_payment_id,
+            "idempotency_key": idempotency_key,
+            "paid": True,
+        }
+        if target_code:
+            payload["target_code"] = target_code
+            payload["issue_new_code"] = issue_new_code
         return await self._request(
             "POST",
             "/api/v1/internal/payments/confirm",
-            json_data={
-                "order_id": order_id,
-                "provider_payment_id": provider_payment_id,
-                "idempotency_key": idempotency_key,
-                "paid": True,
-            },
+            json_data=payload,
             headers={"X-Internal-Api-Key": self.internal_api_key},
         )
 
@@ -107,5 +118,50 @@ class BackendClient:
         return await self._request(
             "GET",
             "/api/v1/admin/activations/problems",
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_code_info(self, code: str) -> dict:
+        return await self._request(
+            "GET",
+            "/api/v1/admin/codes/info",
+            params={"code": code},
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_delete_code(self, code: str) -> dict:
+        return await self._request(
+            "DELETE",
+            "/api/v1/admin/codes",
+            params={"code": code},
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_list_codes(self, limit: int = 10, offset: int = 0) -> list[dict]:
+        return await self._request(
+            "GET",
+            "/api/v1/admin/codes",
+            params={"limit": limit, "offset": offset},
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_get_code(self, code_id: int) -> dict:
+        return await self._request(
+            "GET",
+            f"/api/v1/admin/codes/{code_id}",
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_delete_code_by_id(self, code_id: int) -> dict:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/admin/codes/{code_id}",
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_generate_code_for_key(self, code_id: int) -> dict:
+        return await self._request(
+            "POST",
+            f"/api/v1/admin/codes/{code_id}/generate",
             headers={"X-Admin-Api-Key": self.admin_api_key},
         )
