@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -8,8 +8,8 @@ from src.backend.repositories.admin_repo import AdminRepository
 from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.repositories.order_repo import OrderRepository
 from src.backend.repositories.subscription_repo import SubscriptionRepository
-from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.schemas.internal import ConfirmPaymentRequest, ConfirmPaymentResponse, CreateOrderRequest, CreateOrderResponse
+from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.utils.debug_log import agent_log
 from src.backend.utils.security import generate_activation_code, hash_activation_code, mask_secret
 from src.common.config import settings
@@ -66,7 +66,6 @@ class OrderService:
         return CreateOrderResponse(order_id=order.id, amount_rub=order.amount_rub, currency=order.currency, status=order.status)
 
     def confirm_payment(self, req: ConfirmPaymentRequest) -> ConfirmPaymentResponse:
-        # #region agent log
         agent_log(
             hypothesis_id="H1",
             location="order_service.py:confirm_payment",
@@ -75,9 +74,10 @@ class OrderService:
                 "order_id": req.order_id,
                 "paid": req.paid,
                 "provider_payment_id_prefix": req.provider_payment_id[:8],
+                "has_target_code": bool(req.target_code),
+                "issue_new_code": req.issue_new_code,
             },
         )
-        # #endregion
         existing = self.order_repo.get_payment_by_idempotency(req.idempotency_key)
         if existing:
             order = self.order_repo.get_order(existing.order_id)
@@ -101,27 +101,72 @@ class OrderService:
             payment = self.order_repo.create_payment(order.id, req.provider_payment_id, req.idempotency_key, plan.duration_months, order.amount_rub * 100, "failed")
             self.audit_repo.write("internal", "system", "payment_failed", "order", str(order.id), {"payment_id": payment.id})
             self.db.commit()
-            # #region agent log
             agent_log(
                 hypothesis_id="H1",
                 location="order_service.py:confirm_payment",
                 message="confirm_payment_rejected_not_paid",
                 data={"order_id": order.id, "payment_id": payment.id},
             )
-            # #endregion
             raise HTTPException(status_code=402, detail="payment_not_confirmed")
 
-        subscription = self.order_repo.create_or_extend_subscription(
-            user_id=order.user_id,
-            months=plan.duration_months,
-            max_devices=settings.max_devices_per_subscription,
-            region_code=settings.default_region_code,
-        )
-        order.subscription_id = subscription.id
-        order.status = "paid"
-        plain_code = generate_activation_code(12)
-        code_hash = hash_activation_code(plain_code)
-        self.order_repo.create_activation_code(order.user_id, subscription.id, code_hash)
+        activation_code_to_return = None
+        if req.target_code:
+            normalized_target_code = req.target_code.strip().upper()
+            code_hash = hash_activation_code(normalized_target_code)
+            target_code = self.sub_repo.get_activation_code(code_hash)
+            if not target_code:
+                raise HTTPException(status_code=404, detail="activation_code_not_found")
+            target_sub = self.sub_repo.get_subscription(target_code.subscription_id)
+            if not target_sub:
+                raise HTTPException(status_code=404, detail="subscription_not_found")
+            subscription = self.order_repo.create_or_extend_subscription(
+                user_id=target_sub.user_id,
+                months=plan.duration_months,
+                max_devices=settings.max_devices_per_subscription,
+                region_code=target_sub.region_code,
+            )
+            order.subscription_id = subscription.id
+            order.status = "paid"
+            if req.issue_new_code:
+                plain_code = generate_activation_code(12)
+                code_hash = hash_activation_code(plain_code)
+                self.order_repo.create_activation_code(target_sub.user_id, subscription.id, code_hash)
+                activation_code_to_return = plain_code
+                self.audit_repo.write(
+                    "internal",
+                    "system",
+                    "activation_code_created_for_key_renewal",
+                    "subscription",
+                    str(subscription.id),
+                    {"code": mask_secret(plain_code), "mode": "new_code"},
+                )
+            else:
+                target_code.subscription_id = subscription.id
+                target_code.status = "active"
+                activation_code_to_return = normalized_target_code
+                self.audit_repo.write(
+                    "internal",
+                    "system",
+                    "activation_code_rebound_after_payment",
+                    "subscription",
+                    str(subscription.id),
+                    {"existing_code_hash": target_code.code_hash},
+                )
+        else:
+            subscription = self.order_repo.create_or_extend_subscription(
+                user_id=order.user_id,
+                months=plan.duration_months,
+                max_devices=settings.max_devices_per_subscription,
+                region_code=settings.default_region_code,
+            )
+            order.subscription_id = subscription.id
+            order.status = "paid"
+            plain_code = generate_activation_code(12)
+            code_hash = hash_activation_code(plain_code)
+            self.order_repo.create_activation_code(order.user_id, subscription.id, code_hash)
+            activation_code_to_return = plain_code
+            self.audit_repo.write("internal", "system", "activation_code_created", "subscription", str(subscription.id), {"code": mask_secret(plain_code)})
+
         payment = self.order_repo.create_payment(
             order.id,
             req.provider_payment_id,
@@ -131,7 +176,6 @@ class OrderService:
             "paid",
         )
         self.audit_repo.write("internal", "system", "payment_confirmed", "order", str(order.id), {"payment_id": payment.id})
-        self.audit_repo.write("internal", "system", "activation_code_created", "subscription", str(subscription.id), {"code": mask_secret(plain_code)})
         allocation_result = self._ensure_firstvds_allocation()
         self.audit_repo.write(
             "internal",
@@ -146,7 +190,6 @@ class OrderService:
             order.id, subscription.id, allocation_result.get("status"),
         )
         self.db.commit()
-        # #region agent log
         agent_log(
             hypothesis_id="H1",
             location="order_service.py:confirm_payment",
@@ -156,12 +199,12 @@ class OrderService:
                 "subscription_id": subscription.id,
                 "allocation_status": allocation_result.get("status"),
                 "activation_code_issued": True,
+                "has_target_code": bool(req.target_code),
             },
         )
-        # #endregion
         return ConfirmPaymentResponse(
             payment_id=payment.id,
             status=payment.status,
-            activation_code=plain_code,
+            activation_code=activation_code_to_return or "вЂ”",
             subscription_id=subscription.id,
         )
