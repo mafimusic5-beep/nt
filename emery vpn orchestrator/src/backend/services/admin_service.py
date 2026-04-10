@@ -7,10 +7,18 @@ from src.backend.repositories.admin_repo import AdminRepository
 from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.repositories.order_repo import OrderRepository
 from src.backend.repositories.subscription_repo import SubscriptionRepository
+from src.backend.schemas.admin import (
+    AdminCodeDeleteResponse,
+    AdminCodeDetailResponse,
+    AdminCodeItemResponse,
+    GrantSubscriptionRequest,
+    GrantSubscriptionResponse,
+    VpnNodeResponse,
+    VpnNodeUpsertRequest,
+)
 from src.backend.services.node_adapters import FirstVdsBillManagerProvisioningService
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.utils.security import generate_activation_code, hash_activation_code
-from src.backend.schemas.admin import GrantSubscriptionRequest, GrantSubscriptionResponse, VpnNodeResponse, VpnNodeUpsertRequest
 from src.common.config import settings
 
 logger = logging.getLogger(__name__)
@@ -84,6 +92,59 @@ class AdminService:
 
     def stats(self) -> dict[str, int]:
         return self.admin_repo.stats()
+
+    def list_codes(self, limit: int = 20, offset: int = 0) -> list[AdminCodeItemResponse]:
+        rows = self.admin_repo.list_codes(limit=limit, offset=offset)
+        result: list[AdminCodeItemResponse] = []
+        for row in rows:
+            sub = self.admin_repo.get_subscription(row.subscription_id)
+            user = self.admin_repo.get_user(row.user_id)
+            result.append(
+                AdminCodeItemResponse(
+                    code_id=row.id,
+                    code_hash_prefix=(row.code_hash or "")[:10],
+                    status=row.status,
+                    subscription_id=row.subscription_id,
+                    telegram_id=user.telegram_id if user else None,
+                    plan_code=sub.plan_code if sub else None,
+                    ends_at=sub.ends_at if sub else None,
+                    created_at=row.created_at,
+                    first_redeemed_at=row.first_redeemed_at,
+                )
+            )
+        return result
+
+    def code_detail(self, code_id: int) -> AdminCodeDetailResponse:
+        row = self.admin_repo.get_code(code_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="code_not_found")
+        sub = self.admin_repo.get_subscription(row.subscription_id)
+        user = self.admin_repo.get_user(row.user_id)
+        if not sub or not user:
+            raise HTTPException(status_code=404, detail="code_links_not_found")
+        return AdminCodeDetailResponse(
+            code_id=row.id,
+            code_hash_prefix=(row.code_hash or "")[:10],
+            status=row.status,
+            subscription_id=row.subscription_id,
+            user_id=row.user_id,
+            telegram_id=user.telegram_id,
+            plan_code=sub.plan_code,
+            ends_at=sub.ends_at,
+            created_at=row.created_at,
+            first_redeemed_at=row.first_redeemed_at,
+            devices_used=self.admin_repo.count_active_devices(sub.id),
+            devices_limit=sub.devices_limit,
+        )
+
+    def delete_code(self, code_id: int) -> AdminCodeDeleteResponse:
+        row = self.admin_repo.get_code(code_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="code_not_found")
+        self.admin_repo.delete_code(code_id)
+        self.audit_repo.write("admin", "api", "activation_code_deleted", "activation_code", str(row.id), {"subscription_id": row.subscription_id})
+        self.db.commit()
+        return AdminCodeDeleteResponse(code_id=row.id, status=row.status, deleted=True)
 
     def generate_code(self, telegram_id: int) -> dict:
         user = self.sub_repo.get_or_create_user(telegram_id)

@@ -60,6 +60,39 @@ class AdminRepository(BaseRepository):
             "codes": len(self.db.scalars(select(ActivationCode.id)).all()),
         }
 
+    def list_codes(self, *, limit: int = 20, offset: int = 0) -> list[ActivationCode]:
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+        return self.db.scalars(
+            select(ActivationCode)
+            .order_by(ActivationCode.created_at.desc(), ActivationCode.id.desc())
+            .offset(safe_offset)
+            .limit(safe_limit)
+        ).all()
+
+    def get_code(self, code_id: int) -> ActivationCode | None:
+        return self.db.get(ActivationCode, code_id)
+
+    def get_subscription(self, subscription_id: int) -> Subscription | None:
+        return self.db.get(Subscription, subscription_id)
+
+    def get_user(self, user_id: int) -> User | None:
+        return self.db.get(User, user_id)
+
+    def count_active_devices(self, subscription_id: int) -> int:
+        return len(
+            self.db.scalars(
+                select(Device.id).where(Device.subscription_id == subscription_id, Device.is_active.is_(True))
+            ).all()
+        )
+
+    def delete_code(self, code_id: int) -> ActivationCode | None:
+        row = self.get_code(code_id)
+        if not row:
+            return None
+        row.status = "deleted"
+        return row
+
     def list_problem_activations(self, limit: int = 50) -> list[AuditLog]:
         return self.db.scalars(
             select(AuditLog)

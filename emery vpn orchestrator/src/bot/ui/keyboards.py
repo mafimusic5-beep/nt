@@ -41,9 +41,11 @@ def pay_keyboard(order_id: int, plan_code: str) -> InlineKeyboardMarkup:
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="Статистика", callback_data="admin_stats")
+    kb.button(text="Все ключи", callback_data="admin_codes")
     kb.button(text="Список узлов", callback_data="admin_nodes")
     kb.button(text="Выдать себе +1 месяц", callback_data="admin_grant_self")
     kb.button(text="Сгенерировать код себе", callback_data="admin_code_self")
     kb.button(text="Проблемные активации", callback_data="admin_problem_activations")
+    kb.button(text="Назад в меню", callback_data="menu_back")
     kb.adjust(1)
     return kb.as_markup()
