@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import ErrorEvent
 
 from src.bot.handlers.admin import router as admin_router
+from src.bot.handlers.reply_menu import router as reply_menu_router
 from src.bot.handlers.start import router as start_router
 from src.bot.handlers.subscription import router as subscription_router
 from src.common.config import settings
@@ -27,6 +28,7 @@ async def run() -> None:
 
     dp.include_router(start_router)
     dp.include_router(subscription_router)
+    dp.include_router(reply_menu_router)
     dp.include_router(admin_router)
 
     await dp.start_polling(bot)
