@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.common.config import settings
 
@@ -33,31 +33,39 @@ def pay_keyboard(order_id: int, plan_code: str) -> InlineKeyboardMarkup:
         ]
     )
 
+def admin_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="👑 Админ")]],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Админ-меню",
+    )
+
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="Статистика", callback_data="admin_stats")
-    kb.button(text="Список узлов", callback_data="admin_nodes")
-    kb.button(text="Все ключи", callback_data="admin_codes")
-    kb.button(text="Поиск ключей", callback_data="admin_codes_search")
-    kb.button(text="Выдать себе +1 месяц", callback_data="admin_grant_self")
-    kb.button(text="Сгенерировать код себе", callback_data="admin_code_self")
-    kb.button(text="Проблемные активации", callback_data="admin_problem_activations")
-    kb.adjust(1)
+    kb.button(text="Узлы", callback_data="admin_nodes")
+    kb.button(text="Ключи", callback_data="admin_codes")
+    kb.button(text="Поиск", callback_data="admin_codes_search")
+    kb.button(text="+1 месяц", callback_data="admin_grant_self")
+    kb.button(text="Код себе", callback_data="admin_code_self")
+    kb.button(text="Проблемы", callback_data="admin_problem_activations")
+    kb.adjust(2, 2, 2, 1)
     return kb.as_markup()
 
 def admin_codes_keyboard(items: list[dict], *, total: int, page: int, page_size: int, mode: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for item in items:
-        kb.button(text=f"#{item['id']} • tg {item.get('telegram_id') or '—'} • {item.get('status', '—')}", callback_data=f"admin_code_open:{item['id']}:{mode}:{page}")
+    current = items[0] if items else None
     nav_row = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="← Назад", callback_data=f"admin_codes_page:{mode}:{page - 1}"))
+        nav_row.append(InlineKeyboardButton(text="←", callback_data=f"admin_codes_page:{mode}:{page - 1}"))
+    if current:
+        nav_row.append(InlineKeyboardButton(text=f"Открыть #{current['id']}", callback_data=f"admin_code_open:{current['id']}:{mode}:{page}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="Дальше →", callback_data=f"admin_codes_page:{mode}:{page + 1}"))
+        nav_row.append(InlineKeyboardButton(text="→", callback_data=f"admin_codes_page:{mode}:{page + 1}"))
     if nav_row:
         kb.row(*nav_row)
-    kb.row(InlineKeyboardButton(text="Поиск ключей", callback_data="admin_codes_search"))
-    kb.row(InlineKeyboardButton(text="В меню", callback_data="admin_back"))
+    kb.row(InlineKeyboardButton(text="Поиск", callback_data="admin_codes_search"), InlineKeyboardButton(text="В меню", callback_data="admin_back"))
     return kb.as_markup()
 
 def admin_code_detail_keyboard(code_id: int, status: str, *, mode: str, page: int) -> InlineKeyboardMarkup:
@@ -68,7 +76,7 @@ def admin_code_detail_keyboard(code_id: int, status: str, *, mode: str, page: in
     else:
         kb.button(text="Активировать", callback_data=f"admin_code_action:activate:{code_id}:{mode}:{page}")
     kb.button(text="Удалить", callback_data=f"admin_code_action:delete:{code_id}:{mode}:{page}")
-    kb.button(text="Назад к списку", callback_data=f"admin_codes_back:{mode}:{page}")
+    kb.button(text="← К списку", callback_data=f"admin_codes_back:{mode}:{page}")
     kb.button(text="В меню", callback_data="admin_back")
     kb.adjust(1)
     return kb.as_markup()
