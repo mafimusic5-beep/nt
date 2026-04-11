@@ -1,6 +1,35 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 from src.common.config import settings
+
+
+def user_reply_keyboard(include_admin: bool = False) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text="Купить подписку"), KeyboardButton(text="Мои подписки")],
+        [KeyboardButton(text="Получить VPN-конфиг")],
+        [KeyboardButton(text="Мои устройства"), KeyboardButton(text="Мои коды")],
+        [KeyboardButton(text="Помощь"), KeyboardButton(text="Поддержка")],
+        [KeyboardButton(text="Канал")],
+    ]
+    if include_admin:
+        rows.append([KeyboardButton(text="👑 Админ")])
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выберите действие",
+    )
+
+
+def links_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Поддержка", url=settings.support_url)],
+            [InlineKeyboardButton(text="Канал", url=settings.channel_url)],
+        ]
+    )
+
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
@@ -15,6 +44,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     kb.adjust(1)
     return kb.as_markup()
 
+
 def plans_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="1 месяц — 600 руб", callback_data="buy_warmup_1m")
@@ -25,6 +55,7 @@ def plans_keyboard() -> InlineKeyboardMarkup:
     kb.adjust(1)
     return kb.as_markup()
 
+
 def pay_keyboard(order_id: int, plan_code: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -33,13 +64,6 @@ def pay_keyboard(order_id: int, plan_code: str) -> InlineKeyboardMarkup:
         ]
     )
 
-def admin_reply_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="👑 Админ")]],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="Админ-меню",
-    )
 
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
@@ -53,20 +77,25 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
     kb.adjust(2, 2, 2, 1)
     return kb.as_markup()
 
+
 def admin_codes_keyboard(items: list[dict], *, total: int, page: int, page_size: int, mode: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     current = items[0] if items else None
-    nav_row = []
+    row = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="←", callback_data=f"admin_codes_page:{mode}:{page - 1}"))
+        row.append(InlineKeyboardButton(text="←", callback_data=f"admin_codes_page:{mode}:{page - 1}"))
     if current:
-        nav_row.append(InlineKeyboardButton(text=f"Открыть #{current['id']}", callback_data=f"admin_code_open:{current['id']}:{mode}:{page}"))
+        row.append(InlineKeyboardButton(text=f"Открыть #{current['id']}", callback_data=f"admin_code_open:{current['id']}:{mode}:{page}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="→", callback_data=f"admin_codes_page:{mode}:{page + 1}"))
-    if nav_row:
-        kb.row(*nav_row)
-    kb.row(InlineKeyboardButton(text="Поиск", callback_data="admin_codes_search"), InlineKeyboardButton(text="В меню", callback_data="admin_back"))
+        row.append(InlineKeyboardButton(text="→", callback_data=f"admin_codes_page:{mode}:{page + 1}"))
+    if row:
+        kb.row(*row)
+    kb.row(
+        InlineKeyboardButton(text="Поиск", callback_data="admin_codes_search"),
+        InlineKeyboardButton(text="В меню", callback_data="admin_back"),
+    )
     return kb.as_markup()
+
 
 def admin_code_detail_keyboard(code_id: int, status: str, *, mode: str, page: int) -> InlineKeyboardMarkup:
     status_normalized = (status or "").lower()
