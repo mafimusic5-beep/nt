@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from src.bot.api.backend_client import BackendClient, BackendClientError
-from src.bot.ui.keyboards import admin_menu_keyboard, main_menu_keyboard
+from src.bot.ui.keyboards import admin_menu_keyboard, admin_reply_keyboard, main_menu_keyboard
 from src.bot.utils.access import is_admin
 from src.bot.utils.formatters import format_dt
 
@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="admin_menu")
 client = BackendClient()
+ADMIN_TRIGGER_TEXTS = {"👑 Админ", "Админ"}
+
+
+async def _show_admin_panel(message: Message) -> None:
+    await message.answer("Панель закреплена снизу.", reply_markup=admin_reply_keyboard())
+    await message.answer("Админ-панель", reply_markup=admin_menu_keyboard())
 
 
 @router.message(Command("admin"))
@@ -20,7 +26,15 @@ async def admin_command_handler(message: Message) -> None:
     if not is_admin(message.from_user.id):
         await message.answer("Доступ запрещен.")
         return
-    await message.answer("Админ-панель", reply_markup=admin_menu_keyboard())
+    await _show_admin_panel(message)
+
+
+@router.message(F.text.in_(ADMIN_TRIGGER_TEXTS))
+async def admin_button_handler(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        await message.answer("Доступ запрещен.")
+        return
+    await _show_admin_panel(message)
 
 
 @router.callback_query(F.data.startswith("admin_"))
@@ -80,6 +94,8 @@ async def admin_callbacks_handler(callback: CallbackQuery) -> None:
                     )
                 text = "\n".join(lines)
             await callback.message.edit_text(text, reply_markup=admin_menu_keyboard())
+        elif data == "admin_back":
+            await callback.message.edit_text("Админ-панель", reply_markup=admin_menu_keyboard())
         else:
             await callback.message.edit_text("Неизвестная админ-команда.", reply_markup=main_menu_keyboard())
         await callback.answer()
