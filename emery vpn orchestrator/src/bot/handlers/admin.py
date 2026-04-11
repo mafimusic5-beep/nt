@@ -5,19 +5,26 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from src.bot.api.backend_client import BackendClient, BackendClientError
-from src.bot.ui.keyboards import admin_menu_keyboard, admin_reply_keyboard, main_menu_keyboard
+from src.bot.ui.keyboards import admin_menu_keyboard, main_menu_keyboard, user_reply_keyboard
 from src.bot.utils.access import is_admin
 from src.bot.utils.formatters import format_dt
 
 logger = logging.getLogger(__name__)
-
 router = Router(name="admin_menu")
 client = BackendClient()
 ADMIN_TRIGGER_TEXTS = {"👑 Админ", "Админ"}
+ADMIN_CALLBACKS = {
+    "admin_stats",
+    "admin_nodes",
+    "admin_grant_self",
+    "admin_code_self",
+    "admin_problem_activations",
+    "admin_back",
+}
 
 
 async def _show_admin_panel(message: Message) -> None:
-    await message.answer("Панель закреплена снизу.", reply_markup=admin_reply_keyboard())
+    await message.answer("Панель закреплена снизу.", reply_markup=user_reply_keyboard(include_admin=True))
     await message.answer("Админ-панель", reply_markup=admin_menu_keyboard())
 
 
@@ -37,12 +44,12 @@ async def admin_button_handler(message: Message) -> None:
     await _show_admin_panel(message)
 
 
-@router.callback_query(F.data.startswith("admin_"))
+@router.callback_query(F.data.in_(ADMIN_CALLBACKS))
 async def admin_callbacks_handler(callback: CallbackQuery) -> None:
     if not is_admin(callback.from_user.id):
         await callback.answer("Доступ запрещен.", show_alert=True)
         return
-    data = callback.data
+    data = callback.data or ""
     try:
         if data == "admin_stats":
             stats = await client.admin_stats()
@@ -89,20 +96,13 @@ async def admin_callbacks_handler(callback: CallbackQuery) -> None:
             else:
                 lines = ["Проблемные активации:"]
                 for row in rows[:20]:
-                    lines.append(
-                        f"- {format_dt(row.get('created_at'))} | {row.get('action')} | actor={row.get('actor_id')}"
-                    )
+                    lines.append(f"- {format_dt(row.get('created_at'))} | {row.get('action')} | actor={row.get('actor_id')}")
                 text = "\n".join(lines)
             await callback.message.edit_text(text, reply_markup=admin_menu_keyboard())
-        elif data == "admin_back":
-            await callback.message.edit_text("Админ-панель", reply_markup=admin_menu_keyboard())
         else:
-            await callback.message.edit_text("Неизвестная админ-команда.", reply_markup=main_menu_keyboard())
+            await callback.message.edit_text("Админ-панель", reply_markup=admin_menu_keyboard())
         await callback.answer()
     except BackendClientError as exc:
         logger.warning("admin backend call failed: action=%s err=%s", data, exc.detail)
-        await callback.message.edit_text(
-            f"Ошибка backend: {exc.detail}",
-            reply_markup=admin_menu_keyboard(),
-        )
+        await callback.message.edit_text(f"Ошибка backend: {exc.detail}", reply_markup=admin_menu_keyboard())
         await callback.answer()
