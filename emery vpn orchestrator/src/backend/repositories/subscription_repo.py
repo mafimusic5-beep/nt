@@ -49,6 +49,15 @@ class SubscriptionRepository(BaseRepository):
             )
         )
 
+    def find_active_device(self, subscription_id: int, fingerprint: str) -> Device | None:
+        return self.db.scalar(
+            select(Device).where(
+                Device.subscription_id == subscription_id,
+                Device.device_fingerprint == fingerprint,
+                Device.is_active.is_(True),
+            )
+        )
+
     def upsert_device(
         self,
         subscription_id: int,
