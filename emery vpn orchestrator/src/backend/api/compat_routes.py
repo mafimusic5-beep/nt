@@ -17,11 +17,17 @@ compat_router = APIRouter()
 
 class AuthKeyRequestBody(BaseModel):
     key: str = Field(min_length=1, max_length=128)
+    device_id: str | None = Field(default=None, min_length=6, max_length=128)
+    device_name: str = ""
+    client_platform: str = "android"
 
 
 class VpnConnectRequestBody(BaseModel):
     access_key: str = Field(min_length=1, max_length=128)
     server_id: int
+    device_fingerprint: str | None = Field(default=None, min_length=6, max_length=128)
+    platform: str = "android"
+    device_name: str = ""
 
 
 def _resolve_subscription_by_key(db: Session, key: str):
@@ -36,9 +42,18 @@ def _bearer_key(authorization: str = Header(default="")) -> str:
 
 @compat_router.post("/auth/key")
 def auth_key(payload: AuthKeyRequestBody, db: Session = Depends(get_db)):
-    code, sub = _resolve_subscription_by_key(db, payload.key)
+    service = SubscriptionService(db)
+    code, sub = service.resolve_subscription_by_access_key(payload.key)
     if not code or not sub:
         return {"valid": False, "error": "invalid_or_expired_key"}
+    if payload.device_id:
+        try:
+            service._register_device_inner(sub.id, payload.device_id, payload.client_platform, payload.device_name)
+            db.commit()
+        except HTTPException as exc:
+            if exc.status_code == 409 and exc.detail == "device_limit_reached":
+                raise HTTPException(status_code=409, detail="device_limit_reached")
+            raise
     return {
         "valid": True,
         "vpn_enabled": True,
@@ -46,6 +61,8 @@ def auth_key(payload: AuthKeyRequestBody, db: Session = Depends(get_db)):
         "expires_at": sub.ends_at,
         "plan_name": sub.plan_code,
         "order_id": str(sub.id),
+        "device_id": payload.device_id or "",
+        "device_name": payload.device_name,
     }
 
 
@@ -86,7 +103,13 @@ def vpn_servers(db: Session = Depends(get_db)):
 @compat_router.post("/vpn/connect")
 def vpn_connect(payload: VpnConnectRequestBody, db: Session = Depends(get_db)):
     try:
-        return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id)
+        return SubscriptionService(db).connect_to_server(
+            payload.access_key,
+            payload.server_id,
+            payload.device_fingerprint,
+            payload.platform,
+            payload.device_name,
+        )
     except HTTPException as exc:
         if exc.detail == "server_config_unavailable":
             return {"error": "server_config_unavailable"}
