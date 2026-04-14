@@ -1,7 +1,9 @@
 package com.v2ray.ang.ui.premium.vpn
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.V2RayServiceManager
@@ -81,7 +83,6 @@ class VpnMainViewModel : ViewModel() {
                     }
 
                     V2RayServiceManager.VpnRuntimeState.DISCONNECTING -> {
-                        // Keep current UI state until runtime reports DISCONNECTED.
                     }
 
                     V2RayServiceManager.VpnRuntimeState.DISCONNECTED -> {
@@ -190,40 +191,61 @@ class VpnMainViewModel : ViewModel() {
         }
 
         connectJob = viewModelScope.launch {
-            val result = EmeryVpnSync.connectToServer(accessKey = accessKey, serverId = selectedRegion.serverId)
-            result.fold(
-                onSuccess = { connectResult ->
-                    _commands.tryEmit(VpnServiceCommand.Start(connectResult.selectedGuid))
-                    VpnUiDebugLogger.log(
-                        hypothesisId = "H3",
-                        location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "server imported, waiting for runtime connected",
-                        data = JSONObject()
-                            .put("serverId", selectedRegion.serverId)
-                            .put("title", selectedRegion.title)
-                            .put("selectedGuid", connectResult.selectedGuid),
-                    )
-                },
-                onFailure = { error ->
-                    timerJob?.cancel()
-                    _uiState.update { state ->
-                        state.copy(
-                            connectionState = VpnConnectionState.Disconnected,
-                            elapsedSeconds = 0L,
-                            errorMessage = error.message ?: "connect_failed",
+            try {
+                val result = EmeryVpnSync.connectToServer(accessKey = accessKey, serverId = selectedRegion.serverId)
+                result.fold(
+                    onSuccess = { connectResult ->
+                        _commands.tryEmit(VpnServiceCommand.Start(connectResult.selectedGuid))
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H3",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "server imported, waiting for runtime connected",
+                            data = JSONObject()
+                                .put("serverId", selectedRegion.serverId)
+                                .put("title", selectedRegion.title)
+                                .put("selectedGuid", connectResult.selectedGuid),
                         )
-                    }
-                    VpnUiDebugLogger.log(
-                        hypothesisId = "H3",
-                        location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "backend connect failed",
-                        data = JSONObject()
-                            .put("serverId", selectedRegion.serverId)
-                            .put("reason", error.message ?: "unknown"),
+                    },
+                    onFailure = { error ->
+                        timerJob?.cancel()
+                        _uiState.update { state ->
+                            state.copy(
+                                connectionState = VpnConnectionState.Disconnected,
+                                elapsedSeconds = 0L,
+                                errorMessage = error.message ?: "connect_failed",
+                            )
+                        }
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H3",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "backend connect failed",
+                            data = JSONObject()
+                                .put("serverId", selectedRegion.serverId)
+                                .put("reason", error.message ?: "unknown"),
+                        )
+                        refreshAvailableRegions()
+                    },
+                )
+            } catch (t: Throwable) {
+                Log.e(AppConfig.TAG, "Premium connect crashed", t)
+                timerJob?.cancel()
+                _uiState.update { state ->
+                    state.copy(
+                        connectionState = VpnConnectionState.Disconnected,
+                        elapsedSeconds = 0L,
+                        errorMessage = t.message ?: t.javaClass.simpleName,
                     )
-                    refreshAvailableRegions()
-                },
-            )
+                }
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H3",
+                    location = "VpnMainViewModel.kt:onConnectClick",
+                    message = "connect crashed",
+                    data = JSONObject()
+                        .put("serverId", selectedRegion.serverId)
+                        .put("error", t.message ?: "unknown")
+                        .put("type", t.javaClass.name),
+                )
+            }
         }
     }
 
