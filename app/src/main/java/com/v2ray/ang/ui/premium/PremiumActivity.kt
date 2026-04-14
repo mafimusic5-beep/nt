@@ -1,4 +1,4 @@
-﻿package com.v2ray.ang.ui.premium
+package com.v2ray.ang.ui.premium
 
 import android.content.Intent
 import android.net.VpnService
@@ -78,9 +78,9 @@ private data class NavItem(
 )
 
 private val navItems = listOf(
-    NavItem(EmeryRoute.Home, Icons.Default.Home, "Р“Р»Р°РІРЅР°СЏ"),
-    NavItem(EmeryRoute.Devices, Icons.Default.Devices, "РЈСЃС‚СЂРѕР№СЃС‚РІР°"),
-    NavItem(EmeryRoute.Support, Icons.Default.SupportAgent, "РџРѕРґРґРµСЂР¶РєР°")
+    NavItem(EmeryRoute.Home, Icons.Default.Home, "Главная"),
+    NavItem(EmeryRoute.Devices, Icons.Default.Devices, "Устройства"),
+    NavItem(EmeryRoute.Support, Icons.Default.SupportAgent, "Поддержка")
 )
 
 class PremiumActivity : ComponentActivity() {
@@ -167,13 +167,13 @@ private fun EmeryApp(
                 LaunchedEffect(vpnMainViewModel, context) {
                     vpnMainViewModel.commands.collectLatest { command ->
                         when (command) {
-                            VpnServiceCommand.Start -> {
+                            is VpnServiceCommand.Start -> {
                                 if (SettingsManager.isVpnMode()) {
                                     requestVpnPermission {
-                                        V2RayServiceManager.startVService(context)
+                                        V2RayServiceManager.startVService(context, command.selectedGuid)
                                     }
                                 } else {
-                                    V2RayServiceManager.startVService(context)
+                                    V2RayServiceManager.startVService(context, command.selectedGuid)
                                 }
                             }
 
@@ -208,7 +208,7 @@ private fun EmeryApp(
                         .padding(bottom = 24.dp)
                 ) {
                     Text(
-                        "РќР°РІРёРіР°С†РёСЏ",
+                        "Навигация",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         color = MaterialTheme.colorScheme.primary
@@ -295,9 +295,9 @@ private fun DevicesScreen(onBack: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("РЈСЃС‚СЂРѕР№СЃС‚РІР°", style = MaterialTheme.typography.titleLarge)
+        Text("Устройства", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(24.dp))
-        OutlinedButton(onClick = onBack) { Text("РќР°Р·Р°Рґ") }
+        OutlinedButton(onClick = onBack) { Text("Назад") }
     }
 }
 
@@ -310,8 +310,8 @@ private fun SupportScreen(onBack: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("РџРѕРґРґРµСЂР¶РєР°", style = MaterialTheme.typography.titleLarge)
+        Text("Поддержка", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(24.dp))
-        OutlinedButton(onClick = onBack) { Text("РќР°Р·Р°Рґ") }
+        OutlinedButton(onClick = onBack) { Text("Назад") }
     }
 }
