@@ -2,7 +2,6 @@ package com.v2ray.ang.network
 
 import com.v2ray.ang.dto.ProfileApiResponseBody
 import com.v2ray.ang.dto.VpnConnectApiResponseBody
-import com.v2ray.ang.dto.VpnConnectRequestBody
 import com.v2ray.ang.dto.VpnConfigApiResponseBody
 import com.v2ray.ang.dto.VpnServerItemApiResponseBody
 import com.v2ray.ang.handler.EmeryAccessProfile
@@ -179,7 +178,13 @@ object EmeryBackendClient {
     suspend fun connectServer(accessKey: String, serverId: Long): Result<ConnectPayload> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
         if (key.isEmpty() || serverId <= 0L) return@withContext Result.failure(IllegalStateException("bad_request"))
-        val bodyJson = JsonUtil.toJson(VpnConnectRequestBody(accessKey = key, serverId = serverId)) ?: "{}"
+        val bodyJson = JSONObject()
+            .put("access_key", key)
+            .put("server_id", serverId)
+            .put("device_fingerprint", EmeryDeviceIdentity.deviceId())
+            .put("platform", "android")
+            .put("device_name", EmeryDeviceIdentity.deviceName())
+            .toString()
         val request = authorizedPost("/api/v1/vpn/connect", key, bodyJson)
         try {
             client.newCall(request).execute().use { response ->

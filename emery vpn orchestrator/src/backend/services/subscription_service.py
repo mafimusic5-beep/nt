@@ -113,6 +113,25 @@ class SubscriptionService:
             raise HTTPException(status_code=404, detail="device_not_registered")
         return device
 
+    def _resolve_or_register_device_for_connect(
+        self,
+        subscription_id: int,
+        device_fingerprint: str | None,
+        platform: str,
+        device_name: str,
+    ):
+        try:
+            return self._resolve_device_for_subscription(subscription_id, device_fingerprint)
+        except HTTPException as exc:
+            if exc.detail == "device_not_registered" and device_fingerprint:
+                logger.info(
+                    "connect_to_server auto-registering device: subscription_id=%s fingerprint_prefix=%s",
+                    subscription_id,
+                    device_fingerprint[:12],
+                )
+                return self._register_device_inner(subscription_id, device_fingerprint, platform, device_name)
+            raise
+
     def heartbeat(self, req: HeartbeatRequest) -> None:
         user = self.repo.get_or_create_user(req.telegram_id)
         sub = self.repo.get_active_subscription(user.id)
@@ -231,7 +250,14 @@ class SubscriptionService:
         )
         return rows
 
-    def connect_to_server(self, access_key: str, server_id: int, device_fingerprint: str | None = None) -> dict:
+    def connect_to_server(
+        self,
+        access_key: str,
+        server_id: int,
+        device_fingerprint: str | None = None,
+        platform: str = "android",
+        device_name: str = "",
+    ) -> dict:
         code, sub = self.resolve_subscription_by_access_key(access_key)
         if not code or not sub:
             agent_log(
@@ -242,7 +268,7 @@ class SubscriptionService:
             )
             raise HTTPException(status_code=401, detail="invalid_or_expired_key")
 
-        device = self._resolve_device_for_subscription(sub.id, device_fingerprint)
+        device = self._resolve_or_register_device_for_connect(sub.id, device_fingerprint, platform, device_name)
         cfg = self.node_orchestrator.build_user_config_for_node(sub.id, server_id, device)
         self.audit.write("user", str(code.user_id), "vpn_connect_requested", "vpn_node", str(server_id))
         self.db.commit()

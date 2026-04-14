@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -99,7 +99,13 @@ def get_vpn_servers(db: Session = Depends(get_db)):
 
 @router.post("/vpn/connect", response_model=VpnConnectResponse)
 def connect_vpn_server(payload: VpnConnectRequest, db: Session = Depends(get_db)):
-    return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id)
+    return SubscriptionService(db).connect_to_server(
+        payload.access_key,
+        payload.server_id,
+        payload.device_fingerprint,
+        payload.platform,
+        payload.device_name,
+    )
 
 
 @router.get("/user/devices", response_model=list[UserDeviceResponse])
