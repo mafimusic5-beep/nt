@@ -1,4 +1,4 @@
-package com.v2ray.ang
+﻿package com.v2ray.ang
 
 
 object AppConfig {
@@ -102,6 +102,7 @@ object AppConfig {
     const val BROADCAST_ACTION_SERVICE = "$ANG_PACKAGE.action.service"
     const val BROADCAST_ACTION_ACTIVITY = "$ANG_PACKAGE.action.activity"
     const val BROADCAST_ACTION_WIDGET_CLICK = "$ANG_PACKAGE.action.widget.click"
+    const val BROADCAST_ACTION_RECONNECT = "$ANG_PACKAGE.action.reconnect_vpn"
 
     /** Tasker extras. */
     const val TASKER_EXTRA_BUNDLE = "com.twofortyfouram.locale.intent.extra.BUNDLE"
@@ -292,3 +293,4 @@ object AppConfig {
     )
 
 }
+

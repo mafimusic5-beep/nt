@@ -1,4 +1,4 @@
-package com.v2ray.ang.ui.premium.vpn
+﻿package com.v2ray.ang.ui.premium.vpn
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -46,8 +46,8 @@ private fun VpnMainScreenConnectedPreview() {
     VpnPreviewTheme {
         VpnMainScreen(
             uiState = VpnDemoData.connectedState(),
-            locations = VpnDemoData.locations,
-            onActivationKeyChanged = {},
+            selectedLocation = VpnDemoData.previewRegions.first(),
+            locations = VpnDemoData.previewRegions,
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},
@@ -68,8 +68,8 @@ private fun VpnMainScreenDisconnectedPreview() {
     VpnPreviewTheme {
         VpnMainScreen(
             uiState = VpnDemoData.disconnectedState(),
-            locations = VpnDemoData.locations,
-            onActivationKeyChanged = {},
+            selectedLocation = VpnDemoData.previewRegions.first(),
+            locations = VpnDemoData.previewRegions,
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},

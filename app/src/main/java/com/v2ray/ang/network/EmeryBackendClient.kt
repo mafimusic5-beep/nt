@@ -1,8 +1,9 @@
 package com.v2ray.ang.network
 
+import android.util.Log
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.ProfileApiResponseBody
 import com.v2ray.ang.dto.VpnConnectApiResponseBody
-import com.v2ray.ang.dto.VpnConnectRequestBody
 import com.v2ray.ang.dto.VpnConfigApiResponseBody
 import com.v2ray.ang.dto.VpnServerItemApiResponseBody
 import com.v2ray.ang.handler.EmeryAccessProfile
@@ -19,10 +20,6 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 
-/**
- * Authenticated Emery API calls after the access key is known.
- * Uses Authorization: Bearer <access key> together with a device-bound request signature.
- */
 object EmeryBackendClient {
 
     private val client = OkHttpClient.Builder()
@@ -113,10 +110,6 @@ object EmeryBackendClient {
         }
     }
 
-    /**
-     * Returns import blob for [com.v2ray.ang.handler.AngConfigManager.importBatchConfig], or failure.
-     * Soft failures: no allocation / no config payload (orchestrator has nothing v2rayNG can import yet).
-     */
     suspend fun fetchVpnConfigImportText(accessKey: String): Result<String> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
@@ -179,17 +172,19 @@ object EmeryBackendClient {
     suspend fun connectServer(accessKey: String, serverId: Long): Result<ConnectPayload> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
         if (key.isEmpty() || serverId <= 0L) return@withContext Result.failure(IllegalStateException("bad_request"))
-        val bodyJson = JsonUtil.toJson(VpnConnectRequestBody(accessKey = key, serverId = serverId)) ?: "{}"
+        val bodyJson = JSONObject()
+            .put("access_key", key)
+            .put("server_id", serverId)
+            .put("device_fingerprint", EmeryDeviceIdentity.deviceId())
+            .put("platform", "android")
+            .put("device_name", EmeryDeviceIdentity.deviceName())
+            .toString()
         val request = authorizedPost("/api/v1/vpn/connect", key, bodyJson)
         try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
-                val parsed = JsonUtil.fromJson(raw, VpnConnectApiResponseBody::class.java)
-                val detail = try {
-                    JSONObject(raw).optString("detail")
-                } catch (_: Exception) {
-                    ""
-                }
+                val parsed = runCatching { JsonUtil.fromJson(raw, VpnConnectApiResponseBody::class.java) }.getOrNull()
+                val detail = runCatching { JSONObject(raw).optString("detail") }.getOrDefault("")
                 if (response.code == 401) {
                     return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "invalid_or_expired_key" }))
                 }
@@ -204,7 +199,8 @@ object EmeryBackendClient {
                 }
                 val importText = parsed?.importText?.trim().orEmpty()
                 if (importText.isEmpty()) {
-                    return@withContext Result.failure(IllegalStateException("server_config_unavailable"))
+                    Log.e(AppConfig.TAG, "Emery connect parse failed: empty import_text, raw=$raw")
+                    return@withContext Result.failure(IllegalStateException("parse_error"))
                 }
                 Result.success(
                     ConnectPayload(
@@ -216,6 +212,9 @@ object EmeryBackendClient {
             }
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))
+        } catch (t: Throwable) {
+            Log.e(AppConfig.TAG, "Emery connect crashed", t)
+            Result.failure(IllegalStateException(t.message ?: t.javaClass.simpleName))
         }
     }
 }
