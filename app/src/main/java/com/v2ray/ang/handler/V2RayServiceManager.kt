@@ -1,4 +1,4 @@
-package com.v2ray.ang.handler
+﻿package com.v2ray.ang.handler
 
 import android.app.Service
 import android.content.BroadcastReceiver
@@ -162,6 +162,8 @@ object V2RayServiceManager {
      */
     fun stopVService(context: Context) {
         //context.toast(R.string.toast_services_stop)
+        VpnReconnectManager.markVpnDesired(false)
+        VpnReconnectManager.cancelScheduledReconnect(context)
         updateVpnState(VpnRuntimeState.DISCONNECTING, "stop_requested_by_ui")
         MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_STOP, "")
     }
@@ -280,6 +282,8 @@ object V2RayServiceManager {
 
         return try {
             updateVpnState(VpnRuntimeState.CONNECTING, "start_foreground_service_requested")
+            VpnReconnectManager.markVpnDesired(true)
+            VpnReconnectManager.cancelScheduledReconnect(context)
             ContextCompat.startForegroundService(context, intent)
             ManualModeDiagnostics.recordSuccessStep("VPN foreground service start requested")
             // #region agent log
@@ -499,6 +503,9 @@ object V2RayServiceManager {
         MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
         NotificationManager.cancelNotification()
         updateVpnState(VpnRuntimeState.DISCONNECTED, "stop_core_loop_success")
+        if (VpnReconnectManager.shouldKeepVpnAlive()) {
+            VpnReconnectManager.scheduleReconnect(service, "stop_core_loop_success")
+        }
 
         if (serviceReceiverRegistered) {
             try {
@@ -688,3 +695,4 @@ object V2RayServiceManager {
         }
     }
 }
+
