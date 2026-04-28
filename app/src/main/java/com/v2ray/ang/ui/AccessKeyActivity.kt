@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import androidx.lifecycle.lifecycleScope
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.databinding.ActivityAccessKeyBinding
 import com.v2ray.ang.handler.EmeryAccessManager
@@ -26,10 +27,17 @@ class AccessKeyActivity : BaseActivity() {
             return
         }
         binding.buttonActivate.setOnClickListener { onActivateClicked() }
+        if (BuildConfig.DEBUG) {
+            binding.buttonDemoMode.visibility = View.VISIBLE
+            binding.buttonDemoMode.setOnClickListener { openPremiumAndFinish(demoMode = true) }
+        }
     }
 
-    private fun openPremiumAndFinish() {
-        startActivity(Intent(this, PremiumActivity::class.java))
+    private fun openPremiumAndFinish(demoMode: Boolean = false) {
+        startActivity(
+            Intent(this, PremiumActivity::class.java)
+                .putExtra(PremiumActivity.EXTRA_DEMO_MODE, demoMode),
+        )
         finish()
     }
 
