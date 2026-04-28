@@ -2,6 +2,7 @@ package com.v2ray.ang.ui.premium.vpn
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,7 +16,11 @@ import org.json.JSONObject
 
 class VpnMainViewModel : ViewModel() {
 
-    private val _uiState = MutableStateFlow(VpnMainUiState())
+    private val _uiState = MutableStateFlow(
+        VpnMainUiState(
+            activationKey = EmeryAccessManager.loadProfile()?.accessKey.orEmpty(),
+        )
+    )
     val uiState: StateFlow<VpnMainUiState> = _uiState.asStateFlow()
 
     private var connectJob: Job? = null
