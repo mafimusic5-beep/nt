@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,22 +17,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SupportAgent
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -68,7 +59,6 @@ import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.ui.AccessKeyActivity
-import com.v2ray.ang.ui.MainActivity
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
@@ -92,6 +82,10 @@ private val navItems = listOf(
 
 class PremiumActivity : ComponentActivity() {
 
+    companion object {
+        const val EXTRA_DEMO_MODE = "premium_demo_mode"
+    }
+
     private var onVpnPermissionGranted: (() -> Unit)? = null
 
     private val vpnPermissionLauncher = registerForActivityResult(
@@ -105,7 +99,8 @@ class PremiumActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!EmeryAccessManager.isActivated()) {
+        val demoMode = intent.getBooleanExtra(EXTRA_DEMO_MODE, false)
+        if (!demoMode && !EmeryAccessManager.isActivated()) {
             startActivity(Intent(this, AccessKeyActivity::class.java))
             finish()
             return
@@ -118,6 +113,7 @@ class PremiumActivity : ComponentActivity() {
         setContent {
             EmeryTheme {
                 EmeryApp(
+                    demoMode = demoMode,
                     requestVpnPermission = { onGranted ->
                         val intent = VpnService.prepare(this)
                         if (intent == null) {
@@ -136,12 +132,15 @@ class PremiumActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EmeryApp(
+    demoMode: Boolean,
     requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
 ) {
     val navController = rememberNavController()
     var showMenu by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -165,12 +164,13 @@ private fun EmeryApp(
                         hypothesisId = "H2",
                         location = "PremiumActivity.kt:EmeryApp",
                         message = "home route switched to vpn compose screen",
-                        data = JSONObject(),
+                        data = JSONObject().put("demoMode", demoMode),
                     )
                 }
                 VpnMainRoute(
                     viewModel = vpnMainViewModel,
                     onSettingsClick = { showMenu = true },
+                    demoMode = demoMode,
                 )
             }
             composable(EmeryRoute.Devices.name) { DevicesScreen { navController.popBackStack() } }
@@ -199,7 +199,7 @@ private fun EmeryApp(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     navItems.forEach { item ->
-                        val isSelected = navController.currentDestination?.hierarchy?.any { it.route == item.route.name } == true
+                        val isSelected = currentDestination?.hierarchy?.any { it.route == item.route.name } == true
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -234,6 +234,15 @@ private fun EmeryApp(
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                         }
+                    }
+                    if (demoMode) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Demo mode · UI preview only",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
                     }
                 }
             }
