@@ -62,11 +62,14 @@ fun VpnMainRoute(
     viewModel: VpnMainViewModel,
     onSettingsClick: () -> Unit = {},
     modifier: Modifier = Modifier,
+    demoMode: Boolean = false,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var locations by remember { mutableStateOf(VpnDemoData.locations) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(demoMode) {
+        if (demoMode) return@LaunchedEffect
+
         val fetched = EmeryBackendClient.fetchVpnServers().getOrNull().orEmpty()
         val availableNames = fetched
             .filter { it.isAvailable }
@@ -101,6 +104,7 @@ fun VpnMainRoute(
         onDisconnectClick = viewModel::onDisconnectClick,
         onSettingsClick = onSettingsClick,
         modifier = modifier,
+        demoMode = demoMode,
     )
 }
 
@@ -113,6 +117,7 @@ fun VpnMainScreen(
     onDisconnectClick: () -> Unit,
     onSettingsClick: () -> Unit = {},
     modifier: Modifier = Modifier,
+    demoMode: Boolean = false,
 ) {
     Column(
         modifier = modifier
@@ -158,12 +163,17 @@ fun VpnMainScreen(
             onLocationSelected = onLocationSelected,
         )
 
+        if (demoMode) {
+            Spacer(modifier = Modifier.height(12.dp))
+            DemoModeLabel()
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         when (uiState.connectionState) {
-            VpnConnectionState.Disconnected -> DisconnectedCard()
+            VpnConnectionState.Disconnected -> DisconnectedCard(demoMode = demoMode)
             VpnConnectionState.Connecting -> ConnectingCard()
-            VpnConnectionState.Connected -> ConnectedCard(duration = uiState.formattedDuration)
+            VpnConnectionState.Connected -> ConnectedCard(duration = uiState.formattedDuration, demoMode = demoMode)
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -337,12 +347,32 @@ private fun RouteSelectorChip(
 }
 
 @Composable
-private fun DisconnectedCard() {
+private fun DemoModeLabel() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(VpnPremiumTokens.Colors.PositiveSoft)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "Demo mode · UI preview only",
+            style = MaterialTheme.typography.bodyMedium,
+            color = VpnPremiumTokens.Colors.PositiveStrong,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+private fun DisconnectedCard(
+    demoMode: Boolean,
+) {
     SurfaceCard {
         InfoRow(
             title = "Состояние",
-            value = "VPN сейчас не подключён",
-            note = "Включите защиту вручную или дождитесь риска",
+            value = if (demoMode) "Демо-режим предпросмотра" else "VPN сейчас не подключён",
+            note = if (demoMode) "Доступ не разблокирован, показан только интерфейс" else "Включите защиту вручную или дождитесь риска",
         )
         RowDivider()
         InfoRow(
@@ -361,6 +391,7 @@ private fun DisconnectedCard() {
 @Composable
 private fun ConnectedCard(
     duration: String,
+    demoMode: Boolean,
 ) {
     SurfaceCard {
         Row(
@@ -403,7 +434,7 @@ private fun ConnectedCard(
                 )
             }
 
-            Badge(text = "VPN активен")
+            Badge(text = if (demoMode) "Demo UI" else "VPN активен")
         }
 
         RowDivider()
