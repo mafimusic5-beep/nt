@@ -1,6 +1,7 @@
 package com.v2ray.ang.handler
 
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.BuildConfig
 
 private const val PREF_EMERY_DEVICE_ID_LOCAL = "pref_emery_device_id"
 private const val PREF_EMERY_DEVICE_NAME_LOCAL = "pref_emery_device_name"
@@ -20,11 +21,26 @@ data class EmeryAccessProfile(
 
 object EmeryAccessManager {
 
+    private val developmentProfile = EmeryAccessProfile(
+        accessKey = "DEV-SESSION",
+        vpnEnabled = true,
+        routerEnabled = true,
+        expiresAt = "2099-12-31T23:59:59Z",
+        planName = "Development",
+        deviceId = "dev-device",
+        deviceName = "Development device",
+        devicesUsed = 1,
+        devicesLimit = 5,
+    )
+
     fun isActivated(): Boolean {
+        if (BuildConfig.DEBUG) return true
         return !MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY).isNullOrBlank()
     }
 
     fun loadProfile(): EmeryAccessProfile? {
+        if (BuildConfig.DEBUG) return developmentProfile
+
         val key = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY) ?: return null
         if (key.isBlank()) return null
         val expires = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_EXPIRES_AT) ?: return null
