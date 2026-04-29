@@ -50,7 +50,6 @@ private fun VpnMainScreenConnectedPreview() {
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},
-            onSettingsClick = {},
         )
     }
 }
@@ -71,7 +70,6 @@ private fun VpnMainScreenDisconnectedPreview() {
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},
-            onSettingsClick = {},
         )
     }
 }
