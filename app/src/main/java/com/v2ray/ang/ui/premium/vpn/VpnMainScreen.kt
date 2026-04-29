@@ -57,15 +57,25 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
-        val topFlex = when {
-            tight -> 0.04f
-            compact -> 0.10f
-            else -> 0.16f
+        val topStart = when {
+            tight -> 10.dp
+            compact -> 22.dp
+            else -> 32.dp
         }
-        val bottomFlex = when {
-            tight -> 0.06f
-            compact -> 0.10f
-            else -> 0.14f
+        val logoToBeacon = when {
+            tight -> 16.dp
+            compact -> 22.dp
+            else -> 26.dp
+        }
+        val beaconToTitle = when {
+            tight -> 10.dp
+            compact -> 14.dp
+            else -> 18.dp
+        }
+        val cardToButton = when {
+            tight -> 12.dp
+            compact -> 18.dp
+            else -> 22.dp
         }
 
         Column(
@@ -79,11 +89,11 @@ fun VpnMainScreen(
                 ),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.weight(topFlex))
+            Spacer(Modifier.height(topStart))
             HeaderBar(compact)
-            Spacer(Modifier.height(if (tight) 18.dp else if (compact) 24.dp else 30.dp))
+            Spacer(Modifier.height(logoToBeacon))
             StatusBeacon(uiState.connectionState)
-            Spacer(Modifier.height(if (tight) 12.dp else if (compact) 16.dp else 20.dp))
+            Spacer(Modifier.height(beaconToTitle))
             Text(
                 text = screenTitle(uiState.connectionState),
                 style = if (tight) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge,
@@ -106,7 +116,7 @@ fun VpnMainScreen(
                 VpnConnectionState.Connecting -> ConnectingCard(compact, tight)
                 VpnConnectionState.Connected -> ConnectedCard(uiState.formattedDuration, compact, tight)
             }
-            Spacer(Modifier.weight(bottomFlex))
+            Spacer(Modifier.height(cardToButton))
             PrimaryConnectButton(
                 state = uiState.connectionState,
                 enabled = uiState.connectButtonEnabled,
@@ -125,6 +135,7 @@ fun VpnMainScreen(
                     textAlign = TextAlign.Center,
                 )
             }
+            Spacer(Modifier.weight(1f))
         }
     }
 }
