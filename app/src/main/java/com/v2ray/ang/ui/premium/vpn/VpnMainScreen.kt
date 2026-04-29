@@ -209,8 +209,8 @@ private fun StatusBeacon(
 ) {
     val pulse = if (connectionState == VpnConnectionState.Connecting) {
         rememberInfiniteTransition(label = "status-beacon").animateFloat(
-            initialValue = 0.94f,
-            targetValue = 1.04f,
+            initialValue = 0.96f,
+            targetValue = 1.03f,
             animationSpec = infiniteRepeatable(
                 animation = tween(durationMillis = 900, easing = EaseInOutSine),
                 repeatMode = RepeatMode.Reverse,
@@ -232,34 +232,34 @@ private fun StatusBeacon(
 
     val middleAlpha = when (connectionState) {
         VpnConnectionState.Disconnected -> 0.10f
-        VpnConnectionState.Connecting -> 0.14f
+        VpnConnectionState.Connecting -> 0.13f
         VpnConnectionState.Connected -> 0.12f
     }
     val outerAlpha = when (connectionState) {
-        VpnConnectionState.Disconnected -> 0.05f
-        VpnConnectionState.Connecting -> 0.08f
-        VpnConnectionState.Connected -> 0.06f
+        VpnConnectionState.Disconnected -> 0.045f
+        VpnConnectionState.Connecting -> 0.07f
+        VpnConnectionState.Connected -> 0.055f
     }
 
     Box(
-        modifier = Modifier.size(92.dp),
+        modifier = Modifier.size(88.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(92.dp)
+                .size(88.dp)
                 .clip(CircleShape)
                 .background(coreColor.copy(alpha = outerAlpha))
         )
         Box(
             modifier = Modifier
-                .size((58 * pulse).dp)
+                .size((56 * pulse).dp)
                 .clip(CircleShape)
                 .background(coreColor.copy(alpha = middleAlpha))
         )
         Box(
             modifier = Modifier
-                .size(38.dp)
+                .size(36.dp)
                 .clip(CircleShape)
                 .background(coreColor)
         )
