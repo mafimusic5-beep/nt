@@ -26,10 +26,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun VpnMainRoute(
-    viewModel: VpnMainViewModel,
-    modifier: Modifier = Modifier,
-) {
+fun VpnMainRoute(viewModel: VpnMainViewModel, modifier: Modifier = Modifier) {
     val uiState by viewModel.uiState.collectAsState()
     VpnMainScreen(
         uiState = uiState,
@@ -66,9 +63,9 @@ fun VpnMainScreen(
             else -> 0.16f
         }
         val bottomFlex = when {
-            tight -> 0.18f
-            compact -> 0.28f
-            else -> 0.36f
+            tight -> 0.06f
+            compact -> 0.10f
+            else -> 0.14f
         }
 
         Column(
@@ -115,7 +112,9 @@ fun VpnMainScreen(
                 enabled = uiState.connectButtonEnabled,
                 compact = compact,
                 tight = tight,
-                onClick = { if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick() },
+                onClick = {
+                    if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick()
+                },
             )
             if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
                 Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
