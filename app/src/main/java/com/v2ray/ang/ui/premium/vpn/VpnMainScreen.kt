@@ -104,7 +104,6 @@ fun VpnMainRoute(
         onDisconnectClick = viewModel::onDisconnectClick,
         onSettingsClick = onSettingsClick,
         modifier = modifier,
-        demoMode = demoMode,
     )
 }
 
@@ -117,7 +116,6 @@ fun VpnMainScreen(
     onDisconnectClick: () -> Unit,
     onSettingsClick: () -> Unit = {},
     modifier: Modifier = Modifier,
-    demoMode: Boolean = false,
 ) {
     Column(
         modifier = modifier
@@ -127,16 +125,17 @@ fun VpnMainScreen(
             .navigationBarsPadding()
             .imePadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .padding(horizontal = 24.dp)
+            .padding(top = 8.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         HeaderBar(onSettingsClick = onSettingsClick)
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
         StatusBeacon(connectionState = uiState.connectionState)
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         Text(
             text = screenTitle(uiState.connectionState),
@@ -163,17 +162,12 @@ fun VpnMainScreen(
             onLocationSelected = onLocationSelected,
         )
 
-        if (demoMode) {
-            Spacer(modifier = Modifier.height(12.dp))
-            DemoModeLabel()
-        }
-
         Spacer(modifier = Modifier.height(24.dp))
 
         when (uiState.connectionState) {
-            VpnConnectionState.Disconnected -> DisconnectedCard(demoMode = demoMode)
+            VpnConnectionState.Disconnected -> DisconnectedCard()
             VpnConnectionState.Connecting -> ConnectingCard()
-            VpnConnectionState.Connected -> ConnectedCard(duration = uiState.formattedDuration, demoMode = demoMode)
+            VpnConnectionState.Connected -> ConnectedCard(duration = uiState.formattedDuration)
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -347,32 +341,12 @@ private fun RouteSelectorChip(
 }
 
 @Composable
-private fun DemoModeLabel() {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(VpnPremiumTokens.Colors.PositiveSoft)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "Demo mode · UI preview only",
-            style = MaterialTheme.typography.bodyMedium,
-            color = VpnPremiumTokens.Colors.PositiveStrong,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-@Composable
-private fun DisconnectedCard(
-    demoMode: Boolean,
-) {
+private fun DisconnectedCard() {
     SurfaceCard {
         InfoRow(
             title = "Состояние",
-            value = if (demoMode) "Демо-режим предпросмотра" else "VPN сейчас не подключён",
-            note = if (demoMode) "Доступ не разблокирован, показан только интерфейс" else "Включите защиту вручную или дождитесь риска",
+            value = "VPN сейчас не подключён",
+            note = "Включите защиту вручную или дождитесь риска",
         )
         RowDivider()
         InfoRow(
@@ -391,7 +365,6 @@ private fun DisconnectedCard(
 @Composable
 private fun ConnectedCard(
     duration: String,
-    demoMode: Boolean,
 ) {
     SurfaceCard {
         Row(
@@ -434,7 +407,7 @@ private fun ConnectedCard(
                 )
             }
 
-            Badge(text = if (demoMode) "Demo UI" else "VPN активен")
+            Badge(text = "VPN активен")
         }
 
         RowDivider()
