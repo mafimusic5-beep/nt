@@ -89,12 +89,12 @@ fun VpnMainScreen(
         val horizontalPadding = if (tight) 18.dp else 24.dp
         val topPadding = if (tight) 4.dp else 8.dp
         val bottomPadding = if (tight) 8.dp else 12.dp
-        val headerToBeacon = if (tight) 10.dp else if (compact) 14.dp else 20.dp
-        val beaconToTitle = if (tight) 14.dp else if (compact) 18.dp else 24.dp
+        val headerToBeacon = if (tight) 18.dp else if (compact) 26.dp else 36.dp
+        val beaconToTitle = if (tight) 10.dp else if (compact) 14.dp else 18.dp
         val titleToSubtitle = if (tight) 4.dp else 8.dp
-        val subtitleToRoute = if (tight) 8.dp else 14.dp
-        val routeToCard = if (tight) 10.dp else 16.dp
-        val cardToButton = if (tight) 10.dp else 14.dp
+        val subtitleToRoute = if (tight) 8.dp else 12.dp
+        val routeToCard = if (tight) 8.dp else 12.dp
+        val cardToButton = if (tight) 8.dp else 10.dp
 
         Column(
             modifier = Modifier
