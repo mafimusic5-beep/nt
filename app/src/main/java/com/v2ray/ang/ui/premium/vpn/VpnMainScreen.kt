@@ -126,12 +126,12 @@ fun VpnMainScreen(
             .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
-            .padding(top = 8.dp, bottom = 16.dp),
+            .padding(top = 0.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         HeaderBar(onSettingsClick = onSettingsClick)
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         StatusBeacon(connectionState = uiState.connectionState)
 
