@@ -47,7 +47,6 @@ private fun VpnMainScreenConnectedPreview() {
         VpnMainScreen(
             uiState = VpnDemoData.connectedState(),
             locations = VpnDemoData.locations,
-            onActivationKeyChanged = {},
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},
@@ -69,7 +68,6 @@ private fun VpnMainScreenDisconnectedPreview() {
         VpnMainScreen(
             uiState = VpnDemoData.disconnectedState(),
             locations = VpnDemoData.locations,
-            onActivationKeyChanged = {},
             onLocationSelected = {},
             onConnectClick = {},
             onDisconnectClick = {},
