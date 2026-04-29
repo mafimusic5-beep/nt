@@ -106,9 +106,11 @@ class PremiumActivity : ComponentActivity() {
             return
         }
         enableEdgeToEdge()
+        window.statusBarColor = android.graphics.Color.WHITE
+        window.navigationBarColor = android.graphics.Color.WHITE
         WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
         }
         setContent {
             EmeryTheme {
@@ -234,15 +236,6 @@ private fun EmeryApp(
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                         }
-                    }
-                    if (demoMode) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Demo mode · UI preview only",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
                     }
                 }
             }
