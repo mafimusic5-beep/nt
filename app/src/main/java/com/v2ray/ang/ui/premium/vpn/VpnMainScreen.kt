@@ -66,9 +66,9 @@ fun VpnMainScreen(
             else -> 0.16f
         }
         val bottomFlex = when {
-            tight -> 0.42f
-            compact -> 0.62f
-            else -> 0.78f
+            tight -> 0.18f
+            compact -> 0.28f
+            else -> 0.36f
         }
 
         Column(
