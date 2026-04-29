@@ -209,8 +209,8 @@ private fun StatusBeacon(
 ) {
     val pulse = if (connectionState == VpnConnectionState.Connecting) {
         rememberInfiniteTransition(label = "status-beacon").animateFloat(
-            initialValue = 0.96f,
-            targetValue = 1.03f,
+            initialValue = 0.99f,
+            targetValue = 1.01f,
             animationSpec = infiniteRepeatable(
                 animation = tween(durationMillis = 900, easing = EaseInOutSine),
                 repeatMode = RepeatMode.Reverse,
@@ -231,35 +231,35 @@ private fun StatusBeacon(
     )
 
     val middleAlpha = when (connectionState) {
-        VpnConnectionState.Disconnected -> 0.10f
-        VpnConnectionState.Connecting -> 0.13f
-        VpnConnectionState.Connected -> 0.12f
+        VpnConnectionState.Disconnected -> 0.09f
+        VpnConnectionState.Connecting -> 0.11f
+        VpnConnectionState.Connected -> 0.10f
     }
     val outerAlpha = when (connectionState) {
-        VpnConnectionState.Disconnected -> 0.045f
-        VpnConnectionState.Connecting -> 0.07f
-        VpnConnectionState.Connected -> 0.055f
+        VpnConnectionState.Disconnected -> 0.035f
+        VpnConnectionState.Connecting -> 0.05f
+        VpnConnectionState.Connected -> 0.04f
     }
 
     Box(
-        modifier = Modifier.size(88.dp),
+        modifier = Modifier.size(60.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(88.dp)
+                .size(60.dp)
                 .clip(CircleShape)
                 .background(coreColor.copy(alpha = outerAlpha))
         )
         Box(
             modifier = Modifier
-                .size((56 * pulse).dp)
+                .size((42 * pulse).dp)
                 .clip(CircleShape)
                 .background(coreColor.copy(alpha = middleAlpha))
         )
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(30.dp)
                 .clip(CircleShape)
                 .background(coreColor)
         )
