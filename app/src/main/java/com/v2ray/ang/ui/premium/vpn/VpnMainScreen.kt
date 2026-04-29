@@ -61,17 +61,15 @@ fun VpnMainScreen(
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
         val topFlex = when {
-            tight -> 0.18f
-            compact -> 0.32f
-            else -> 0.46f
+            tight -> 0.04f
+            compact -> 0.10f
+            else -> 0.16f
         }
         val bottomFlex = when {
             tight -> 0.42f
             compact -> 0.62f
             else -> 0.78f
         }
-        val logoToBeacon = if (tight) 18.dp else if (compact) 24.dp else 30.dp
-        val beaconToTitle = if (tight) 12.dp else if (compact) 16.dp else 20.dp
 
         Column(
             modifier = Modifier
@@ -86,10 +84,9 @@ fun VpnMainScreen(
         ) {
             Spacer(Modifier.weight(topFlex))
             HeaderBar(compact)
-            Spacer(Modifier.height(logoToBeacon))
+            Spacer(Modifier.height(if (tight) 18.dp else if (compact) 24.dp else 30.dp))
             StatusBeacon(uiState.connectionState)
-            Spacer(Modifier.height(beaconToTitle))
-
+            Spacer(Modifier.height(if (tight) 12.dp else if (compact) 16.dp else 20.dp))
             Text(
                 text = screenTitle(uiState.connectionState),
                 style = if (tight) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge,
@@ -107,24 +104,19 @@ fun VpnMainScreen(
             Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
             RouteSelectorChip(uiState.selectedLocation, locations, onLocationSelected, compact)
             Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
-
             when (uiState.connectionState) {
                 VpnConnectionState.Disconnected -> DisconnectedCard(compact, tight)
                 VpnConnectionState.Connecting -> ConnectingCard(compact, tight)
                 VpnConnectionState.Connected -> ConnectedCard(uiState.formattedDuration, compact, tight)
             }
-
             Spacer(Modifier.weight(bottomFlex))
             PrimaryConnectButton(
                 state = uiState.connectionState,
                 enabled = uiState.connectButtonEnabled,
                 compact = compact,
                 tight = tight,
-                onClick = {
-                    if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick()
-                },
+                onClick = { if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick() },
             )
-
             if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
                 Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
                 Text(
@@ -172,18 +164,12 @@ private fun StatusBeacon(connectionState: VpnConnectionState) {
             label = "beacon-pulse",
         ).value
     } else 1f
-
     val coreColor by animateColorAsState(
-        targetValue = when (connectionState) {
-            VpnConnectionState.Connected -> VpnPremiumTokens.Colors.PositiveStrong
-            else -> VpnPremiumTokens.Colors.Positive
-        },
+        targetValue = if (connectionState == VpnConnectionState.Connected) VpnPremiumTokens.Colors.PositiveStrong else VpnPremiumTokens.Colors.Positive,
         label = "beacon-core",
     )
-
     val middleAlpha = if (connectionState == VpnConnectionState.Connecting) 0.11f else if (connectionState == VpnConnectionState.Connected) 0.10f else 0.09f
     val outerAlpha = if (connectionState == VpnConnectionState.Connecting) 0.05f else if (connectionState == VpnConnectionState.Connected) 0.04f else 0.035f
-
     Box(Modifier.size(60.dp), contentAlignment = Alignment.Center) {
         Box(Modifier.size(60.dp).clip(CircleShape).background(coreColor.copy(alpha = outerAlpha)))
         Box(Modifier.size((42 * pulse).dp).clip(CircleShape).background(coreColor.copy(alpha = middleAlpha)))
@@ -310,10 +296,7 @@ private enum class ProgressState { Pending, Active, Completed }
 private fun ProgressRow(title: String, note: String, state: ProgressState, showLine: Boolean, compact: Boolean, tight: Boolean) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Column(Modifier.padding(top = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            val dotColor = when (state) {
-                ProgressState.Pending -> VpnPremiumTokens.Colors.Track
-                else -> VpnPremiumTokens.Colors.PositiveStrong
-            }
+            val dotColor = if (state == ProgressState.Pending) VpnPremiumTokens.Colors.Track else VpnPremiumTokens.Colors.PositiveStrong
             Box(Modifier.size(if (state == ProgressState.Active) 11.dp else 9.dp).clip(CircleShape).background(dotColor))
             if (showLine) {
                 val lineColor = when (state) {
@@ -429,10 +412,7 @@ fun PrimaryConnectButton(
     modifier: Modifier = Modifier,
 ) {
     val containerColor by animateColorAsState(
-        targetValue = when (state) {
-            VpnConnectionState.Connected -> VpnPremiumTokens.Colors.PrimaryButtonConnected
-            else -> VpnPremiumTokens.Colors.PrimaryButtonIdle
-        },
+        targetValue = if (state == VpnConnectionState.Connected) VpnPremiumTokens.Colors.PrimaryButtonConnected else VpnPremiumTokens.Colors.PrimaryButtonIdle,
         label = "primary-button-color",
     )
     val label = when (state) {
