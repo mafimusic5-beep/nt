@@ -66,9 +66,9 @@ fun VpnMainScreen(
             else -> 0.46f
         }
         val bottomFlex = when {
-            tight -> 0.70f
-            compact -> 1.05f
-            else -> 1.35f
+            tight -> 0.42f
+            compact -> 0.62f
+            else -> 0.78f
         }
         val logoToBeacon = if (tight) 18.dp else if (compact) 24.dp else 30.dp
         val beaconToTitle = if (tight) 12.dp else if (compact) 16.dp else 20.dp
