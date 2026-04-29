@@ -1,9 +1,11 @@
 package com.v2ray.ang.ui.premium
 
 import android.content.Intent
+import android.graphics.Color as AndroidColor
 import android.net.VpnService
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -110,10 +112,17 @@ class PremiumActivity : ComponentActivity() {
             finish()
             return
         }
-        enableEdgeToEdge()
+
+        val systemBarsColor = AndroidColor.rgb(247, 248, 244)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(systemBarsColor, systemBarsColor),
+            navigationBarStyle = SystemBarStyle.light(systemBarsColor, systemBarsColor),
+        )
+        window.statusBarColor = systemBarsColor
+        window.navigationBarColor = systemBarsColor
         WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
         }
         setContent {
             EmeryTheme {
