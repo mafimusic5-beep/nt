@@ -60,8 +60,18 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
-        val headerToBeacon = if (tight) 38.dp else if (compact) 62.dp else 92.dp
-        val beaconToTitle = if (tight) 8.dp else if (compact) 10.dp else 12.dp
+        val topFlex = when {
+            tight -> 0.18f
+            compact -> 0.32f
+            else -> 0.46f
+        }
+        val bottomFlex = when {
+            tight -> 0.70f
+            compact -> 1.05f
+            else -> 1.35f
+        }
+        val logoToBeacon = if (tight) 18.dp else if (compact) 24.dp else 30.dp
+        val beaconToTitle = if (tight) 12.dp else if (compact) 16.dp else 20.dp
 
         Column(
             modifier = Modifier
@@ -74,8 +84,9 @@ fun VpnMainScreen(
                 ),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Spacer(Modifier.weight(topFlex))
             HeaderBar(compact)
-            Spacer(Modifier.height(headerToBeacon))
+            Spacer(Modifier.height(logoToBeacon))
             StatusBeacon(uiState.connectionState)
             Spacer(Modifier.height(beaconToTitle))
 
@@ -103,7 +114,7 @@ fun VpnMainScreen(
                 VpnConnectionState.Connected -> ConnectedCard(uiState.formattedDuration, compact, tight)
             }
 
-            Spacer(Modifier.height(if (tight) 8.dp else 10.dp))
+            Spacer(Modifier.weight(bottomFlex))
             PrimaryConnectButton(
                 state = uiState.connectionState,
                 enabled = uiState.connectButtonEnabled,
