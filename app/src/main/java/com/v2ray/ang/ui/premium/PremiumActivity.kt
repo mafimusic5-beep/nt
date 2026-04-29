@@ -5,7 +5,6 @@ import android.graphics.Color as AndroidColor
 import android.net.VpnService
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -113,11 +112,8 @@ class PremiumActivity : ComponentActivity() {
             return
         }
 
+        enableEdgeToEdge()
         val systemBarsColor = AndroidColor.rgb(247, 248, 244)
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(systemBarsColor, systemBarsColor),
-            navigationBarStyle = SystemBarStyle.light(systemBarsColor, systemBarsColor),
-        )
         window.statusBarColor = systemBarsColor
         window.navigationBarColor = systemBarsColor
         WindowCompat.getInsetsController(window, window.decorView).apply {
