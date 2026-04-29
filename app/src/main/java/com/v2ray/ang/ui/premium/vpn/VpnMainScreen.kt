@@ -13,7 +13,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -146,7 +145,7 @@ fun VpnMainScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        PrimaryActionButton(
+        PrimaryConnectButton(
             state = uiState.connectionState,
             enabled = uiState.connectButtonEnabled,
             onClick = {
