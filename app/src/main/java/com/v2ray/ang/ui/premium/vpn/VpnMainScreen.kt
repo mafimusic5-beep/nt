@@ -58,9 +58,9 @@ fun VpnMainScreen(
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
         val topStart = when {
-            tight -> 10.dp
-            compact -> 22.dp
-            else -> 32.dp
+            tight -> 4.dp
+            compact -> 12.dp
+            else -> 18.dp
         }
         val logoToBeacon = when {
             tight -> 16.dp
@@ -73,9 +73,9 @@ fun VpnMainScreen(
             else -> 18.dp
         }
         val cardToButton = when {
-            tight -> 12.dp
-            compact -> 18.dp
-            else -> 22.dp
+            tight -> 18.dp
+            compact -> 24.dp
+            else -> 28.dp
         }
 
         Column(
@@ -369,7 +369,7 @@ private fun SurfaceCard(compact: Boolean, tight: Boolean, content: @Composable C
             .clip(RoundedCornerShape(if (compact) 24.dp else 30.dp))
             .background(VpnPremiumTokens.Colors.Surface)
             .border(1.dp, VpnPremiumTokens.Colors.BorderSubtle, RoundedCornerShape(if (compact) 24.dp else 30.dp))
-            .padding(horizontal = if (tight) 16.dp else if (compact) 18.dp else 22.dp, vertical = if (tight) 14.dp else if (compact) 16.dp else 22.dp),
+            .padding(horizontal = if (tight) 16.dp else if (compact) 18.dp else 22.dp, vertical = if (tight) 12.dp else if (compact) 14.dp else 18.dp),
         content = content,
     )
 }
@@ -396,7 +396,7 @@ private fun InfoRow(
 
 @Composable
 private fun RowDivider(compact: Boolean, tight: Boolean) {
-    Box(Modifier.fillMaxWidth().padding(vertical = if (tight) 8.dp else if (compact) 10.dp else 14.dp).height(1.dp).background(VpnPremiumTokens.Colors.BorderSubtle))
+    Box(Modifier.fillMaxWidth().padding(vertical = if (tight) 6.dp else if (compact) 8.dp else 10.dp).height(1.dp).background(VpnPremiumTokens.Colors.BorderSubtle))
 }
 
 @Composable
