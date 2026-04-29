@@ -6,7 +6,6 @@ import android.net.VpnService
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -112,8 +111,8 @@ class PremiumActivity : ComponentActivity() {
             return
         }
 
-        enableEdgeToEdge()
         val systemBarsColor = AndroidColor.rgb(247, 248, 244)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = systemBarsColor
         window.navigationBarColor = systemBarsColor
         WindowCompat.getInsetsController(window, window.decorView).apply {
