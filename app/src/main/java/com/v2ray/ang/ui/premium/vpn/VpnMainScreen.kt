@@ -89,8 +89,8 @@ fun VpnMainScreen(
         val horizontalPadding = if (tight) 18.dp else 24.dp
         val topPadding = if (tight) 4.dp else 8.dp
         val bottomPadding = if (tight) 8.dp else 12.dp
-        val headerToBeacon = if (tight) 18.dp else if (compact) 26.dp else 36.dp
-        val beaconToTitle = if (tight) 10.dp else if (compact) 14.dp else 18.dp
+        val headerToBeacon = if (tight) 54.dp else if (compact) 78.dp else 108.dp
+        val beaconToTitle = if (tight) 8.dp else if (compact) 10.dp else 12.dp
         val titleToSubtitle = if (tight) 4.dp else 8.dp
         val subtitleToRoute = if (tight) 8.dp else 12.dp
         val routeToCard = if (tight) 8.dp else 12.dp
@@ -108,11 +108,8 @@ fun VpnMainScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             HeaderBar(compact = compact)
-
             Spacer(modifier = Modifier.height(headerToBeacon))
-
             StatusBeacon(connectionState = uiState.connectionState)
-
             Spacer(modifier = Modifier.height(beaconToTitle))
 
             Text(
@@ -195,9 +192,7 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 }
 
 @Composable
-private fun HeaderBar(
-    compact: Boolean,
-) {
+private fun HeaderBar(compact: Boolean) {
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
@@ -212,9 +207,7 @@ private fun HeaderBar(
 }
 
 @Composable
-private fun StatusBeacon(
-    connectionState: VpnConnectionState,
-) {
+private fun StatusBeacon(connectionState: VpnConnectionState) {
     val pulse = if (connectionState == VpnConnectionState.Connecting) {
         rememberInfiniteTransition(label = "status-beacon").animateFloat(
             initialValue = 0.99f,
@@ -334,10 +327,7 @@ private fun RouteSelectorChip(
 }
 
 @Composable
-private fun DisconnectedCard(
-    compact: Boolean,
-    tight: Boolean,
-) {
+private fun DisconnectedCard(compact: Boolean, tight: Boolean) {
     SurfaceCard(compact = compact, tight = tight) {
         InfoRow(
             title = "Состояние",
@@ -365,11 +355,7 @@ private fun DisconnectedCard(
 }
 
 @Composable
-private fun ConnectedCard(
-    duration: String,
-    compact: Boolean,
-    tight: Boolean,
-) {
+private fun ConnectedCard(duration: String, compact: Boolean, tight: Boolean) {
     SurfaceCard(compact = compact, tight = tight) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -415,7 +401,6 @@ private fun ConnectedCard(
         }
 
         RowDivider(compact = compact, tight = tight)
-
         InfoRow(
             title = "Риск в сети",
             value = "Низкий",
@@ -442,10 +427,7 @@ private fun ConnectedCard(
 }
 
 @Composable
-private fun ConnectingCard(
-    compact: Boolean,
-    tight: Boolean,
-) {
+private fun ConnectingCard(compact: Boolean, tight: Boolean) {
     var activeStep by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
@@ -480,11 +462,7 @@ private fun ConnectingCard(
     }
 }
 
-private enum class ProgressState {
-    Pending,
-    Active,
-    Completed,
-}
+private enum class ProgressState { Pending, Active, Completed }
 
 @Composable
 private fun ProgressRow(
@@ -557,23 +535,14 @@ private fun ProgressRow(
 }
 
 @Composable
-fun HumanSilhouetteBlock(
-    uiState: VpnMainUiState,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center,
-    ) {
+fun HumanSilhouetteBlock(uiState: VpnMainUiState, modifier: Modifier = Modifier) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
         StatusBeacon(connectionState = uiState.connectionState)
     }
 }
 
 @Composable
-fun HologramManBlock(
-    uiState: VpnMainUiState,
-    modifier: Modifier = Modifier,
-) {
+fun HologramManBlock(uiState: VpnMainUiState, modifier: Modifier = Modifier) {
     HumanSilhouetteBlock(uiState = uiState, modifier = modifier)
 }
 
@@ -604,10 +573,7 @@ fun ConnectionTimer(time: String) {
 }
 
 @Composable
-fun ConnectionStatusOverlay(
-    uiState: VpnMainUiState,
-    modifier: Modifier = Modifier,
-) {
+fun ConnectionStatusOverlay(uiState: VpnMainUiState, modifier: Modifier = Modifier) {
     Box(modifier = modifier)
 }
 
@@ -679,10 +645,7 @@ private fun InfoRow(
 }
 
 @Composable
-private fun RowDivider(
-    compact: Boolean,
-    tight: Boolean,
-) {
+private fun RowDivider(compact: Boolean, tight: Boolean) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -693,10 +656,7 @@ private fun RowDivider(
 }
 
 @Composable
-private fun Badge(
-    text: String,
-    compact: Boolean,
-) {
+private fun Badge(text: String, compact: Boolean) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
