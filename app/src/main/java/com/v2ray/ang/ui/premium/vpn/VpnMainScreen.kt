@@ -29,7 +29,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -57,7 +56,6 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun VpnMainRoute(
     viewModel: VpnMainViewModel,
-    onSettingsClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -67,7 +65,6 @@ fun VpnMainRoute(
         onLocationSelected = viewModel::onLocationSelected,
         onConnectClick = viewModel::onConnectClick,
         onDisconnectClick = viewModel::onDisconnectClick,
-        onSettingsClick = onSettingsClick,
         modifier = modifier,
     )
 }
@@ -79,7 +76,6 @@ fun VpnMainScreen(
     onLocationSelected: (String) -> Unit,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
-    onSettingsClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -92,7 +88,7 @@ fun VpnMainScreen(
             .padding(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        HeaderBar(onSettingsClick = onSettingsClick)
+        HeaderBar()
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -182,9 +178,7 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 }
 
 @Composable
-private fun HeaderBar(
-    onSettingsClick: () -> Unit,
-) {
+private fun HeaderBar() {
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
@@ -194,11 +188,6 @@ private fun HeaderBar(
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.SemiBold,
             color = VpnPremiumTokens.Colors.TextPrimary,
-        )
-
-        SettingsCircleButton(
-            onClick = onSettingsClick,
-            modifier = Modifier.align(Alignment.CenterEnd),
         )
     }
 }
@@ -542,28 +531,6 @@ fun HologramManBlock(
 }
 
 @Composable
-fun TopBarArea(
-    selectedLocation: VpnLocationOption,
-    locations: List<VpnLocationOption>,
-    onLocationSelected: (String) -> Unit,
-    onSettingsClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LocationSelector(
-            selectedLocation = selectedLocation,
-            locations = locations,
-            onLocationSelected = onLocationSelected,
-        )
-        Spacer(modifier = Modifier.weight(1f))
-        SettingsCircleButton(onClick = onSettingsClick)
-    }
-}
-
-@Composable
 fun LocationSelector(
     selectedLocation: VpnLocationOption,
     locations: List<VpnLocationOption>,
@@ -576,28 +543,6 @@ fun LocationSelector(
         onLocationSelected = onLocationSelected,
         modifier = modifier,
     )
-}
-
-@Composable
-fun SettingsCircleButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .size(46.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(alpha = 0.92f))
-            .border(1.dp, VpnPremiumTokens.Colors.BorderSubtle, RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Settings,
-            contentDescription = "Settings",
-            tint = VpnPremiumTokens.Colors.TextPrimary,
-        )
-    }
 }
 
 @Composable
