@@ -121,6 +121,17 @@ class NodeOrchestrationService:
             "node_health_status": node.health_status,
         }
 
+    def build_pool_import_text(self, subscription_id: int) -> str:
+        subscription = self.repo.get_subscription(subscription_id)
+        if not subscription:
+            raise HTTPException(status_code=404, detail="subscription_not_found")
+        lines: list[str] = []
+        for node in sorted(self._eligible_nodes(None), key=lambda n: (n.region_code, self._node_sort_key(n))):
+            import_text = self.config_service.build_import_text(node, subscription, None).strip()
+            if import_text:
+                lines.extend([line.strip() for line in import_text.splitlines() if line.strip()])
+        return "\n".join(dict.fromkeys(lines))
+
     def list_connectable_nodes(self, region_code: str | None = None) -> list:
         return self._eligible_nodes(region_code)
 
