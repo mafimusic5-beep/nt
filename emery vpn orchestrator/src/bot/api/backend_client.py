@@ -87,6 +87,20 @@ class BackendClient:
     async def admin_nodes(self) -> list[dict]:
         return await self._request("GET", "/api/v1/admin/nodes", headers={"X-Admin-Api-Key": self.admin_api_key})
 
+    async def admin_create_node(self, payload: dict) -> dict:
+        return await self._request(
+            "POST",
+            "/api/v1/admin/nodes",
+            json_data=payload,
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_capacity(self) -> dict:
+        return await self._request("GET", "/api/v1/admin/capacity", headers={"X-Admin-Api-Key": self.admin_api_key})
+
+    async def admin_capacity_alert(self) -> dict:
+        return await self._request("GET", "/api/v1/admin/capacity/alert", headers={"X-Admin-Api-Key": self.admin_api_key})
+
     async def admin_grant_subscription(self, telegram_id: int, months: int) -> dict:
         return await self._request(
             "POST",
