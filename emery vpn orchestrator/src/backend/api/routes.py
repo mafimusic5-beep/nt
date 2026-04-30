@@ -34,6 +34,7 @@ from src.backend.schemas.subscription import (
     VpnServerItemResponse,
 )
 from src.backend.services.admin_service import AdminService
+from src.backend.services.capacity_service import CapacityService
 from src.backend.services.order_service import OrderService
 from src.backend.services.subscription_service import SubscriptionService
 
@@ -96,6 +97,11 @@ def get_vpn_servers(db: Session = Depends(get_db)):
     return SubscriptionService(db).list_vpn_servers()
 
 
+@router.get("/vpn/pool/config")
+def get_vpn_pool_config(access_key: str, db: Session = Depends(get_db)):
+    return SubscriptionService(db).get_vpn_pool_config(access_key)
+
+
 @router.post("/vpn/connect", response_model=VpnConnectResponse)
 def connect_vpn_server(payload: VpnConnectRequest, db: Session = Depends(get_db)):
     return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id)
@@ -150,6 +156,16 @@ def admin_list_nodes(db: Session = Depends(get_db)):
 @router.post("/admin/nodes", response_model=VpnNodeResponse, dependencies=[Depends(require_admin_api_key)])
 def admin_create_node(payload: VpnNodeUpsertRequest, db: Session = Depends(get_db)):
     return AdminService(db).create_node(payload)
+
+
+@router.get("/admin/capacity", dependencies=[Depends(require_admin_api_key)])
+def admin_capacity(db: Session = Depends(get_db)):
+    return {"regions": [row.__dict__ for row in CapacityService(db).list_regions()]}
+
+
+@router.get("/admin/capacity/alert", dependencies=[Depends(require_admin_api_key)])
+def admin_capacity_alert(db: Session = Depends(get_db)):
+    return {"text": CapacityService(db).alert_text()}
 
 
 @router.get("/admin/stats", response_model=AdminStatsResponse, dependencies=[Depends(require_admin_api_key)])
