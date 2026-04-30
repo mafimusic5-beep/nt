@@ -19,6 +19,7 @@ class VpnNodeUpsertRequest(BaseModel):
     region_code: str = "moscow"
     endpoint: str
     config_payload: str
+    provider: str = "manual"
     status: str = "active"
     health_status: str = "unknown"
     load_score: int = 1000
@@ -36,6 +37,7 @@ class VpnNodeResponse(BaseModel):
     id: int
     name: str
     region_code: str
+    provider: str = "manual"
     endpoint: str
     status: str
     health_status: str
