@@ -45,12 +45,14 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="Статистика", callback_data="admin_stats")
     kb.button(text="Узлы", callback_data="admin_nodes")
+    kb.button(text="Ёмкость", callback_data="admin_capacity")
+    kb.button(text="Что докупить", callback_data="admin_capacity_alert")
     kb.button(text="Ключи", callback_data="admin_codes")
     kb.button(text="Поиск", callback_data="admin_codes_search")
     kb.button(text="+1 месяц", callback_data="admin_grant_self")
     kb.button(text="Код себе", callback_data="admin_code_self")
     kb.button(text="Проблемы", callback_data="admin_problem_activations")
-    kb.adjust(2, 2, 2, 1)
+    kb.adjust(2, 2, 2, 2, 1)
     return kb.as_markup()
 
 def admin_codes_keyboard(items: list[dict], *, total: int, page: int, page_size: int, mode: str) -> InlineKeyboardMarkup:
