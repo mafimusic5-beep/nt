@@ -175,6 +175,17 @@ class SubscriptionService:
         )
         return VpnConfigResponse(import_text=cfg["import_text"])
 
+    def get_vpn_pool_config(self, access_key: str) -> dict:
+        code, sub = self.resolve_subscription_by_access_key(access_key)
+        if not code or not sub:
+            raise HTTPException(status_code=401, detail="invalid_or_expired_key")
+        import_text = self.node_orchestrator.build_pool_import_text(sub.id)
+        if not import_text.strip():
+            raise HTTPException(status_code=404, detail="no_pool_config")
+        self.audit.write("user", str(code.user_id), "vpn_pool_config_requested", "subscription", str(sub.id))
+        self.db.commit()
+        return {"importText": import_text}
+
     def list_user_devices(self, telegram_id: int) -> list[dict]:
         user = self.repo.get_or_create_user(telegram_id)
         sub = self.repo.get_active_subscription(user.id)
