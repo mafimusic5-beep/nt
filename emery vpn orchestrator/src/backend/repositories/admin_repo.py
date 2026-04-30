@@ -28,10 +28,12 @@ class AdminRepository(BaseRepository):
         firstvds_vps_id: str,
         ssh_key_fingerprint: str,
         ssh_key_status: str,
+        provider: str = "manual",
     ) -> VpnNode:
         node = VpnNode(
             name=name,
             region_code=region_code,
+            provider=provider,
             endpoint=endpoint,
             config_payload=config_payload,
             status=status,
