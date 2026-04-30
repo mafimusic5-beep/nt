@@ -4,6 +4,7 @@ import android.util.Log
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.SubscriptionItem
 import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.network.EmeryPoolClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -16,7 +17,7 @@ object EmeryVpnSync {
             return
         }
         val item = SubscriptionItem()
-        item.remarks = "Emery VPN"
+        item.remarks = "Skryon Pool"
         item.url = ""
         item.enabled = false
         item.autoUpdate = false
@@ -48,6 +49,18 @@ object EmeryVpnSync {
         val selectedGuid: String,
     )
 
+    /**
+     * Activation sync for the Skryon/v2rayNG model:
+     * one paid access key gives access to the whole public server pool, not to a personal VPS.
+     *
+     * New backend contract, preferred:
+     *   GET /api/v1/vpn/pool/config
+     *   returns either { importText: "vless://...\nvless://..." } or a JSON list of online servers.
+     *
+     * Legacy fallback:
+     *   GET /vpn/config
+     *   keeps older single-allocation backend builds working while the pool backend is being deployed.
+     */
     suspend fun syncProfileAndVpnConfig(accessKey: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
         Log.i(AppConfig.TAG, "EmerySync[H1]: starting sync, baseUrl=${EmeryApiConfig.baseUrl()}")
         val profileResult = EmeryBackendClient.fetchProfile(accessKey)
@@ -58,30 +71,34 @@ object EmeryVpnSync {
         EmeryAccessManager.saveProfile(profile)
 
         ensureEmerySubscription()
-        val cfgResult = EmeryBackendClient.fetchVpnConfigImportText(accessKey)
-        val importText = cfgResult.getOrElse { e ->
-            when (e.message) {
-                "no_allocation", "no_import_text", "no_vpn_config", "no_active_allocation", "vpn_disabled" -> {
-                    Log.w(AppConfig.TAG, "Emery sync: no VPN config yet (${e.message}), keeping activation successful")
-                    return@withContext Result.success(profile)
-                }
-                "network" -> {
-                    Log.w(AppConfig.TAG, "Emery sync: VPN config fetch failed (network), keeping activation successful")
-                    return@withContext Result.success(profile)
-                }
-                else -> {
-                    Log.w(AppConfig.TAG, "Emery sync: VPN import skipped (${e.message})")
-                    return@withContext Result.failure(IllegalStateException("import_failed: ${e.message}"))
+
+        val poolImportText = EmeryPoolClient.fetchPoolImportText(accessKey).getOrElse { poolError ->
+            Log.w(AppConfig.TAG, "Emery sync: pool config unavailable (${poolError.message}), trying legacy config")
+            val legacyResult = EmeryBackendClient.fetchVpnConfigImportText(accessKey)
+            legacyResult.getOrElse { legacyError ->
+                when (legacyError.message) {
+                    "no_allocation", "no_import_text", "no_vpn_config", "no_active_allocation", "vpn_disabled" -> {
+                        Log.w(AppConfig.TAG, "Emery sync: no VPN config yet (${legacyError.message}), keeping activation successful")
+                        return@withContext Result.success(profile)
+                    }
+                    "network" -> {
+                        Log.w(AppConfig.TAG, "Emery sync: VPN config fetch failed (network), keeping activation successful")
+                        return@withContext Result.success(profile)
+                    }
+                    else -> {
+                        Log.w(AppConfig.TAG, "Emery sync: VPN import skipped (${legacyError.message})")
+                        return@withContext Result.failure(IllegalStateException("import_failed: ${legacyError.message}"))
+                    }
                 }
             }
         }
 
         val (count, _) = AngConfigManager.importBatchConfig(
-            importText,
+            poolImportText,
             AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID,
             append = false,
         )
-        Log.i(AppConfig.TAG, "Emery sync: imported $count profile(s) into Emery subscription")
+        Log.i(AppConfig.TAG, "Emery sync: imported $count Skryon pool profile(s)")
 
         if (count <= 0) {
             Log.e(AppConfig.TAG, "EmerySync[H2]: import returned count=$count, failing")
