@@ -40,6 +40,7 @@ class AdminService:
             id=n.id,
             name=n.name,
             region_code=n.region_code,
+            provider=n.provider,
             endpoint=n.endpoint,
             status=n.status,
             health_status=n.health_status,
@@ -55,8 +56,12 @@ class AdminService:
         )
 
     def create_node(self, req: VpnNodeUpsertRequest) -> VpnNodeResponse:
-        if req.region_code != "moscow":
-            raise HTTPException(status_code=400, detail="only_moscow_region_supported")
+        if not req.region_code.strip():
+            raise HTTPException(status_code=400, detail="region_required")
+        if not req.endpoint.strip():
+            raise HTTPException(status_code=400, detail="endpoint_required")
+        if req.config_payload.strip() and not FirstVdsBillManagerProvisioningService.is_config_payload_valid(req.config_payload):
+            raise HTTPException(status_code=400, detail="invalid_vless_config")
         node = self.admin_repo.create_node(
             req.name,
             req.region_code,
@@ -73,8 +78,9 @@ class AdminService:
             req.firstvds_vps_id,
             req.ssh_key_fingerprint,
             req.ssh_key_status,
+            req.provider,
         )
-        self.audit_repo.write("admin", "api", "create_node", "vpn_node", str(node.id), {"region": node.region_code})
+        self.audit_repo.write("admin", "api", "create_node", "vpn_node", str(node.id), {"region": node.region_code, "provider": node.provider})
         self.db.commit()
         return self._node_response(node)
 
