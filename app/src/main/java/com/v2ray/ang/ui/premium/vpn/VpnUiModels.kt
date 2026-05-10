@@ -11,6 +11,7 @@ enum class VpnConnectionState {
 data class VpnLocationOption(
     val id: String,
     val title: String,
+    val importText: String = "",
 )
 
 data class VpnMainUiState(
@@ -46,7 +47,9 @@ data class VpnMainUiState(
 
     val connectButtonEnabled: Boolean
         get() = when (connectionState) {
-            VpnConnectionState.Disconnected -> activationKey.isNotBlank() && selectedLocation.id.toLongOrNull() != null
+            VpnConnectionState.Disconnected -> activationKey.isNotBlank() && (
+                selectedLocation.id.toLongOrNull() != null || selectedLocation.importText.isNotBlank()
+            )
             VpnConnectionState.Connecting -> false
             VpnConnectionState.Connected -> true
         }
