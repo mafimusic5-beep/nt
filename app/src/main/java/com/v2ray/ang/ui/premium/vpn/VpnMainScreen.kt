@@ -30,7 +30,7 @@ fun VpnMainRoute(viewModel: VpnMainViewModel, modifier: Modifier = Modifier) {
     val uiState by viewModel.uiState.collectAsState()
     VpnMainScreen(
         uiState = uiState,
-        locations = VpnDemoData.locations,
+        locations = uiState.locations,
         onLocationSelected = viewModel::onLocationSelected,
         onConnectClick = viewModel::onConnectClick,
         onDisconnectClick = viewModel::onDisconnectClick,
@@ -110,6 +110,15 @@ fun VpnMainScreen(
             )
             Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
             RouteSelectorChip(uiState.selectedLocation, locations, onLocationSelected, compact)
+            if (uiState.locationsLoading || uiState.locationsError.isNotBlank()) {
+                Spacer(Modifier.height(if (tight) 4.dp else 6.dp))
+                Text(
+                    text = if (uiState.locationsLoading) "Загружаем регионы..." else uiState.locationsError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = VpnPremiumTokens.Colors.TextSecondary,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
             when (uiState.connectionState) {
                 VpnConnectionState.Disconnected -> DisconnectedCard(compact, tight)
@@ -129,7 +138,12 @@ fun VpnMainScreen(
             if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
                 Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
                 Text(
-                    text = "Ключ доступа не найден",
+                    text = when {
+                        uiState.activationKey.isBlank() -> "Ключ доступа не найден"
+                        uiState.locationsLoading -> "Список регионов загружается"
+                        uiState.locationsError.isNotBlank() -> uiState.locationsError
+                        else -> "Регион недоступен"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = VpnPremiumTokens.Colors.TextSecondary,
                     textAlign = TextAlign.Center,
@@ -202,7 +216,7 @@ private fun RouteSelectorChip(
                 .clip(RoundedCornerShape(18.dp))
                 .background(VpnPremiumTokens.Colors.Surface)
                 .border(1.dp, VpnPremiumTokens.Colors.BorderSubtle, RoundedCornerShape(18.dp))
-                .clickable { expanded = true }
+                .clickable { expanded = locations.isNotEmpty() }
                 .padding(horizontal = if (compact) 14.dp else 16.dp, vertical = if (compact) 8.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
