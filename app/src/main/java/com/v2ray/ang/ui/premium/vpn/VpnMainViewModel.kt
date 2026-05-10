@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
 class VpnMainViewModel : ViewModel() {
 
@@ -53,35 +56,85 @@ class VpnMainViewModel : ViewModel() {
                         }
                         .distinctBy { it.id }
 
-                    val finalLocations = locations.ifEmpty { VpnDemoData.unavailableLocations }
-                    _uiState.update { state ->
-                        val selected = finalLocations.firstOrNull { it.id == state.selectedLocation.id }
-                            ?: finalLocations.first()
-                        state.copy(
-                            locations = finalLocations,
-                            selectedLocation = selected,
-                            locationsLoading = false,
-                            locationsError = if (locations.isEmpty()) "Серверы пока недоступны" else "",
-                        )
+                    if (locations.isNotEmpty()) {
+                        applyLocations(locations, "")
+                    } else {
+                        refreshPoolLocationsFallback("Серверы пока недоступны")
                     }
                 },
                 onFailure = { error ->
-                    _uiState.update { state ->
-                        state.copy(
-                            locations = VpnDemoData.unavailableLocations,
-                            selectedLocation = VpnDemoData.unavailableLocations.first(),
-                            locationsLoading = false,
-                            locationsError = "Не удалось загрузить серверы",
-                        )
-                    }
                     VpnUiDebugLogger.log(
                         hypothesisId = "H6",
                         location = "VpnMainViewModel.kt:refreshLocations",
                         message = "server list fetch failed",
                         data = JSONObject().put("error", error.message ?: "unknown"),
                     )
+                    refreshPoolLocationsFallback("Не удалось загрузить серверы")
                 },
             )
+        }
+    }
+
+    private suspend fun refreshPoolLocationsFallback(fallbackError: String) {
+        val key = _uiState.value.activationKey
+        if (key.isBlank()) {
+            applyLocations(VpnDemoData.unavailableLocations, fallbackError)
+            return
+        }
+        val poolResult = EmeryPoolClient.fetchPoolImportText(key)
+        poolResult.fold(
+            onSuccess = { importText ->
+                val locations = importText
+                    .lineSequence()
+                    .map { it.trim() }
+                    .filter { it.startsWith("vless://") || it.startsWith("vmess://") || it.startsWith("trojan://") }
+                    .distinct()
+                    .mapIndexed { index, link ->
+                        VpnLocationOption(
+                            id = "pool-${index + 1}",
+                            title = titleFromConfigLink(link, index + 1),
+                            importText = link,
+                        )
+                    }
+                    .toList()
+
+                applyLocations(
+                    locations.ifEmpty { VpnDemoData.unavailableLocations },
+                    if (locations.isEmpty()) fallbackError else "",
+                )
+            },
+            onFailure = { error ->
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H6",
+                    location = "VpnMainViewModel.kt:refreshPoolLocationsFallback",
+                    message = "pool list fetch failed",
+                    data = JSONObject().put("error", error.message ?: "unknown"),
+                )
+                applyLocations(VpnDemoData.unavailableLocations, fallbackError)
+            },
+        )
+    }
+
+    private fun applyLocations(locations: List<VpnLocationOption>, error: String) {
+        _uiState.update { state ->
+            val selected = locations.firstOrNull { it.id == state.selectedLocation.id }
+                ?: locations.first()
+            state.copy(
+                locations = locations,
+                selectedLocation = selected,
+                locationsLoading = false,
+                locationsError = error,
+            )
+        }
+    }
+
+    private fun titleFromConfigLink(link: String, index: Int): String {
+        val rawTitle = link.substringAfter('#', "").trim()
+        if (rawTitle.isBlank()) return "Server #$index"
+        return try {
+            URLDecoder.decode(rawTitle, StandardCharsets.UTF_8.name()).ifBlank { "Server #$index" }
+        } catch (_: Exception) {
+            rawTitle
         }
     }
 
