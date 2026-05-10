@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import unquote
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -9,6 +10,7 @@ from src.bot.ui.keyboards import admin_menu_keyboard, admin_reply_keyboard, main
 from src.bot.utils.access import is_admin
 from src.bot.utils.command_parse import endpoint_from_proxy_link, extract_first_proxy_link, parse_key_values
 from src.bot.utils.formatters import format_dt
+from src.common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,8 @@ async def _show_admin_panel(message: Message) -> None:
         "Админ-панель\n\n"
         "Быстрые команды:\n"
         "/capacity — какого региона не хватает\n"
-        "/add_config region=nl name=\"Netherlands 1\" endpoint=1.2.3.4 config=vless://...\n"
+        "/add_config <VLESS Reality ссылка> — добавить сервер в общий пул\n"
+        "/add_config region=nl name=\"Netherlands 1\" capacity=50 config=<VLESS Reality ссылка>\n"
         "/servers — список узлов",
         reply_markup=admin_menu_keyboard(),
     )
@@ -72,21 +75,27 @@ async def add_config_command_handler(message: Message) -> None:
     raw_args = _command_args(message.text or "", "/add_config")
     args = parse_key_values(raw_args)
     link = args.get("config") or args.get("link") or extract_first_proxy_link(raw_args)
-    region = (args.get("region") or args.get("region_code") or "").strip().lower()
-    name = (args.get("name") or args.get("title") or "").strip()
+    region = (args.get("region") or args.get("region_code") or settings.default_region_code).strip().lower()
+    name = (args.get("name") or args.get("title") or _name_from_proxy_link(link)).strip()
     endpoint = (args.get("endpoint") or args.get("ip") or endpoint_from_proxy_link(link)).strip()
-    provider = (args.get("provider") or "racknerd").strip().lower()
+    provider = (args.get("provider") or "manual").strip().lower()
     max_users_raw = args.get("max_users") or args.get("capacity") or "50"
 
-    if not region or not link:
+    if not link:
         await message.answer(
             "Формат:\n"
-            "/add_config region=nl name=\"Netherlands 1\" endpoint=1.2.3.4 config=vless://...\n\n"
-            "Минимум нужны region и vless/vmess/trojan ссылка."
+            "/add_config <VLESS Reality ссылка>\n\n"
+            "Можно без region/name: регион возьмется из настроек, имя — из части после #."
         )
         return
-    if not link.lower().startswith(("vless://", "vmess://", "trojan://")):
-        await message.answer("Конфиг должен начинаться с vless://, vmess:// или trojan://")
+    if not link.lower().startswith("vless://"):
+        await message.answer("Конфиг должен начинаться с vless://")
+        return
+    if not endpoint:
+        await message.answer(
+            "Не смог определить endpoint из ссылки. "
+            "Укажи endpoint=1.2.3.4 или проверь формат ссылки."
+        )
         return
     try:
         max_users = int(max_users_raw)
@@ -212,6 +221,13 @@ def _command_args(text: str, command: str) -> str:
         return text[len(command):].strip()
     parts = text.split(maxsplit=1)
     return parts[1].strip() if len(parts) > 1 else ""
+
+
+def _name_from_proxy_link(link: str) -> str:
+    try:
+        return unquote(link.split("#", 1)[1]).strip()
+    except Exception:
+        return ""
 
 
 def _format_nodes(nodes: list[dict]) -> str:
