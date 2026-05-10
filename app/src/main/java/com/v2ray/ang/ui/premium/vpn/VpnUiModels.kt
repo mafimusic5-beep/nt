@@ -15,9 +15,12 @@ data class VpnLocationOption(
 
 data class VpnMainUiState(
     val activationKey: String = "",
-    val selectedLocation: VpnLocationOption = VpnDemoData.locations.first(),
+    val locations: List<VpnLocationOption> = VpnDemoData.loadingLocations,
+    val selectedLocation: VpnLocationOption = VpnDemoData.loadingLocations.first(),
     val connectionState: VpnConnectionState = VpnConnectionState.Disconnected,
     val elapsedSeconds: Long = 0L,
+    val locationsLoading: Boolean = false,
+    val locationsError: String = "",
 ) {
     val formattedDuration: String
         get() {
@@ -43,7 +46,7 @@ data class VpnMainUiState(
 
     val connectButtonEnabled: Boolean
         get() = when (connectionState) {
-            VpnConnectionState.Disconnected -> activationKey.isNotBlank()
+            VpnConnectionState.Disconnected -> activationKey.isNotBlank() && selectedLocation.id.toLongOrNull() != null
             VpnConnectionState.Connecting -> false
             VpnConnectionState.Connected -> true
         }
@@ -53,16 +56,23 @@ data class VpnMainUiState(
 }
 
 object VpnDemoData {
+    val loadingLocations: List<VpnLocationOption> = listOf(
+        VpnLocationOption(id = "loading", title = "Загрузка серверов"),
+    )
+
+    val unavailableLocations: List<VpnLocationOption> = listOf(
+        VpnLocationOption(id = "unavailable", title = "Серверы недоступны"),
+    )
+
     val locations: List<VpnLocationOption> = listOf(
-        VpnLocationOption(id = "switzerland", title = "Switzerland"),
-        VpnLocationOption(id = "netherlands", title = "Netherlands"),
-        VpnLocationOption(id = "germany", title = "Germany"),
-        VpnLocationOption(id = "france", title = "France"),
-        VpnLocationOption(id = "poland", title = "Poland"),
+        VpnLocationOption(id = "1", title = "Singapore"),
+        VpnLocationOption(id = "2", title = "Amsterdam"),
+        VpnLocationOption(id = "3", title = "Frankfurt"),
     )
 
     fun disconnectedState(): VpnMainUiState = VpnMainUiState(
         activationKey = "EVPN-24H9-X2Q7",
+        locations = locations,
         selectedLocation = locations.first(),
         connectionState = VpnConnectionState.Disconnected,
         elapsedSeconds = 0L,
@@ -70,6 +80,7 @@ object VpnDemoData {
 
     fun connectedState(): VpnMainUiState = VpnMainUiState(
         activationKey = "EVPN-24H9-X2Q7",
+        locations = locations,
         selectedLocation = locations.first(),
         connectionState = VpnConnectionState.Connected,
         elapsedSeconds = 763L,
