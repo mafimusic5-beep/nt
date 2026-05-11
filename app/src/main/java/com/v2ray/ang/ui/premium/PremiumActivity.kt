@@ -77,8 +77,8 @@ class PremiumActivity : ComponentActivity() {
                             vpnPermissionLauncher.launch(intent)
                         }
                     },
-                    startVpnService = {
-                        V2RayServiceManager.startVServiceFromToggle(this)
+                    startVpnService = { guid ->
+                        V2RayServiceManager.startVService(this, guid)
                     },
                     stopVpnService = {
                         V2RayServiceManager.stopVService(this)
@@ -92,7 +92,7 @@ class PremiumActivity : ComponentActivity() {
 @Composable
 private fun EmeryApp(
     requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
-    startVpnService: () -> Boolean,
+    startVpnService: (String) -> Boolean,
     stopVpnService: () -> Unit,
 ) {
     val navController = rememberNavController()
