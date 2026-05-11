@@ -26,14 +26,24 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun VpnMainRoute(viewModel: VpnMainViewModel, modifier: Modifier = Modifier) {
+fun VpnMainRoute(
+    viewModel: VpnMainViewModel,
+    requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
+    startVpnService: () -> Boolean,
+    stopVpnService: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val uiState by viewModel.uiState.collectAsState()
     VpnMainScreen(
         uiState = uiState,
         locations = uiState.locations,
         onLocationSelected = viewModel::onLocationSelected,
-        onConnectClick = viewModel::onConnectClick,
-        onDisconnectClick = viewModel::onDisconnectClick,
+        onConnectClick = {
+            requestVpnPermission {
+                viewModel.onConnectClick(startVpnService)
+            }
+        },
+        onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
         modifier = modifier,
     )
 }
