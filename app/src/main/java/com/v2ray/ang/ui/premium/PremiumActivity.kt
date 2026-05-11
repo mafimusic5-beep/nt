@@ -32,6 +32,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.ui.AccessKeyActivity
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
@@ -50,6 +51,8 @@ class PremiumActivity : ComponentActivity() {
     ) { result ->
         if (result.resultCode == RESULT_OK) {
             onVpnPermissionGranted?.invoke()
+            onVpnPermissionGranted = null
+        } else {
             onVpnPermissionGranted = null
         }
     }
@@ -81,7 +84,13 @@ class PremiumActivity : ComponentActivity() {
                             onVpnPermissionGranted = onGranted
                             vpnPermissionLauncher.launch(intent)
                         }
-                    }
+                    },
+                    startVpnService = {
+                        V2RayServiceManager.startVServiceFromToggle(this)
+                    },
+                    stopVpnService = {
+                        V2RayServiceManager.stopVService(this)
+                    },
                 )
             }
         }
@@ -91,6 +100,8 @@ class PremiumActivity : ComponentActivity() {
 @Composable
 private fun EmeryApp(
     requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
+    startVpnService: () -> Boolean,
+    stopVpnService: () -> Unit,
 ) {
     val navController = rememberNavController()
 
@@ -121,6 +132,9 @@ private fun EmeryApp(
                 }
                 VpnMainRoute(
                     viewModel = vpnMainViewModel,
+                    requestVpnPermission = requestVpnPermission,
+                    startVpnService = startVpnService,
+                    stopVpnService = stopVpnService,
                 )
             }
         }
