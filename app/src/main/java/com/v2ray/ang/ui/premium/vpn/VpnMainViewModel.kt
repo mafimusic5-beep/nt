@@ -2,11 +2,15 @@ package com.v2ray.ang.ui.premium.vpn
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
+import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -15,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -87,7 +92,7 @@ class VpnMainViewModel : ViewModel() {
                 val locations = importText
                     .lineSequence()
                     .map { it.trim() }
-                    .filter { it.startsWith("vless://") || it.startsWith("vmess://") || it.startsWith("trojan://") }
+                    .filter { isImportProfileLink(it) }
                     .distinct()
                     .mapIndexed { index, link ->
                         VpnLocationOption(
@@ -126,6 +131,11 @@ class VpnMainViewModel : ViewModel() {
                 locationsError = error,
             )
         }
+    }
+
+    private fun isImportProfileLink(link: String): Boolean {
+        val value = link.trim().lowercase()
+        return value.contains("://") && !value.startsWith("http://") && !value.startsWith("https://")
     }
 
     private fun titleFromConfigLink(link: String, index: Int): String {
@@ -196,11 +206,6 @@ class VpnMainViewModel : ViewModel() {
             )
             return
         }
-        val serverId = currentState.selectedLocation.id.toLongOrNull()
-        if (serverId == null) {
-            refreshLocations()
-            return
-        }
 
         connectJob?.cancel()
         timerJob?.cancel()
@@ -219,7 +224,7 @@ class VpnMainViewModel : ViewModel() {
         )
 
         connectJob = viewModelScope.launch {
-            val result = EmeryVpnSync.connectToServer(currentState.activationKey, serverId)
+            val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = {
                     _uiState.update { state ->
@@ -259,10 +264,47 @@ class VpnMainViewModel : ViewModel() {
                         location = "VpnMainViewModel.kt:onConnectClick",
                         message = "connect failed",
                         data = JSONObject()
-                            .put("serverId", serverId)
+                            .put("serverId", currentState.selectedLocation.id)
                             .put("error", error.message ?: "unknown"),
                     )
                 },
+            )
+        }
+    }
+
+    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
+        val serverId = state.selectedLocation.id.toLongOrNull()
+        if (serverId != null) {
+            return EmeryVpnSync.connectToServer(state.activationKey, serverId)
+        }
+
+        val importText = state.selectedLocation.importText.orEmpty().trim()
+        if (importText.isBlank()) {
+            return Result.failure(IllegalStateException("missing_import_text"))
+        }
+
+        return withContext(Dispatchers.IO) {
+            val (count, _) = AngConfigManager.importBatchConfig(
+                importText,
+                AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID,
+                append = false,
+            )
+            if (count <= 0) {
+                return@withContext Result.failure(IllegalStateException("import_failed"))
+            }
+
+            val selectedGuid = MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID).firstOrNull().orEmpty()
+            if (selectedGuid.isBlank()) {
+                return@withContext Result.failure(IllegalStateException("selected_server_missing"))
+            }
+
+            MmkvManager.setSelectServer(selectedGuid)
+            Result.success(
+                EmeryVpnSync.ConnectServerResult(
+                    serverId = -1L,
+                    city = state.selectedLocation.title,
+                    selectedGuid = selectedGuid,
+                )
             )
         }
     }
