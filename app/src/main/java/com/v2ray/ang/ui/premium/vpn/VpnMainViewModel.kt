@@ -6,6 +6,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
@@ -28,6 +29,7 @@ class VpnMainViewModel : ViewModel() {
 
     private companion object {
         const val DEFAULT_ACCESS_KEY = "DEV"
+        const val VPN_START_TIMEOUT_MS = 12_000L
     }
 
     private val _uiState = MutableStateFlow(
@@ -184,7 +186,7 @@ class VpnMainViewModel : ViewModel() {
         }
     }
 
-    fun onConnectClick(startVpnService: () -> Boolean = { true }) {
+    fun onConnectClick(startVpnService: (String) -> Boolean = { true }) {
         val currentState = _uiState.value.let { state ->
             state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
         }
@@ -231,8 +233,8 @@ class VpnMainViewModel : ViewModel() {
             val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = { payload ->
-                    val serviceStarted = try {
-                        startVpnService()
+                    val serviceStartRequested = try {
+                        startVpnService(payload.selectedGuid)
                     } catch (e: Exception) {
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -242,21 +244,31 @@ class VpnMainViewModel : ViewModel() {
                         )
                         false
                     }
-                    if (!serviceStarted) {
-                        _uiState.update { state ->
-                            state.copy(
-                                connectionState = VpnConnectionState.Disconnected,
-                                elapsedSeconds = 0L,
-                                locationsError = "Не удалось запустить VPN-сервис",
-                            )
-                        }
+                    if (!serviceStartRequested) {
+                        setDisconnectedWithError("Не удалось запустить VPN-сервис")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
                             location = "VpnMainViewModel.kt:onConnectClick",
-                            message = "vpn service start failed",
+                            message = "vpn service start request failed",
                             data = JSONObject()
                                 .put("serverId", payload.serverId)
                                 .put("city", payload.city),
+                        )
+                        return@fold
+                    }
+
+                    val coreStarted = waitForVpnCoreStarted()
+                    if (!coreStarted) {
+                        setDisconnectedWithError("VPN-клиент не запустился")
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H8",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "vpn core did not enter running state",
+                            data = JSONObject()
+                                .put("serverId", payload.serverId)
+                                .put("city", payload.city)
+                                .put("selectedGuid", payload.selectedGuid)
+                                .put("coreRunning", V2RayServiceManager.isRunning()),
                         )
                         return@fold
                     }
@@ -271,28 +283,17 @@ class VpnMainViewModel : ViewModel() {
                     AgentDebugNdjsonLogger.log(
                         hypothesisId = "H2",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "premium_state_set_connected",
+                        message = "premium_state_set_connected_after_core_running",
                         runId = "dynamic-server-list",
                         data = JSONObject()
                             .put("serverId", payload.serverId)
-                            .put("city", payload.city),
-                    )
-                    VpnUiDebugLogger.log(
-                        hypothesisId = "H3",
-                        location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "state moved to connected",
-                        data = JSONObject(),
+                            .put("city", payload.city)
+                            .put("selectedGuid", payload.selectedGuid),
                     )
                     startTimer()
                 },
                 onFailure = { error ->
-                    _uiState.update { state ->
-                        state.copy(
-                            connectionState = VpnConnectionState.Disconnected,
-                            elapsedSeconds = 0L,
-                            locationsError = "Не удалось подключиться к серверу",
-                        )
-                    }
+                    setDisconnectedWithError("Не удалось подключиться к серверу")
                     VpnUiDebugLogger.log(
                         hypothesisId = "H7",
                         location = "VpnMainViewModel.kt:onConnectClick",
@@ -302,6 +303,25 @@ class VpnMainViewModel : ViewModel() {
                             .put("error", error.message ?: "unknown"),
                     )
                 },
+            )
+        }
+    }
+
+    private suspend fun waitForVpnCoreStarted(): Boolean {
+        return withTimeoutOrNull(VPN_START_TIMEOUT_MS) {
+            while (!V2RayServiceManager.isRunning()) {
+                delay(250L)
+            }
+            true
+        } == true
+    }
+
+    private fun setDisconnectedWithError(message: String) {
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Disconnected,
+                elapsedSeconds = 0L,
+                locationsError = message,
             )
         }
     }
@@ -377,12 +397,6 @@ class VpnMainViewModel : ViewModel() {
                 delay(1000L)
                 _uiState.update { state ->
                     if (state.connectionState == VpnConnectionState.Connected) {
-                        VpnUiDebugLogger.log(
-                            hypothesisId = "H3",
-                            location = "VpnMainViewModel.kt:startTimer",
-                            message = "timer tick",
-                            data = JSONObject().put("nextElapsedSeconds", state.elapsedSeconds + 1L),
-                        )
                         state.copy(elapsedSeconds = state.elapsedSeconds + 1L)
                     } else {
                         state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
