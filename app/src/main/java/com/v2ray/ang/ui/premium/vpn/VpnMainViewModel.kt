@@ -180,7 +180,7 @@ class VpnMainViewModel : ViewModel() {
         }
     }
 
-    fun onConnectClick() {
+    fun onConnectClick(startVpnService: () -> Boolean = { true }) {
         val currentState = _uiState.value
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H1",
@@ -219,6 +219,7 @@ class VpnMainViewModel : ViewModel() {
             state.copy(
                 connectionState = VpnConnectionState.Connecting,
                 elapsedSeconds = 0L,
+                locationsError = "",
             )
         }
         VpnUiDebugLogger.log(
@@ -231,7 +232,37 @@ class VpnMainViewModel : ViewModel() {
         connectJob = viewModelScope.launch {
             val result = connectSelectedLocation(currentState)
             result.fold(
-                onSuccess = {
+                onSuccess = { payload ->
+                    val serviceStarted = try {
+                        startVpnService()
+                    } catch (e: Exception) {
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H8",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "vpn service start threw",
+                            data = JSONObject().put("error", e.message ?: "unknown"),
+                        )
+                        false
+                    }
+                    if (!serviceStarted) {
+                        _uiState.update { state ->
+                            state.copy(
+                                connectionState = VpnConnectionState.Disconnected,
+                                elapsedSeconds = 0L,
+                                locationsError = "Не удалось запустить VPN-сервис",
+                            )
+                        }
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H8",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "vpn service start failed",
+                            data = JSONObject()
+                                .put("serverId", payload.serverId)
+                                .put("city", payload.city),
+                        )
+                        return@fold
+                    }
+
                     _uiState.update { state ->
                         state.copy(
                             connectionState = VpnConnectionState.Connected,
@@ -245,8 +276,8 @@ class VpnMainViewModel : ViewModel() {
                         message = "premium_state_set_connected",
                         runId = "dynamic-server-list",
                         data = JSONObject()
-                            .put("serverId", it.serverId)
-                            .put("city", it.city),
+                            .put("serverId", payload.serverId)
+                            .put("city", payload.city),
                     )
                     VpnUiDebugLogger.log(
                         hypothesisId = "H3",
@@ -314,9 +345,10 @@ class VpnMainViewModel : ViewModel() {
         }
     }
 
-    fun onDisconnectClick() {
+    fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
         connectJob?.cancel()
         timerJob?.cancel()
+        stopVpnService()
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H2",
             location = "VpnMainViewModel.kt:onDisconnectClick",
