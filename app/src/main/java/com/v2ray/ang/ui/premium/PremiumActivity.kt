@@ -1,6 +1,5 @@
 package com.v2ray.ang.ui.premium
 
-import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.net.VpnService
 import android.os.Bundle
@@ -31,9 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.V2RayServiceManager
-import com.v2ray.ang.ui.AccessKeyActivity
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
@@ -59,11 +56,6 @@ class PremiumActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!EmeryAccessManager.isActivated()) {
-            startActivity(Intent(this, AccessKeyActivity::class.java))
-            finish()
-            return
-        }
 
         val systemBarsColor = AndroidColor.rgb(247, 248, 244)
         WindowCompat.setDecorFitsSystemWindows(window, true)
