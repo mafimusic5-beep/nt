@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.dp
 fun VpnMainRoute(
     viewModel: VpnMainViewModel,
     requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
-    startVpnService: () -> Boolean,
+    startVpnService: (String) -> Boolean,
     stopVpnService: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
