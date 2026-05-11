@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.AngConfigManager
-import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.network.EmeryBackendClient
@@ -27,9 +26,13 @@ import java.nio.charset.StandardCharsets
 
 class VpnMainViewModel : ViewModel() {
 
+    private companion object {
+        const val DEFAULT_ACCESS_KEY = "DEV"
+    }
+
     private val _uiState = MutableStateFlow(
         VpnMainUiState(
-            activationKey = EmeryAccessManager.loadProfile()?.accessKey.orEmpty(),
+            activationKey = DEFAULT_ACCESS_KEY,
         )
     )
     val uiState: StateFlow<VpnMainUiState> = _uiState.asStateFlow()
@@ -46,7 +49,11 @@ class VpnMainViewModel : ViewModel() {
         serversJob?.cancel()
         serversJob = viewModelScope.launch {
             _uiState.update { state ->
-                state.copy(locationsLoading = true, locationsError = "")
+                state.copy(
+                    activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
+                    locationsLoading = true,
+                    locationsError = "",
+                )
             }
 
             val result = withTimeoutOrNull(4_000L) {
@@ -84,11 +91,7 @@ class VpnMainViewModel : ViewModel() {
     }
 
     private suspend fun refreshPoolLocationsFallback(fallbackError: String) {
-        val key = _uiState.value.activationKey
-        if (key.isBlank()) {
-            applyLocations(VpnDemoData.unavailableLocations, fallbackError)
-            return
-        }
+        val key = _uiState.value.activationKey.ifBlank { DEFAULT_ACCESS_KEY }
         val poolResult = withTimeoutOrNull(8_000L) {
             EmeryPoolClient.fetchPoolImportText(key)
         } ?: Result.failure(IllegalStateException("pool_list_timeout"))
@@ -130,6 +133,7 @@ class VpnMainViewModel : ViewModel() {
             val selected = locations.firstOrNull { it.id == state.selectedLocation.id }
                 ?: locations.first()
             state.copy(
+                activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
                 locations = locations,
                 selectedLocation = selected,
                 locationsLoading = false,
@@ -161,7 +165,7 @@ class VpnMainViewModel : ViewModel() {
             data = JSONObject().put("length", value.length),
         )
         _uiState.update { state ->
-            state.copy(activationKey = value)
+            state.copy(activationKey = value.ifBlank { DEFAULT_ACCESS_KEY })
         }
     }
 
@@ -181,7 +185,9 @@ class VpnMainViewModel : ViewModel() {
     }
 
     fun onConnectClick(startVpnService: () -> Boolean = { true }) {
-        val currentState = _uiState.value
+        val currentState = _uiState.value.let { state ->
+            state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
+        }
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H1",
             location = "VpnMainViewModel.kt:onConnectClick",
@@ -190,7 +196,7 @@ class VpnMainViewModel : ViewModel() {
             data = JSONObject()
                 .put("state", currentState.connectionState.name)
                 .put("activationKeyLen", currentState.activationKey.length)
-                .put("activationKeyBlank", currentState.activationKey.isBlank())
+                .put("activationKeyBlank", false)
                 .put("selectedServerId", currentState.selectedLocation.id),
         )
         if (currentState.connectionState != VpnConnectionState.Disconnected) {
@@ -202,21 +208,13 @@ class VpnMainViewModel : ViewModel() {
             )
             return
         }
-        if (currentState.activationKey.isBlank()) {
-            VpnUiDebugLogger.log(
-                hypothesisId = "H3",
-                location = "VpnMainViewModel.kt:onConnectClick",
-                message = "connect blocked by empty activation key",
-                data = JSONObject(),
-            )
-            return
-        }
 
         connectJob?.cancel()
         timerJob?.cancel()
 
         _uiState.update { state ->
             state.copy(
+                activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
                 connectionState = VpnConnectionState.Connecting,
                 elapsedSeconds = 0L,
                 locationsError = "",
@@ -309,12 +307,13 @@ class VpnMainViewModel : ViewModel() {
     }
 
     private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
-        val serverId = state.selectedLocation.id.toLongOrNull()
+        val normalizedState = state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
+        val serverId = normalizedState.selectedLocation.id.toLongOrNull()
         if (serverId != null) {
-            return EmeryVpnSync.connectToServer(state.activationKey, serverId)
+            return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
         }
 
-        val importText = state.selectedLocation.importText.orEmpty().trim()
+        val importText = normalizedState.selectedLocation.importText.orEmpty().trim()
         if (importText.isBlank()) {
             return Result.failure(IllegalStateException("missing_import_text"))
         }
@@ -338,7 +337,7 @@ class VpnMainViewModel : ViewModel() {
             Result.success(
                 EmeryVpnSync.ConnectServerResult(
                     serverId = -1L,
-                    city = state.selectedLocation.title,
+                    city = normalizedState.selectedLocation.title,
                     selectedGuid = selectedGuid,
                 )
             )
@@ -358,6 +357,7 @@ class VpnMainViewModel : ViewModel() {
         )
         _uiState.update { state ->
             state.copy(
+                activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
             )
@@ -385,7 +385,7 @@ class VpnMainViewModel : ViewModel() {
                         )
                         state.copy(elapsedSeconds = state.elapsedSeconds + 1L)
                     } else {
-                        state
+                        state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
                     }
                 }
             }
