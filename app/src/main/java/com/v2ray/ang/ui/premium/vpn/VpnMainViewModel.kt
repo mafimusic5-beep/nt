@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -48,7 +49,9 @@ class VpnMainViewModel : ViewModel() {
                 state.copy(locationsLoading = true, locationsError = "")
             }
 
-            val result = EmeryBackendClient.fetchVpnServers()
+            val result = withTimeoutOrNull(4_000L) {
+                EmeryBackendClient.fetchVpnServers()
+            } ?: Result.failure(IllegalStateException("server_list_timeout"))
             result.fold(
                 onSuccess = { servers ->
                     val locations = servers
@@ -86,7 +89,9 @@ class VpnMainViewModel : ViewModel() {
             applyLocations(VpnDemoData.unavailableLocations, fallbackError)
             return
         }
-        val poolResult = EmeryPoolClient.fetchPoolImportText(key)
+        val poolResult = withTimeoutOrNull(8_000L) {
+            EmeryPoolClient.fetchPoolImportText(key)
+        } ?: Result.failure(IllegalStateException("pool_list_timeout"))
         poolResult.fold(
             onSuccess = { importText ->
                 val locations = importText
