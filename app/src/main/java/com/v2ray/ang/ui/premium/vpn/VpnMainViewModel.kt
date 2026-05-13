@@ -6,7 +6,6 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
-import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
@@ -29,7 +28,6 @@ class VpnMainViewModel : ViewModel() {
 
     private companion object {
         const val DEFAULT_ACCESS_KEY = "DEV"
-        const val VPN_START_TIMEOUT_MS = 12_000L
     }
 
     private val _uiState = MutableStateFlow(
@@ -257,22 +255,11 @@ class VpnMainViewModel : ViewModel() {
                         return@fold
                     }
 
-                    val coreStarted = waitForVpnCoreStarted()
-                    if (!coreStarted) {
-                        setDisconnectedWithError("VPN-клиент не запустился")
-                        VpnUiDebugLogger.log(
-                            hypothesisId = "H8",
-                            location = "VpnMainViewModel.kt:onConnectClick",
-                            message = "vpn core did not enter running state",
-                            data = JSONObject()
-                                .put("serverId", payload.serverId)
-                                .put("city", payload.city)
-                                .put("selectedGuid", payload.selectedGuid)
-                                .put("coreRunning", V2RayServiceManager.isRunning()),
-                        )
-                        return@fold
-                    }
-
+                    // The VPN implementation runs in the separate :RunSoLibV2RayDaemon process.
+                    // Static running flags in the Activity process are not reliable there: the VPN
+                    // can be active while this process still sees coreRunning=false. Treat a
+                    // successful foreground-service request as the UI connected state; real failures
+                    // are logged and the service tears itself down.
                     _uiState.update { state ->
                         state.copy(
                             connectionState = VpnConnectionState.Connected,
@@ -283,7 +270,7 @@ class VpnMainViewModel : ViewModel() {
                     AgentDebugNdjsonLogger.log(
                         hypothesisId = "H2",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "premium_state_set_connected_after_core_running",
+                        message = "premium_state_set_connected_after_service_request",
                         runId = "dynamic-server-list",
                         data = JSONObject()
                             .put("serverId", payload.serverId)
@@ -305,15 +292,6 @@ class VpnMainViewModel : ViewModel() {
                 },
             )
         }
-    }
-
-    private suspend fun waitForVpnCoreStarted(): Boolean {
-        return withTimeoutOrNull(VPN_START_TIMEOUT_MS) {
-            while (!V2RayServiceManager.isRunning()) {
-                delay(250L)
-            }
-            true
-        } == true
     }
 
     private fun setDisconnectedWithError(message: String) {
