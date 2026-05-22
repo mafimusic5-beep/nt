@@ -4,7 +4,6 @@ import com.v2ray.ang.dto.ProfileApiResponseBody
 import com.v2ray.ang.dto.VpnConnectApiResponseBody
 import com.v2ray.ang.dto.VpnConnectRequestBody
 import com.v2ray.ang.dto.VpnConfigApiResponseBody
-import com.v2ray.ang.dto.VpnServerItemApiResponseBody
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryApiConfig
 import com.v2ray.ang.security.EmeryDeviceIdentity
@@ -17,6 +16,7 @@ import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -30,6 +30,13 @@ object EmeryBackendClient {
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
+
+    private val serverListPaths = listOf(
+        "/api/v1/vpn/servers",
+        "/api/v1/servers",
+        "/vpn/servers",
+        "/servers",
+    )
 
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
@@ -149,31 +156,118 @@ object EmeryBackendClient {
     }
 
     suspend fun fetchVpnServers(): Result<List<BackendServer>> = withContext(Dispatchers.IO) {
+        var lastError: Throwable? = null
+        serverListPaths.forEach { path ->
+            val result = fetchVpnServersFromPath(path)
+            if (result.isSuccess) {
+                return@withContext result
+            }
+            lastError = result.exceptionOrNull()
+        }
+        Result.failure(lastError ?: IllegalStateException("server_list_unavailable"))
+    }
+
+    private fun fetchVpnServersFromPath(path: String): Result<List<BackendServer>> {
         val request = Request.Builder()
-            .url("${baseUrl()}/api/v1/vpn/servers")
+            .url("${baseUrl()}$path")
             .get()
             .build()
-        try {
+        return try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(IllegalStateException("http_${response.code}"))
+                    return Result.failure(IllegalStateException("$path:http_${response.code}"))
                 }
-                val parsed = JsonUtil.fromJson(raw, Array<VpnServerItemApiResponseBody>::class.java)?.toList()
-                    ?: return@withContext Result.failure(IllegalStateException("parse_error"))
-                val mapped = parsed.map {
-                    BackendServer(
-                        id = it.id,
-                        city = it.city?.ifBlank { "Unknown" } ?: "Unknown",
-                        healthStatus = it.healthStatus ?: "unknown",
-                        isAvailable = it.isAvailable != false,
-                    )
+                val mapped = parseVpnServers(raw)
+                if (mapped.isEmpty()) {
+                    return Result.failure(IllegalStateException("$path:empty_or_parse_error"))
                 }
                 Result.success(mapped)
             }
         } catch (_: IOException) {
-            Result.failure(IllegalStateException("network"))
+            Result.failure(IllegalStateException("$path:network"))
+        } catch (e: Exception) {
+            Result.failure(IllegalStateException("$path:${e.message ?: "parse_error"}"))
         }
+    }
+
+    private fun parseVpnServers(raw: String): List<BackendServer> {
+        val array = serverArrayFrom(raw) ?: return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optLongCompat("id", "server_id", "serverId", "pk") ?: continue
+                val city = item.optStringCompat("city", "location", "name", "title", "country").ifBlank { "Server #$id" }
+                val healthStatus = item.optStringCompat("health_status", "healthStatus", "status", "state").ifBlank { "available" }
+                val isAvailable = item.optBooleanCompat("is_available", "isAvailable", "available", "enabled")
+                    ?: healthStatus.lowercase() !in setOf("down", "offline", "disabled", "unavailable", "unhealthy", "maintenance")
+                add(
+                    BackendServer(
+                        id = id,
+                        city = city,
+                        healthStatus = healthStatus,
+                        isAvailable = isAvailable,
+                    )
+                )
+            }
+        }
+    }
+
+    private fun serverArrayFrom(raw: String): JSONArray? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        return try {
+            if (trimmed.startsWith("[")) {
+                JSONArray(trimmed)
+            } else {
+                val root = JSONObject(trimmed)
+                root.optJSONArray("servers")
+                    ?: root.optJSONArray("items")
+                    ?: root.optJSONArray("data")
+                    ?: root.optJSONArray("results")
+                    ?: root.optJSONObject("data")?.optJSONArray("servers")
+                    ?: root.optJSONObject("data")?.optJSONArray("items")
+                    ?: root.optJSONObject("result")?.optJSONArray("servers")
+                    ?: root.optJSONObject("result")?.optJSONArray("items")
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun JSONObject.optStringCompat(vararg keys: String): String {
+        keys.forEach { key ->
+            if (has(key) && !isNull(key)) {
+                val value = optString(key).trim()
+                if (value.isNotBlank()) return value
+            }
+        }
+        return ""
+    }
+
+    private fun JSONObject.optLongCompat(vararg keys: String): Long? {
+        keys.forEach { key ->
+            if (has(key) && !isNull(key)) {
+                val longValue = optLong(key, Long.MIN_VALUE)
+                if (longValue != Long.MIN_VALUE) return longValue
+                optString(key).toLongOrNull()?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun JSONObject.optBooleanCompat(vararg keys: String): Boolean? {
+        keys.forEach { key ->
+            if (has(key) && !isNull(key)) {
+                val raw = optString(key).trim().lowercase()
+                when (raw) {
+                    "true", "1", "yes", "online", "active", "available", "healthy", "up" -> return true
+                    "false", "0", "no", "offline", "inactive", "unavailable", "unhealthy", "down", "disabled" -> return false
+                }
+                return optBoolean(key)
+            }
+        }
+        return null
     }
 
     suspend fun connectServer(accessKey: String, serverId: Long): Result<ConnectPayload> = withContext(Dispatchers.IO) {
