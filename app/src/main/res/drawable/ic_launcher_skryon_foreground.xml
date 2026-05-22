@@ -5,21 +5,64 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- Deep solid base: calm, strong, not futuristic. -->
     <path
-        android:fillColor="#0F8F5F"
-        android:pathData="M54,12 L84,24 V49 C84,69 71,85 54,96 C37,85 24,69 24,49 V24 Z" />
+        android:fillColor="#0B3327"
+        android:pathData="M8,0 H100 Q108,0 108,8 V100 Q108,108 100,108 H8 Q0,108 0,100 V8 Q0,0 8,0 Z" />
 
+    <!-- Soft inner depth so the icon does not look flat/cheap. -->
     <path
-        android:fillColor="#20C978"
-        android:fillAlpha="0.28"
-        android:pathData="M54,20 L76,29 V49 C76,63 67,75 54,84 C41,75 32,63 32,49 V29 Z" />
+        android:fillColor="#124B35"
+        android:fillAlpha="0.88"
+        android:pathData="M14,8 H94 Q100,8 100,14 V94 Q100,100 94,100 H14 Q8,100 8,94 V14 Q8,8 14,8 Z" />
 
+    <!-- Main shield body. -->
+    <path
+        android:fillColor="#2F8E45"
+        android:pathData="M54,13 L82,24 V48 C82,68 70,83 54,94 C38,83 26,68 26,48 V24 Z" />
+
+    <!-- Dark inset for weight and depth. -->
+    <path
+        android:fillColor="#0E3D2C"
+        android:pathData="M54,22 L73,30 V48 C73,61 66,72 54,81 C42,72 35,61 35,48 V30 Z" />
+
+    <!-- Shield highlight: gives quality without sci-fi shine. -->
+    <path
+        android:fillColor="#6FC56D"
+        android:fillAlpha="0.78"
+        android:pathData="M54,13 L82,24 L82,31 L54,20 L26,31 V24 Z" />
+
+    <!-- Lower solid edge of shield. -->
+    <path
+        android:fillColor="#1D6F3A"
+        android:pathData="M26,48 C26,68 38,83 54,94 C70,83 82,68 82,48 V56 C80,73 68,86 54,98 C40,86 28,73 26,56 Z" />
+
+    <!-- Thin inner rim, classic and readable. -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M48,65 L35,52 L41,46 L48,53 L68,33 L74,39 Z" />
+        android:fillAlpha="0.32"
+        android:fillType="evenOdd"
+        android:pathData="M54,17 L78,27 V48 C78,65 68,78 54,88 C40,78 30,65 30,48 V27 Z M54,21 L34,30 V48 C34,63 43,75 54,83 C65,75 74,63 74,48 V30 Z" />
 
+    <!-- Monolithic S mark. Built from two thick rounded bars and a center connector. -->
     <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.22"
-        android:pathData="M35,29 L54,21 L54,84 C42,76 35,64 35,49 Z" />
+        android:fillColor="#F4F5EF"
+        android:pathData="M39,35 H69 Q73,35 73,39 V43 Q73,47 69,47 H47 V52 H63 Q73,52 73,62 V68 Q73,78 63,78 H36 V66 H62 V61 H46 Q36,61 36,51 V45 Q36,35 39,35 Z" />
+
+    <!-- S lower cut, makes it read as S instead of a block. -->
+    <path
+        android:fillColor="#0E3D2C"
+        android:pathData="M47,47 H69 Q73,47 73,43 V51 H48 Z" />
+
+    <!-- S upper cut shadow. -->
+    <path
+        android:fillColor="#D9DED5"
+        android:fillAlpha="0.55"
+        android:pathData="M39,35 H69 Q73,35 73,39 V41 H40 Q38,41 38,43 V45 Q38,47 40,47 H47 V52 H41 Q36,52 36,47 V43 Q36,35 39,35 Z" />
+
+    <!-- Small base shadow under S for solid material feel. -->
+    <path
+        android:fillColor="#000000"
+        android:fillAlpha="0.18"
+        android:pathData="M36,78 H63 Q73,78 73,68 V72 Q73,82 63,82 H36 Z" />
 </vector>
