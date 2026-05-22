@@ -87,7 +87,6 @@ fun VpnMainScreen(
             compact -> 24.dp
             else -> 28.dp
         }
-        var magicControlVisible by remember { mutableStateOf(false) }
 
         Column(
             modifier = Modifier
@@ -101,10 +100,7 @@ fun VpnMainScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(topStart))
-            HeaderBar(
-                compact = compact,
-                onMagicClick = { magicControlVisible = true },
-            )
+            HeaderBar(compact)
             Spacer(Modifier.height(logoToBeacon))
             StatusBeacon(uiState.connectionState)
             Spacer(Modifier.height(beaconToTitle))
@@ -165,15 +161,6 @@ fun VpnMainScreen(
             }
             Spacer(Modifier.weight(1f))
         }
-
-        if (magicControlVisible) {
-            MagicControlPanel(
-                uiState = uiState,
-                compact = compact,
-                tight = tight,
-                onDismiss = { magicControlVisible = false },
-            )
-        }
     }
 }
 
@@ -190,223 +177,15 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 }
 
 @Composable
-private fun HeaderBar(compact: Boolean, onMagicClick: () -> Unit) {
+private fun HeaderBar(compact: Boolean) {
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Text(
             text = "skryon",
-            modifier = Modifier.align(Alignment.Center),
             style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.SemiBold,
             color = VpnPremiumTokens.Colors.TextPrimary,
         )
-        MagicControlButton(
-            compact = compact,
-            onClick = onMagicClick,
-            modifier = Modifier.align(Alignment.CenterEnd),
-        )
     }
-}
-
-@Composable
-private fun MagicControlButton(
-    compact: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .size(if (compact) 40.dp else 44.dp)
-            .clip(CircleShape)
-            .background(VpnPremiumTokens.Colors.Surface)
-            .border(1.dp, VpnPremiumTokens.Colors.BorderSubtle, CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "✨",
-            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-        )
-    }
-}
-
-@Composable
-private fun MagicControlPanel(
-    uiState: VpnMainUiState,
-    compact: Boolean,
-    tight: Boolean,
-    onDismiss: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.18f))
-            .padding(horizontal = if (tight) 14.dp else 18.dp, vertical = if (tight) 12.dp else 18.dp),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(if (compact) 26.dp else 32.dp))
-                .background(VpnPremiumTokens.Colors.Surface)
-                .border(1.dp, VpnPremiumTokens.Colors.BorderSubtle, RoundedCornerShape(if (compact) 26.dp else 32.dp))
-                .padding(horizontal = if (tight) 16.dp else 20.dp, vertical = if (tight) 14.dp else 18.dp),
-        ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "Центр управления",
-                        style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-                        color = VpnPremiumTokens.Colors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Быстрые функции защиты и диагностики",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = VpnPremiumTokens.Colors.TextSecondary,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(if (compact) 36.dp else 40.dp)
-                        .clip(CircleShape)
-                        .background(VpnPremiumTokens.Colors.PositiveSoft)
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("×", style = MaterialTheme.typography.titleLarge, color = VpnPremiumTokens.Colors.PositiveStrong)
-                }
-            }
-            Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
-            MagicStatusStrip(uiState.connectionState, compact, tight)
-            Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
-            MagicControlItem(
-                icon = "🌐",
-                title = "DNS и сеть",
-                note = "Авто DNS, защита от утечек, выбор провайдера",
-                badge = "Скоро",
-                compact = compact,
-                tight = tight,
-            )
-            RowDivider(compact, tight)
-            MagicControlItem(
-                icon = "🔍",
-                title = "Отслеживание статуса",
-                note = "VPN, DNS, IP и последняя проверка соединения",
-                badge = statusBadge(uiState.connectionState),
-                compact = compact,
-                tight = tight,
-            )
-            RowDivider(compact, tight)
-            MagicControlItem(
-                icon = "⚡",
-                title = "Автозащита",
-                note = "Автоматические действия при риске в сети",
-                badge = "Активна",
-                compact = compact,
-                tight = tight,
-            )
-            RowDivider(compact, tight)
-            MagicControlItem(
-                icon = "📊",
-                title = "Диагностика",
-                note = "Пинг, стабильность, ошибки сервиса и логи",
-                badge = "Beta",
-                compact = compact,
-                tight = tight,
-            )
-        }
-    }
-}
-
-@Composable
-private fun MagicStatusStrip(state: VpnConnectionState, compact: Boolean, tight: Boolean) {
-    val protectionText = when (state) {
-        VpnConnectionState.Disconnected -> "Защита выкл."
-        VpnConnectionState.Connecting -> "Проверяем"
-        VpnConnectionState.Connected -> "Защита вкл."
-    }
-    val dnsText = when (state) {
-        VpnConnectionState.Connecting -> "DNS проверяется"
-        else -> "DNS авто"
-    }
-    val leakText = when (state) {
-        VpnConnectionState.Connecting -> "Идёт тест"
-        else -> "Утечек нет"
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(VpnPremiumTokens.Colors.PositiveSoft)
-            .padding(horizontal = if (tight) 12.dp else 14.dp, vertical = if (tight) 10.dp else 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (tight) 8.dp else 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MagicMiniStatus("🛡", protectionText, compact, Modifier.weight(1f))
-        MagicMiniStatus("🌐", dnsText, compact, Modifier.weight(1f))
-        MagicMiniStatus("🔒", leakText, compact, Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun MagicMiniStatus(icon: String, text: String, compact: Boolean, modifier: Modifier = Modifier) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(icon, style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(3.dp))
-        Text(
-            text = text,
-            style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-            color = VpnPremiumTokens.Colors.PositiveStrong,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-@Composable
-private fun MagicControlItem(
-    icon: String,
-    title: String,
-    note: String,
-    badge: String,
-    compact: Boolean,
-    tight: Boolean,
-) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(if (tight) 38.dp else 44.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(VpnPremiumTokens.Colors.PositiveSoft),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(icon, style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge)
-        }
-        Spacer(Modifier.width(if (tight) 10.dp else 12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
-                color = VpnPremiumTokens.Colors.TextPrimary,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.height(3.dp))
-            Text(
-                note,
-                style = MaterialTheme.typography.bodySmall,
-                color = VpnPremiumTokens.Colors.TextSecondary,
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Badge(badge, compact)
-    }
-}
-
-private fun statusBadge(state: VpnConnectionState): String = when (state) {
-    VpnConnectionState.Disconnected -> "Ожидает"
-    VpnConnectionState.Connecting -> "Проверка"
-    VpnConnectionState.Connected -> "Онлайн"
 }
 
 @Composable
