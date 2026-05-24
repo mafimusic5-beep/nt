@@ -15,11 +15,11 @@ plugins {
 val appVersionCode = 715
 
 android {
-    namespace = "com.v2ray.ang"
+    namespace = "com.skryon.shield"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.v2ray.ang"
+        applicationId = "com.skryon.shield"
         minSdk = 24
         targetSdk = 36
         versionCode = appVersionCode
@@ -133,7 +133,7 @@ androidComponents {
         variant.outputs.forEach { output ->
             val abi = output.filters.find { it.filterType == ABI }?.identifier ?: "universal"
 
-            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default names.
+            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default output names.
             if (isFdroid) {
                 val suffix = fdroidAbiSuffix[abi] ?: return@forEach
                 output.versionCode.set((100 * appVersionCode + suffix) + 5_000_000)
