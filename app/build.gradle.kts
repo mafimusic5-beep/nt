@@ -1,4 +1,4 @@
-import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
+﻿import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
@@ -15,11 +15,11 @@ plugins {
 val appVersionCode = 715
 
 android {
-    namespace = "com.skryon.shield"
+    namespace = com.skryon.shield"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.skryon.shield"
+        applicationId = "com.v2ray.ang"
         minSdk = 24
         targetSdk = 36
         versionCode = appVersionCode
@@ -133,7 +133,7 @@ androidComponents {
         variant.outputs.forEach { output ->
             val abi = output.filters.find { it.filterType == ABI }?.identifier ?: "universal"
 
-            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default output names.
+            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default names.
             if (isFdroid) {
                 val suffix = fdroidAbiSuffix[abi] ?: return@forEach
                 output.versionCode.set((100 * appVersionCode + suffix) + 5_000_000)
@@ -214,7 +214,7 @@ dependencies {
 }
 
 /**
- * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, …) ship inside libv2ray.aar.
+ * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, вЂ¦) ship inside libv2ray.aar.
  * Upstream CI downloads it from 2dust/AndroidLibXrayLite; local clones often omit the binary.
  * Override tag: ./gradlew assembleDebug -Plibv2ray.version=v26.3.9
  */
@@ -232,7 +232,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
             URI(
                 "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
             ).toURL()
-        logger.lifecycle("Downloading libv2ray.aar ({}) …", libv2rayVersionProperty)
+        logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
         url.openStream().use { input: InputStream ->
             libv2rayAar.outputStream().use { output: OutputStream ->
                 input.copyTo(output)
@@ -331,3 +331,5 @@ tasks.withType<KotlinCompile>().configureEach {
         jvmTarget.set(JvmTarget.JVM_17)
     }
 }
+
+
