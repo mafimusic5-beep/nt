@@ -1,6 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">v2rayNG</string>
+    <string name="app_name" translatable="false">Skryon</string>
     <string name="app_widget_name">Switch</string>
     <string name="app_tile_name">Switch</string>
     <string name="app_tile_first_use">First use of this feature, please use the app to add server</string>
@@ -162,8 +162,8 @@
     <string name="title_mux_settings">Mux Settings</string>
     <string name="title_pref_mux_enabled">Enable Mux</string>
     <string name="summary_pref_mux_enabled">Faster, but it may cause unstable connectivity\nCustomize how to handle TCP, UDP and QUIC below</string>
-    <string name="title_pref_mux_concurency">TCP connections（range -1 to 1024）</string>
-    <string name="title_pref_mux_xudp_concurency">XUDP connections（range -1 to 1024）</string>
+    <string name="title_pref_mux_concurency">TCP connectionsпј€range -1 to 1024пј‰</string>
+    <string name="title_pref_mux_xudp_concurency">XUDP connectionsпј€range -1 to 1024пј‰</string>
     <string name="title_pref_mux_xudp_quic">Handling of QUIC in mux tunnel</string>
     <string-array name="mux_xudp_quic_entries">
         <item>reject</item>
@@ -181,7 +181,7 @@
     <string name="summary_pref_route_only_enabled">Use the sniffed domain name for routing only, and keep the target address as the IP address.</string>
 
     <string name="title_pref_local_dns_enabled">Enable local DNS</string>
-    <string name="summary_pref_local_dns_enabled">DNS processed by core‘s DNS module (Recommended if you need routing bypassing LAN and mainland addresses)</string>
+    <string name="summary_pref_local_dns_enabled">DNS processed by coreвЂs DNS module (Recommended if you need routing bypassing LAN and mainland addresses)</string>
 
     <string name="title_pref_fake_dns_enabled">Enable fake DNS</string>
     <string name="summary_pref_fake_dns_enabled">Local DNS returns fake IP addresses (faster, but it may not work for some apps)</string>
@@ -203,8 +203,8 @@
     <string name="title_pref_domestic_dns">Domestic DNS (Optional)</string>
     <string name="summary_pref_domestic_dns">DNS</string>
 
-    <string name="title_pref_dns_hosts">DNS hosts (Format: domain:address,…)</string>
-    <string name="summary_pref_dns_hosts">domain:address,…</string>
+    <string name="title_pref_dns_hosts">DNS hosts (Format: domain:address,вЂ¦)</string>
+    <string name="summary_pref_dns_hosts">domain:address,вЂ¦</string>
 
     <string name="title_pref_delay_test_url">True delay test url </string>
     <string name="summary_pref_delay_test_url">Url</string>
@@ -333,8 +333,8 @@
     <string name="routing_settings_outbound_tag" translatable="false">outboundTag</string>
 
     <string name="connection_test_pending">Check Connectivity</string>
-    <string name="connection_test_testing">Testing…</string>
-    <string name="connection_test_testing_count">Testing %d configs…</string>
+    <string name="connection_test_testing">TestingвЂ¦</string>
+    <string name="connection_test_testing_count">Testing %d configsвЂ¦</string>
     <string name="connection_test_available">Success: Connection took %dms</string>
     <string name="connection_test_error">Fail to detect internet connection: %s</string>
     <string name="connection_test_fail">Internet Unavailable</string>
@@ -356,7 +356,7 @@
     <string name="update_new_version_found">New version found: %s</string>
     <string name="update_now">Update now</string>
     <string name="update_check_pre_release">Check Pre-release</string>
-    <string name="update_checking_for_update">Checking for update…</string>
+    <string name="update_checking_for_update">Checking for updateвЂ¦</string>
 
     <string name="title_policy_group_type">Policy group type</string>
     <string name="title_policy_group_subscription_id">From subscription group</string>
@@ -454,3 +454,5 @@
     <string name="emery_router_soon">Router setup will be available in a future update.</string>
 
 </resources>
+
+
