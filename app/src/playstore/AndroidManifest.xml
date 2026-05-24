@@ -3,8 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application
-        android:icon="@drawable/ic_launcher_skryon_final"
-        android:roundIcon="@drawable/ic_launcher_skryon_final"
+        android:icon="@mipmap/ic_launcher_skryon_final"
+        android:roundIcon="@mipmap/ic_launcher_skryon_final"
         android:label="@string/app_name"
         tools:replace="android:icon,android:roundIcon,android:label" />
 
