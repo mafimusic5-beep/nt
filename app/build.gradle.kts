@@ -15,11 +15,11 @@ plugins {
 val appVersionCode = 715
 
 android {
-    namespace = com.skryon.shield"
+    namespace = "com.v2ray.ang"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.v2ray.ang"
+        applicationId = "com.skryon.shield"
         minSdk = 24
         targetSdk = 36
         versionCode = appVersionCode
@@ -331,5 +331,6 @@ tasks.withType<KotlinCompile>().configureEach {
         jvmTarget.set(JvmTarget.JVM_17)
     }
 }
+
 
 
