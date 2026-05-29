@@ -11,7 +11,24 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,9 +56,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -88,15 +107,16 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
+
         val illustrationTop = when {
-            tight -> 292.dp
-            compact -> 330.dp
-            else -> 360.dp
+            tight -> 250.dp
+            compact -> 282.dp
+            else -> 308.dp
         }
         val illustrationHeight = when {
-            tight -> 250.dp
-            compact -> 315.dp
-            else -> 355.dp
+            tight -> 320.dp
+            compact -> 390.dp
+            else -> 430.dp
         }
 
         ParisIllustration(
@@ -123,9 +143,10 @@ fun VpnMainScreen(
                 locations = locations,
                 onLocationSelected = onLocationSelected,
                 compact = compact,
+                isLoading = uiState.locationsLoading,
             )
 
-            Spacer(Modifier.height(if (tight) 18.dp else if (compact) 28.dp else 38.dp))
+            Spacer(Modifier.height(if (tight) 16.dp else if (compact) 26.dp else 36.dp))
 
             StatusBeacon(
                 connectionState = uiState.connectionState,
@@ -133,7 +154,7 @@ fun VpnMainScreen(
                 tight = tight,
             )
 
-            Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
+            Spacer(Modifier.height(if (tight) 8.dp else 14.dp))
 
             Text(
                 text = screenTitle(uiState.connectionState),
@@ -141,6 +162,7 @@ fun VpnMainScreen(
                 fontWeight = FontWeight.SemiBold,
                 color = VpnPremiumTokens.Colors.TextPrimary,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
             )
 
             Spacer(Modifier.height(if (tight) 4.dp else 8.dp))
@@ -150,23 +172,26 @@ fun VpnMainScreen(
                 style = if (tight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
                 color = VpnPremiumTokens.Colors.TextSecondary,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
             )
 
             Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
 
             ProtectionPill(uiState.connectionState, compact = compact)
 
-            if (uiState.locationsLoading || uiState.locationsError.isNotBlank()) {
+            if (uiState.locationsError.isNotBlank()) {
                 Spacer(Modifier.height(if (tight) 4.dp else 6.dp))
                 Text(
-                    text = if (uiState.locationsLoading) "Загружаем регионы..." else uiState.locationsError,
+                    text = uiState.locationsError,
                     style = MaterialTheme.typography.bodySmall,
                     color = VpnPremiumTokens.Colors.TextSecondary,
                     textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
 
-            Spacer(Modifier.height(if (tight) 24.dp else if (compact) 48.dp else 66.dp))
+            Spacer(Modifier.height(if (tight) 34.dp else if (compact) 62.dp else 84.dp))
 
             ConnectionInfoCard(
                 uiState = uiState,
@@ -202,6 +227,8 @@ fun VpnMainScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = VpnPremiumTokens.Colors.TextSecondary,
                     textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
 
@@ -229,16 +256,20 @@ private fun HeaderBar(
     locations: List<VpnLocationOption>,
     onLocationSelected: (String) -> Unit,
     compact: Boolean,
+    isLoading: Boolean,
 ) {
     val meta = selectedLocation.toLocationMeta()
-    Box(
+    val locationText = if (isLoading) "Серверы" else meta.city
+    val sideWidth = if (compact) 118.dp else 132.dp
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (compact) 46.dp else 52.dp),
-        contentAlignment = Alignment.Center,
+            .height(if (compact) 48.dp else 54.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
-            modifier = Modifier.align(Alignment.CenterStart),
+            modifier = Modifier.width(sideWidth),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -246,27 +277,35 @@ private fun HeaderBar(
                 style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = VpnPremiumTokens.Colors.TextPrimary,
+                maxLines = 1,
             )
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.width(7.dp))
             Text(
                 text = "VPN",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = VpnPremiumTokens.Colors.TextSecondary,
+                maxLines = 1,
             )
         }
 
-        HeaderLocationSelector(
-            displayText = meta.city,
-            locations = locations,
-            onLocationSelected = onLocationSelected,
-            compact = compact,
-            modifier = Modifier.align(Alignment.Center),
-        )
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            HeaderLocationSelector(
+                displayText = locationText,
+                locations = locations,
+                onLocationSelected = onLocationSelected,
+                compact = compact,
+            )
+        }
 
-        MenuCircleButton(
-            modifier = Modifier.align(Alignment.CenterEnd),
-            compact = compact,
-        )
+        Box(
+            modifier = Modifier.width(if (compact) 50.dp else 56.dp),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            MenuCircleButton(compact = compact)
+        }
     }
 }
 
@@ -279,21 +318,28 @@ private fun HeaderLocationSelector(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+
     Box(modifier = modifier) {
         Row(
             modifier = Modifier
+                .widthIn(max = if (compact) 104.dp else 128.dp)
                 .clip(RoundedCornerShape(999.dp))
                 .clickable { expanded = locations.isNotEmpty() }
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
         ) {
             Text(
                 text = displayText,
                 style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                 color = VpnPremiumTokens.Colors.TextPrimary,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
             )
         }
+
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -301,7 +347,14 @@ private fun HeaderLocationSelector(
         ) {
             locations.forEach { location ->
                 DropdownMenuItem(
-                    text = { Text(location.toLocationMeta().city, color = VpnPremiumTokens.Colors.TextPrimary) },
+                    text = {
+                        Text(
+                            text = location.toLocationMeta().city,
+                            color = VpnPremiumTokens.Colors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
                     onClick = {
                         expanded = false
                         onLocationSelected(location.title)
@@ -327,27 +380,9 @@ private fun MenuCircleButton(
     ) {
         Canvas(Modifier.size(18.dp)) {
             val stroke = 2.2.dp.toPx()
-            drawLine(
-                color = VpnPremiumTokens.Colors.TextPrimary,
-                start = Offset(size.width * 0.12f, size.height * 0.25f),
-                end = Offset(size.width * 0.88f, size.height * 0.25f),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
-            drawLine(
-                color = VpnPremiumTokens.Colors.TextPrimary,
-                start = Offset(size.width * 0.12f, size.height * 0.50f),
-                end = Offset(size.width * 0.88f, size.height * 0.50f),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
-            drawLine(
-                color = VpnPremiumTokens.Colors.TextPrimary,
-                start = Offset(size.width * 0.12f, size.height * 0.75f),
-                end = Offset(size.width * 0.88f, size.height * 0.75f),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
+            drawLine(VpnPremiumTokens.Colors.TextPrimary, Offset(size.width * 0.12f, size.height * 0.25f), Offset(size.width * 0.88f, size.height * 0.25f), strokeWidth = stroke, cap = StrokeCap.Round)
+            drawLine(VpnPremiumTokens.Colors.TextPrimary, Offset(size.width * 0.12f, size.height * 0.50f), Offset(size.width * 0.88f, size.height * 0.50f), strokeWidth = stroke, cap = StrokeCap.Round)
+            drawLine(VpnPremiumTokens.Colors.TextPrimary, Offset(size.width * 0.12f, size.height * 0.75f), Offset(size.width * 0.88f, size.height * 0.75f), strokeWidth = stroke, cap = StrokeCap.Round)
         }
     }
 }
@@ -365,7 +400,9 @@ private fun StatusBeacon(
             animationSpec = infiniteRepeatable(tween(900, easing = EaseInOutSine), RepeatMode.Reverse),
             label = "beacon-pulse",
         ).value
-    } else 1f
+    } else {
+        1f
+    }
     val coreColor by animateColorAsState(
         targetValue = if (connectionState == VpnConnectionState.Connected) VpnPremiumTokens.Colors.PositiveStrong else VpnPremiumTokens.Colors.Positive,
         label = "beacon-core",
@@ -415,6 +452,7 @@ private fun ProtectionPill(state: VpnConnectionState, compact: Boolean) {
                 style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
                 color = VpnPremiumTokens.Colors.PositiveStrong,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
             )
         }
     }
@@ -444,6 +482,7 @@ private fun ConnectionInfoCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = VpnPremiumTokens.Colors.TextSecondary,
                         fontWeight = FontWeight.Medium,
+                        maxLines = 1,
                     )
                 }
                 Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
@@ -452,12 +491,16 @@ private fun ConnectionInfoCard(
                     style = if (tight) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
                     color = VpnPremiumTokens.Colors.TextPrimary,
                     fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(if (tight) 3.dp else 5.dp))
                 Text(
                     text = meta.country.ifBlank { "Основной сервер" },
                     style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                     color = VpnPremiumTokens.Colors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(if (tight) 14.dp else 20.dp))
                 FlagIcon(style = meta.flagStyle, compact = compact)
@@ -473,6 +516,7 @@ private fun ConnectionInfoCard(
                     text = "Стабильное",
                     style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                     color = VpnPremiumTokens.Colors.TextSecondary,
+                    maxLines = 1,
                 )
             }
         }
@@ -524,13 +568,15 @@ private fun CardMetric(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MiniIcon(type = iconType, tint = VpnPremiumTokens.Colors.TextPrimary.copy(alpha = 0.82f), size = if (compact) 25.dp else 30.dp)
-        Spacer(Modifier.width(if (compact) 9.dp else 12.dp))
+        MiniIcon(type = iconType, tint = VpnPremiumTokens.Colors.TextPrimary.copy(alpha = 0.82f), size = if (compact) 23.dp else 27.dp)
+        Spacer(Modifier.width(if (compact) 8.dp else 10.dp))
         Column {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodySmall,
                 color = VpnPremiumTokens.Colors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(3.dp))
             Text(
@@ -538,6 +584,8 @@ private fun CardMetric(
                 style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                 color = valueColor,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -550,7 +598,7 @@ private fun BottomNavigationBar(compact: Boolean) {
             .fillMaxWidth()
             .height(if (compact) 62.dp else 70.dp)
             .clip(RoundedCornerShape(if (compact) 22.dp else 26.dp))
-            .background(Color.White.copy(alpha = 0.96f))
+            .background(Color.White.copy(alpha = 0.94f))
             .border(1.dp, VpnPremiumTokens.Colors.BorderSubtle, RoundedCornerShape(if (compact) 22.dp else 26.dp))
             .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -572,24 +620,26 @@ private fun BottomNavItem(
 ) {
     Row(
         modifier = modifier
-            .height(if (compact) 46.dp else 52.dp)
+            .fillMaxHeight()
             .clip(RoundedCornerShape(18.dp))
             .background(if (selected) Color.White else Color.Transparent)
-            .padding(horizontal = if (compact) 8.dp else 12.dp),
+            .padding(horizontal = if (compact) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         MiniIcon(
             type = iconType,
             tint = if (selected) VpnPremiumTokens.Colors.TextPrimary else VpnPremiumTokens.Colors.TextSecondary,
-            size = if (compact) 21.dp else 24.dp,
+            size = if (compact) 19.dp else 22.dp,
         )
-        Spacer(Modifier.width(if (compact) 8.dp else 10.dp))
+        Spacer(Modifier.width(if (compact) 7.dp else 9.dp))
         Text(
             text = label,
             style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
             color = if (selected) VpnPremiumTokens.Colors.TextPrimary else VpnPremiumTokens.Colors.TextSecondary,
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -601,61 +651,63 @@ private fun ParisIllustration(modifier: Modifier = Modifier) {
         val h = size.height
         val cloud = Color(0xFFEFF3F6)
         val mountain = Color(0xFFE8EEF1)
-        val city = Color(0xFFD7DEE2)
-        val line = Color(0xFFB7C1C7)
-        val river = Color(0xFFE9F4F8)
-        val green = Color(0xFFC9DDBF)
+        val city = Color(0xFFD0D9DE)
+        val line = Color(0xFFAAB7BF)
+        val river = Color(0xFFE4F2F8)
+        val green = Color(0xFFBED8B4)
 
         drawRect(
             brush = Brush.verticalGradient(
                 0f to Color.White.copy(alpha = 0f),
-                0.35f to Color(0xFFF8FBFC).copy(alpha = 0.72f),
-                1f to Color.White.copy(alpha = 0.15f),
+                0.24f to Color(0xFFF6FAFC).copy(alpha = 0.60f),
+                0.70f to Color(0xFFF3FAFD).copy(alpha = 0.46f),
+                1f to Color.White.copy(alpha = 0.12f),
             )
         )
 
-        drawCircle(cloud.copy(alpha = 0.72f), radius = w * 0.20f, center = Offset(w * 0.17f, h * 0.22f))
-        drawCircle(cloud.copy(alpha = 0.58f), radius = w * 0.18f, center = Offset(w * 0.82f, h * 0.18f))
-        drawCircle(cloud.copy(alpha = 0.48f), radius = w * 0.13f, center = Offset(w * 0.50f, h * 0.25f))
+        drawCircle(cloud.copy(alpha = 0.66f), radius = w * 0.20f, center = Offset(w * 0.16f, h * 0.20f))
+        drawCircle(cloud.copy(alpha = 0.54f), radius = w * 0.18f, center = Offset(w * 0.82f, h * 0.17f))
+        drawCircle(cloud.copy(alpha = 0.46f), radius = w * 0.13f, center = Offset(w * 0.50f, h * 0.24f))
 
         val leftMountain = Path().apply {
             moveTo(0f, h * 0.42f)
-            lineTo(w * 0.16f, h * 0.12f)
-            lineTo(w * 0.33f, h * 0.44f)
+            lineTo(w * 0.16f, h * 0.10f)
+            lineTo(w * 0.34f, h * 0.44f)
             lineTo(w * 0.48f, h * 0.22f)
-            lineTo(w * 0.60f, h * 0.44f)
+            lineTo(w * 0.62f, h * 0.44f)
             lineTo(0f, h * 0.44f)
             close()
         }
-        drawPath(leftMountain, mountain.copy(alpha = 0.54f))
+        drawPath(leftMountain, mountain.copy(alpha = 0.58f))
+
         val rightMountain = Path().apply {
             moveTo(w * 0.42f, h * 0.44f)
             lineTo(w * 0.64f, h * 0.18f)
             lineTo(w * 0.78f, h * 0.42f)
-            lineTo(w * 0.95f, h * 0.11f)
+            lineTo(w * 0.95f, h * 0.10f)
             lineTo(w, h * 0.40f)
             lineTo(w, h * 0.46f)
             close()
         }
-        drawPath(rightMountain, mountain.copy(alpha = 0.46f))
+        drawPath(rightMountain, mountain.copy(alpha = 0.50f))
 
-        val horizonY = h * 0.55f
-        drawRoundRect(city.copy(alpha = 0.40f), topLeft = Offset(w * 0.11f, horizonY - h * 0.08f), size = Size(w * 0.05f, h * 0.08f), cornerRadius = CornerRadius(3.dp.toPx()))
-        drawRoundRect(city.copy(alpha = 0.43f), topLeft = Offset(w * 0.19f, horizonY - h * 0.13f), size = Size(w * 0.055f, h * 0.13f), cornerRadius = CornerRadius(3.dp.toPx()))
-        drawRoundRect(city.copy(alpha = 0.48f), topLeft = Offset(w * 0.29f, horizonY - h * 0.20f), size = Size(w * 0.06f, h * 0.20f), cornerRadius = CornerRadius(3.dp.toPx()))
-        drawRoundRect(city.copy(alpha = 0.35f), topLeft = Offset(w * 0.38f, horizonY - h * 0.10f), size = Size(w * 0.045f, h * 0.10f), cornerRadius = CornerRadius(3.dp.toPx()))
-        drawRoundRect(city.copy(alpha = 0.36f), topLeft = Offset(w * 0.73f, horizonY - h * 0.09f), size = Size(w * 0.07f, h * 0.09f), cornerRadius = CornerRadius(3.dp.toPx()))
-        drawRoundRect(city.copy(alpha = 0.32f), topLeft = Offset(w * 0.84f, horizonY - h * 0.12f), size = Size(w * 0.09f, h * 0.12f), cornerRadius = CornerRadius(3.dp.toPx()))
+        val horizonY = h * 0.54f
+        drawRoundRect(city.copy(alpha = 0.44f), topLeft = Offset(w * 0.11f, horizonY - h * 0.08f), size = Size(w * 0.05f, h * 0.08f), cornerRadius = CornerRadius(3.dp.toPx()))
+        drawRoundRect(city.copy(alpha = 0.48f), topLeft = Offset(w * 0.19f, horizonY - h * 0.13f), size = Size(w * 0.055f, h * 0.13f), cornerRadius = CornerRadius(3.dp.toPx()))
+        drawRoundRect(city.copy(alpha = 0.54f), topLeft = Offset(w * 0.29f, horizonY - h * 0.20f), size = Size(w * 0.06f, h * 0.20f), cornerRadius = CornerRadius(3.dp.toPx()))
+        drawRoundRect(city.copy(alpha = 0.40f), topLeft = Offset(w * 0.38f, horizonY - h * 0.10f), size = Size(w * 0.045f, h * 0.10f), cornerRadius = CornerRadius(3.dp.toPx()))
+        drawRoundRect(city.copy(alpha = 0.40f), topLeft = Offset(w * 0.73f, horizonY - h * 0.09f), size = Size(w * 0.07f, h * 0.09f), cornerRadius = CornerRadius(3.dp.toPx()))
+        drawRoundRect(city.copy(alpha = 0.36f), topLeft = Offset(w * 0.84f, horizonY - h * 0.12f), size = Size(w * 0.09f, h * 0.12f), cornerRadius = CornerRadius(3.dp.toPx()))
 
         drawParisTower(
             base = Offset(w * 0.64f, horizonY + h * 0.01f),
             height = h * 0.45f,
-            color = line.copy(alpha = 0.60f),
-            strokeWidth = 1.3.dp.toPx(),
+            color = line.copy(alpha = 0.70f),
+            strokeWidth = 1.35.dp.toPx(),
         )
 
         drawLine(
-            color = line.copy(alpha = 0.44f),
+            color = line.copy(alpha = 0.46f),
             start = Offset(w * 0.04f, horizonY),
             end = Offset(w * 0.96f, horizonY),
             strokeWidth = 1.dp.toPx(),
@@ -665,13 +717,13 @@ private fun ParisIllustration(modifier: Modifier = Modifier) {
             start = Offset(w * 0.07f, horizonY + h * 0.04f),
             end = Offset(w * 0.93f, horizonY + h * 0.04f),
             archTop = horizonY - h * 0.06f,
-            color = line.copy(alpha = 0.34f),
+            color = line.copy(alpha = 0.42f),
             strokeWidth = 1.6.dp.toPx(),
         )
 
         repeat(12) { index ->
             val x = w * 0.05f + index * (w * 0.075f)
-            drawCircle(green.copy(alpha = 0.45f), radius = h * 0.022f, center = Offset(x, horizonY + h * 0.02f))
+            drawCircle(green.copy(alpha = 0.50f), radius = h * 0.022f, center = Offset(x, horizonY + h * 0.02f))
         }
 
         val riverPath = Path().apply {
@@ -681,7 +733,7 @@ private fun ParisIllustration(modifier: Modifier = Modifier) {
             lineTo(0f, h)
             close()
         }
-        drawPath(riverPath, river.copy(alpha = 0.55f))
+        drawPath(riverPath, river.copy(alpha = 0.58f))
         drawLine(
             color = Color.White.copy(alpha = 0.42f),
             start = Offset(0f, horizonY + h * 0.13f),
@@ -691,15 +743,15 @@ private fun ParisIllustration(modifier: Modifier = Modifier) {
         drawRect(
             brush = Brush.verticalGradient(
                 0f to Color.White.copy(alpha = 0f),
-                1f to Color.White.copy(alpha = 0.78f),
+                1f to Color.White.copy(alpha = 0.64f),
             ),
-            topLeft = Offset(0f, h * 0.66f),
-            size = Size(w, h * 0.34f),
+            topLeft = Offset(0f, h * 0.68f),
+            size = Size(w, h * 0.32f),
         )
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParisTower(
+private fun DrawScope.drawParisTower(
     base: Offset,
     height: Float,
     color: Color,
@@ -725,7 +777,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawParisTower(
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBridge(
+private fun DrawScope.drawBridge(
     start: Offset,
     end: Offset,
     archTop: Float,
@@ -747,7 +799,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBridge(
     drawPath(arch, color.copy(alpha = 0.62f), style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
     repeat(7) { index ->
         val x = start.x + (end.x - start.x) * (0.20f + index * 0.10f)
-        drawLine(color.copy(alpha = 0.28f), Offset(x, start.y), Offset(x, start.y + 15.dp.toPx()), strokeWidth * 0.7f)
+        drawLine(color.copy(alpha = 0.30f), Offset(x, start.y), Offset(x, start.y + 15.dp.toPx()), strokeWidth * 0.7f)
     }
 }
 
@@ -810,6 +862,8 @@ private fun RouteSelectorChip(
                 text = meta.city,
                 style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                 color = VpnPremiumTokens.Colors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.width(8.dp))
             Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null, tint = VpnPremiumTokens.Colors.TextSecondary)
@@ -831,16 +885,23 @@ private fun SurfaceCard(compact: Boolean, tight: Boolean, content: @Composable C
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(if (compact) 24.dp else 30.dp))
-            .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, VpnPremiumTokens.Colors.BorderSubtle, RoundedCornerShape(if (compact) 24.dp else 30.dp))
-            .padding(horizontal = if (tight) 16.dp else if (compact) 18.dp else 22.dp, vertical = if (tight) 14.dp else if (compact) 16.dp else 20.dp),
+            .background(Color.White.copy(alpha = 0.72f))
+            .border(
+                1.dp,
+                VpnPremiumTokens.Colors.BorderSubtle.copy(alpha = 0.82f),
+                RoundedCornerShape(if (compact) 24.dp else 30.dp),
+            )
+            .padding(
+                horizontal = if (tight) 16.dp else if (compact) 18.dp else 22.dp,
+                vertical = if (tight) 14.dp else if (compact) 16.dp else 20.dp,
+            ),
         content = content,
     )
 }
 
 @Composable
 private fun RowDivider(compact: Boolean, tight: Boolean) {
-    Box(Modifier.fillMaxWidth().padding(vertical = if (tight) 12.dp else if (compact) 14.dp else 18.dp).height(1.dp).background(VpnPremiumTokens.Colors.BorderSubtle))
+    Box(Modifier.fillMaxWidth().padding(vertical = if (tight) 12.dp else if (compact) 14.dp else 18.dp).height(1.dp).background(VpnPremiumTokens.Colors.BorderSubtle.copy(alpha = 0.70f)))
 }
 
 @Composable
@@ -850,7 +911,7 @@ private fun VerticalDivider(compact: Boolean) {
             .padding(horizontal = if (compact) 10.dp else 14.dp)
             .width(1.dp)
             .height(if (compact) 44.dp else 52.dp)
-            .background(VpnPremiumTokens.Colors.BorderSubtle)
+            .background(VpnPremiumTokens.Colors.BorderSubtle.copy(alpha = 0.70f))
     )
 }
 
@@ -1016,6 +1077,7 @@ fun PrimaryConnectButton(
                 text = label,
                 style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
             )
         }
     }
@@ -1046,7 +1108,7 @@ private fun VpnLocationOption.toLocationMeta(): LocationMeta {
             LocationMeta(city = "Париж", country = "Франция", flagStyle = FlagStyle.France)
         lower.contains("frankfurt") || lower.contains("франкфурт") || lower.contains("germany") || lower.contains("герман") || lower == "de" ->
             LocationMeta(city = "Франкфурт", country = "Германия", flagStyle = FlagStyle.Germany)
-        normalized.isBlank() ->
+        normalized.isBlank() || lower.contains("загрузка") || lower.contains("loading") || lower.contains("server") || lower.contains("сервер") ->
             LocationMeta(city = "Париж", country = "Франция", flagStyle = FlagStyle.France)
         else ->
             LocationMeta(city = normalized, country = "Основной сервер", flagStyle = FlagStyle.Neutral)
