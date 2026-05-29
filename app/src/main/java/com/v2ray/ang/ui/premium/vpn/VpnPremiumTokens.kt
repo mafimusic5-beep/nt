@@ -7,22 +7,22 @@ import androidx.compose.ui.unit.sp
 
 internal object VpnPremiumTokens {
     object Colors {
-        val Background = Color(0xFFF7F8F4)
+        val Background = Color(0xFFFFFFFF)
         val Surface = Color(0xFFFFFFFF)
-        val BorderSubtle = Color(0xFFE7ECE2)
+        val BorderSubtle = Color(0xFFE7ECEF)
         val BorderStrong = Color(0xFFDCE4D5)
 
         val TextPrimary = Color(0xFF111319)
         val TextSecondary = Color(0xFF7D828D)
 
         val Positive = Color(0xFF6BC652)
-        val PositiveStrong = Color(0xFF49B530)
+        val PositiveStrong = Color(0xFF2F9E44)
         val PositiveSoft = Color(0xFFEAF6E3)
         val Track = Color(0xFFD7DDD1)
 
-        val PrimaryButtonIdle = Color(0xFFC8F08E)
-        val PrimaryButtonConnected = Color(0xFFC8F08E)
-        val ButtonText = Color(0xFF111319)
+        val PrimaryButtonIdle = Color(0xFF101319)
+        val PrimaryButtonConnected = Color(0xFF101319)
+        val ButtonText = Color(0xFFFFFFFF)
 
         val SilhouetteDisconnected = Positive
         val SilhouetteConnecting = Positive
