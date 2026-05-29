@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -107,6 +106,7 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
+        val selectedMeta = uiState.selectedLocation.toLocationMeta()
 
         val illustrationTop = when {
             tight -> 250.dp
@@ -119,7 +119,8 @@ fun VpnMainScreen(
             else -> 430.dp
         }
 
-        ParisIllustration(
+        RegionIllustration(
+            meta = selectedMeta,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = illustrationTop)
@@ -140,10 +141,7 @@ fun VpnMainScreen(
         ) {
             HeaderBar(
                 selectedLocation = uiState.selectedLocation,
-                locations = locations,
-                onLocationSelected = onLocationSelected,
                 compact = compact,
-                isLoading = uiState.locationsLoading,
             )
 
             Spacer(Modifier.height(if (tight) 16.dp else if (compact) 26.dp else 36.dp))
@@ -253,13 +251,9 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 @Composable
 private fun HeaderBar(
     selectedLocation: VpnLocationOption,
-    locations: List<VpnLocationOption>,
-    onLocationSelected: (String) -> Unit,
     compact: Boolean,
-    isLoading: Boolean,
 ) {
     val meta = selectedLocation.toLocationMeta()
-    val locationText = if (isLoading) "Серверы" else meta.city
     val sideWidth = if (compact) 118.dp else 132.dp
 
     Row(
@@ -292,45 +286,8 @@ private fun HeaderBar(
             modifier = Modifier.weight(1f),
             contentAlignment = Alignment.Center,
         ) {
-            HeaderLocationSelector(
-                displayText = locationText,
-                locations = locations,
-                onLocationSelected = onLocationSelected,
-                compact = compact,
-            )
-        }
-
-        Box(
-            modifier = Modifier.width(if (compact) 50.dp else 56.dp),
-            contentAlignment = Alignment.CenterEnd,
-        ) {
-            MenuCircleButton(compact = compact)
-        }
-    }
-}
-
-@Composable
-private fun HeaderLocationSelector(
-    displayText: String,
-    locations: List<VpnLocationOption>,
-    onLocationSelected: (String) -> Unit,
-    compact: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box(modifier = modifier) {
-        Row(
-            modifier = Modifier
-                .widthIn(max = if (compact) 104.dp else 128.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .clickable { expanded = locations.isNotEmpty() }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
             Text(
-                text = displayText,
+                text = meta.city,
                 style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                 color = VpnPremiumTokens.Colors.TextPrimary,
                 fontWeight = FontWeight.Medium,
@@ -340,27 +297,11 @@ private fun HeaderLocationSelector(
             )
         }
 
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.background(Color.White),
+        Box(
+            modifier = Modifier.width(if (compact) 50.dp else 56.dp),
+            contentAlignment = Alignment.CenterEnd,
         ) {
-            locations.forEach { location ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = location.toLocationMeta().city,
-                            color = VpnPremiumTokens.Colors.TextPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    onClick = {
-                        expanded = false
-                        onLocationSelected(location.title)
-                    },
-                )
-            }
+            MenuCircleButton(compact = compact)
         }
     }
 }
@@ -645,6 +586,15 @@ private fun BottomNavItem(
 }
 
 @Composable
+private fun RegionIllustration(meta: LocationMeta, modifier: Modifier = Modifier) {
+    when (meta.flagStyle) {
+        FlagStyle.France -> ParisIllustration(modifier = modifier)
+        FlagStyle.Germany -> FrankfurtIllustration(modifier = modifier)
+        FlagStyle.Neutral -> GenericRegionIllustration(modifier = modifier)
+    }
+}
+
+@Composable
 private fun ParisIllustration(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier) {
         val w = size.width
@@ -740,6 +690,143 @@ private fun ParisIllustration(modifier: Modifier = Modifier) {
             end = Offset(w, horizonY + h * 0.09f),
             strokeWidth = 2.dp.toPx(),
         )
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0f),
+                1f to Color.White.copy(alpha = 0.64f),
+            ),
+            topLeft = Offset(0f, h * 0.68f),
+            size = Size(w, h * 0.32f),
+        )
+    }
+}
+
+@Composable
+private fun FrankfurtIllustration(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val sky = Color(0xFFF6FAFC)
+        val city = Color(0xFFC9D2D8)
+        val line = Color(0xFFA8B5BD)
+        val river = Color(0xFFE2F1F7)
+        val green = Color(0xFFC3D9B8)
+        val horizonY = h * 0.57f
+
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0f),
+                0.28f to sky.copy(alpha = 0.62f),
+                0.74f to Color(0xFFF1F8FB).copy(alpha = 0.48f),
+                1f to Color.White.copy(alpha = 0.10f),
+            )
+        )
+        drawCircle(Color(0xFFEFF4F6).copy(alpha = 0.58f), radius = w * 0.22f, center = Offset(w * 0.25f, h * 0.18f))
+        drawCircle(Color(0xFFEFF4F6).copy(alpha = 0.48f), radius = w * 0.18f, center = Offset(w * 0.78f, h * 0.20f))
+
+        val buildings = listOf(
+            Triple(0.10f, 0.12f, 0.050f),
+            Triple(0.19f, 0.18f, 0.055f),
+            Triple(0.29f, 0.28f, 0.060f),
+            Triple(0.39f, 0.46f, 0.070f),
+            Triple(0.50f, 0.22f, 0.055f),
+            Triple(0.59f, 0.34f, 0.060f),
+            Triple(0.70f, 0.25f, 0.075f),
+            Triple(0.82f, 0.16f, 0.080f),
+        )
+        buildings.forEachIndexed { index, (xFraction, heightFraction, widthFraction) ->
+            val bw = w * widthFraction
+            val bh = h * heightFraction
+            val x = w * xFraction
+            drawRoundRect(
+                color = city.copy(alpha = 0.38f + index * 0.018f),
+                topLeft = Offset(x, horizonY - bh),
+                size = Size(bw, bh),
+                cornerRadius = CornerRadius(3.dp.toPx()),
+            )
+            val windows = 4
+            repeat(windows) { row ->
+                val y = horizonY - bh + bh * (0.20f + row * 0.16f)
+                drawLine(
+                    color = Color.White.copy(alpha = 0.25f),
+                    start = Offset(x + bw * 0.20f, y),
+                    end = Offset(x + bw * 0.80f, y),
+                    strokeWidth = 0.8.dp.toPx(),
+                )
+            }
+        }
+
+        drawLine(line.copy(alpha = 0.46f), Offset(w * 0.04f, horizonY), Offset(w * 0.96f, horizonY), 1.dp.toPx())
+        drawBridge(
+            start = Offset(w * 0.08f, horizonY + h * 0.045f),
+            end = Offset(w * 0.92f, horizonY + h * 0.045f),
+            archTop = horizonY - h * 0.035f,
+            color = line.copy(alpha = 0.42f),
+            strokeWidth = 1.55.dp.toPx(),
+        )
+        repeat(12) { index ->
+            val x = w * 0.06f + index * (w * 0.073f)
+            drawCircle(green.copy(alpha = 0.46f), radius = h * 0.020f, center = Offset(x, horizonY + h * 0.025f))
+        }
+        val riverPath = Path().apply {
+            moveTo(0f, horizonY + h * 0.035f)
+            cubicTo(w * 0.25f, horizonY + h * 0.09f, w * 0.62f, horizonY + h * 0.01f, w, horizonY + h * 0.08f)
+            lineTo(w, h)
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(riverPath, river.copy(alpha = 0.56f))
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0f),
+                1f to Color.White.copy(alpha = 0.64f),
+            ),
+            topLeft = Offset(0f, h * 0.68f),
+            size = Size(w, h * 0.32f),
+        )
+    }
+}
+
+@Composable
+private fun GenericRegionIllustration(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val sky = Color(0xFFF5FAFC)
+        val mountain = Color(0xFFE4ECEF)
+        val line = Color(0xFFAEB9C0)
+        val water = Color(0xFFE5F2F7)
+        val horizonY = h * 0.56f
+
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0f),
+                0.30f to sky.copy(alpha = 0.62f),
+                1f to Color.White.copy(alpha = 0.12f),
+            )
+        )
+        drawCircle(Color(0xFFEFF4F6).copy(alpha = 0.56f), radius = w * 0.22f, center = Offset(w * 0.22f, h * 0.22f))
+        drawCircle(Color(0xFFEFF4F6).copy(alpha = 0.46f), radius = w * 0.18f, center = Offset(w * 0.76f, h * 0.18f))
+        val hills = Path().apply {
+            moveTo(0f, horizonY)
+            lineTo(w * 0.14f, h * 0.28f)
+            lineTo(w * 0.32f, horizonY)
+            lineTo(w * 0.50f, h * 0.24f)
+            lineTo(w * 0.72f, horizonY)
+            lineTo(w * 0.88f, h * 0.30f)
+            lineTo(w, horizonY)
+            close()
+        }
+        drawPath(hills, mountain.copy(alpha = 0.56f))
+        drawLine(line.copy(alpha = 0.42f), Offset(w * 0.04f, horizonY), Offset(w * 0.96f, horizonY), 1.dp.toPx())
+        val waterPath = Path().apply {
+            moveTo(0f, horizonY + h * 0.04f)
+            cubicTo(w * 0.22f, horizonY + h * 0.10f, w * 0.66f, horizonY + h * 0.00f, w, horizonY + h * 0.08f)
+            lineTo(w, h)
+            lineTo(0f, h)
+            close()
+        }
+        drawPath(waterPath, water.copy(alpha = 0.55f))
         drawRect(
             brush = Brush.verticalGradient(
                 0f to Color.White.copy(alpha = 0f),
@@ -1109,7 +1196,7 @@ private fun VpnLocationOption.toLocationMeta(): LocationMeta {
         lower.contains("frankfurt") || lower.contains("франкфурт") || lower.contains("germany") || lower.contains("герман") || lower == "de" ->
             LocationMeta(city = "Франкфурт", country = "Германия", flagStyle = FlagStyle.Germany)
         normalized.isBlank() || lower.contains("загрузка") || lower.contains("loading") || lower.contains("server") || lower.contains("сервер") ->
-            LocationMeta(city = "Париж", country = "Франция", flagStyle = FlagStyle.France)
+            LocationMeta(city = "Регион", country = "Основной сервер", flagStyle = FlagStyle.Neutral)
         else ->
             LocationMeta(city = normalized, country = "Основной сервер", flagStyle = FlagStyle.Neutral)
     }
