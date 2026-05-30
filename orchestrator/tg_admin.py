@@ -1,7 +1,7 @@
 import asyncio
 from urllib.parse import unquote, urlparse
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -16,22 +16,23 @@ def server_name_from_config(config_text: str) -> str:
     return 'Skryon-Server'
 
 
-async def require_admin(message: Message) -> bool:
+def is_admin_message(message: Message) -> bool:
     user = message.from_user
-    if not user or not is_admin(user.id):
-        await message.answer('Нет доступа')
-        return False
-    return True
+    return bool(user and is_admin(user.id))
+
+
+async def ignore_non_admin(message: Message) -> None:
+    return None
 
 
 async def start_cmd(message: Message) -> None:
-    if not await require_admin(message):
+    if not is_admin_message(message):
         return
     await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK')
 
 
 async def newcode_cmd(message: Message) -> None:
-    if not await require_admin(message):
+    if not is_admin_message(message):
         return
     parts = (message.text or '').split(maxsplit=2)
     days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
@@ -41,7 +42,7 @@ async def newcode_cmd(message: Message) -> None:
 
 
 async def codes_cmd(message: Message) -> None:
-    if not await require_admin(message):
+    if not is_admin_message(message):
         return
     rows = get_codes(20)
     if not rows:
@@ -51,7 +52,7 @@ async def codes_cmd(message: Message) -> None:
 
 
 async def revoke_cmd(message: Message) -> None:
-    if not await require_admin(message):
+    if not is_admin_message(message):
         return
     parts = (message.text or '').split(maxsplit=1)
     if len(parts) < 2:
@@ -62,7 +63,7 @@ async def revoke_cmd(message: Message) -> None:
 
 
 async def addconfig_cmd(message: Message) -> None:
-    if not await require_admin(message):
+    if not is_admin_message(message):
         return
     parts = (message.text or '').split(maxsplit=1)
     if len(parts) < 2:
@@ -83,11 +84,15 @@ async def main() -> None:
     init_storage()
     bot = Bot(BOT_TOKEN)
     dp = Dispatcher()
-    dp.message.register(start_cmd, Command('start'))
-    dp.message.register(newcode_cmd, Command('newcode'))
-    dp.message.register(codes_cmd, Command('codes'))
-    dp.message.register(revoke_cmd, Command('revoke'))
-    dp.message.register(addconfig_cmd, Command('addconfig'))
+
+    admin_filter = F.from_user.id.func(is_admin)
+    dp.message.register(start_cmd, admin_filter, Command('start'))
+    dp.message.register(newcode_cmd, admin_filter, Command('newcode'))
+    dp.message.register(codes_cmd, admin_filter, Command('codes'))
+    dp.message.register(revoke_cmd, admin_filter, Command('revoke'))
+    dp.message.register(addconfig_cmd, admin_filter, Command('addconfig'))
+    dp.message.register(ignore_non_admin)
+
     await dp.start_polling(bot)
 
 
