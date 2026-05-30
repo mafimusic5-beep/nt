@@ -98,6 +98,20 @@ def set_active_server(server_id: int) -> bool:
     return True
 
 
+def delete_server(server_id: int) -> bool:
+    with connect() as con:
+        row = con.execute('SELECT id, is_active FROM servers WHERE id = ?', (server_id,)).fetchone()
+        if not row:
+            return False
+        was_active = bool(row['is_active'])
+        con.execute('DELETE FROM servers WHERE id = ?', (server_id,))
+        if was_active:
+            replacement = con.execute('SELECT id FROM servers ORDER BY id DESC LIMIT 1').fetchone()
+            if replacement:
+                con.execute('UPDATE servers SET is_active = 1 WHERE id = ?', (replacement['id'],))
+    return True
+
+
 def get_active_server() -> Optional[Dict[str, Any]]:
     with connect() as con:
         row = con.execute('SELECT id, name, region, config FROM servers WHERE is_active = 1 ORDER BY id DESC LIMIT 1').fetchone()
