@@ -75,15 +75,32 @@ def revoke_activation_code(code: str) -> bool:
     return cursor.rowcount > 0
 
 
-def save_server(name: str, region: str, config_text: str) -> None:
+def save_server(name: str, region: str, config_text: str) -> int:
     with connect() as con:
         con.execute('UPDATE servers SET is_active = 0')
-        con.execute('INSERT INTO servers(name, region, config, is_active, created_at) VALUES (?, ?, ?, 1, ?)', (name, region, config_text, now_iso()))
+        cursor = con.execute('INSERT INTO servers(name, region, config, is_active, created_at) VALUES (?, ?, ?, 1, ?)', (name, region, config_text, now_iso()))
+    return int(cursor.lastrowid)
+
+
+def list_servers(limit: int = 20) -> List[Dict[str, Any]]:
+    with connect() as con:
+        rows = con.execute('SELECT id, name, region, is_active, created_at FROM servers ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_active_server(server_id: int) -> bool:
+    with connect() as con:
+        row = con.execute('SELECT id FROM servers WHERE id = ?', (server_id,)).fetchone()
+        if not row:
+            return False
+        con.execute('UPDATE servers SET is_active = 0')
+        con.execute('UPDATE servers SET is_active = 1 WHERE id = ?', (server_id,))
+    return True
 
 
 def get_active_server() -> Optional[Dict[str, Any]]:
     with connect() as con:
-        row = con.execute('SELECT name, region, config FROM servers WHERE is_active = 1 ORDER BY id DESC LIMIT 1').fetchone()
+        row = con.execute('SELECT id, name, region, config FROM servers WHERE is_active = 1 ORDER BY id DESC LIMIT 1').fetchone()
     return dict(row) if row else None
 
 
