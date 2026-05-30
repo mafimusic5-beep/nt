@@ -36,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +69,7 @@ import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
@@ -132,6 +135,7 @@ private fun EmeryApp(
     stopVpnService: () -> Unit,
 ) {
     val navController = rememberNavController()
+    val context = LocalContext.current
 
     Scaffold(
         containerColor = Color.White,
@@ -156,10 +160,18 @@ private fun EmeryApp(
             composable(EmeryRoute.Activation.name) {
                 ActivationScreen(
                     onActivated = { code ->
-                        MmkvManager.encodeSettings(SKRYON_ACTIVATION_CODE_PREF, formatActivationCode(code))
-                        navController.navigate(EmeryRoute.Home.name) {
-                            popUpTo(EmeryRoute.Activation.name) { inclusive = true }
+                        val formattedCode = formatActivationCode(code)
+                        val result = activateSkryonCode(context, code, formattedCode)
+                        if (result.ok) {
+                            val guid = saveActivatedSkryonConfig(result.config)
+                            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CODE_PREF, result.code.ifBlank { formattedCode })
+                            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, result.config)
+                            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
+                            navController.navigate(EmeryRoute.Home.name) {
+                                popUpTo(EmeryRoute.Activation.name) { inclusive = true }
+                            }
                         }
+                        result
                     },
                 )
             }
@@ -222,10 +234,12 @@ private fun SplashScreen(onFinish: () -> Unit) {
 
 @Composable
 private fun ActivationScreen(
-    onActivated: (String) -> Unit,
+    onActivated: suspend (String) -> SkryonActivationResult,
 ) {
     var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     BoxWithConstraints(
         modifier = Modifier
@@ -339,12 +353,24 @@ private fun ActivationScreen(
             }
             Button(
                 onClick = {
+                    if (isLoading) {
+                        return@Button
+                    }
                     if (code.length < ACTIVATION_CODE_LENGTH) {
                         error = "Введите код полностью"
                     } else {
-                        onActivated(code)
+                        scope.launch {
+                            isLoading = true
+                            error = ""
+                            val result = onActivated(code)
+                            if (!result.ok) {
+                                error = result.error.ifBlank { "Ошибка активации" }
+                            }
+                            isLoading = false
+                        }
                     }
                 },
+                enabled = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(if (compact) 56.dp else 64.dp),
@@ -352,10 +378,12 @@ private fun ActivationScreen(
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF08090B),
                     contentColor = Color.White,
+                    disabledContainerColor = Color(0xFF2D3036),
+                    disabledContentColor = Color.White,
                 ),
             ) {
                 Text(
-                    text = "Войти",
+                    text = if (isLoading) "Проверка..." else "Войти",
                     style = TextStyle(
                         fontSize = if (compact) 22.sp else 25.sp,
                         fontWeight = FontWeight.Medium,
