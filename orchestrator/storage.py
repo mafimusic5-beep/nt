@@ -38,8 +38,26 @@ def init_storage() -> None:
         con.execute('CREATE TABLE IF NOT EXISTS servers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, region TEXT NOT NULL, config TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)')
         con.execute('CREATE TABLE IF NOT EXISTS code_devices (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, device_id TEXT NOT NULL, activated_at TEXT NOT NULL, UNIQUE(code, device_id))')
         con.execute('CREATE TABLE IF NOT EXISTS checkout_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, external_id TEXT UNIQUE, plan TEXT NOT NULL, customer TEXT, code TEXT NOT NULL, status TEXT NOT NULL DEFAULT "paid", created_at TEXT NOT NULL)')
+        con.execute('CREATE TABLE IF NOT EXISTS system_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, code TEXT, plan TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL)')
         _add_column_if_missing(con, 'activation_codes', 'max_devices', 'INTEGER NOT NULL DEFAULT 1')
         _add_column_if_missing(con, 'activation_codes', 'plan', 'TEXT NOT NULL DEFAULT "manual"')
+
+
+def add_event(event_type: str, message: str, code: str = '', plan: str = '') -> None:
+    with connect() as con:
+        con.execute(
+            'INSERT INTO system_events(event_type, code, plan, message, created_at) VALUES (?, ?, ?, ?, ?)',
+            (event_type, code, plan, message, now_iso()),
+        )
+
+
+def list_events(limit: int = 30) -> List[Dict[str, Any]]:
+    with connect() as con:
+        rows = con.execute(
+            'SELECT id, event_type, code, plan, message, created_at FROM system_events ORDER BY id DESC LIMIT ?',
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def normalize_code(value: str) -> str:
@@ -73,6 +91,7 @@ def create_activation_code(days: int = 30, note: str = '', max_devices: int = 1,
             'INSERT INTO activation_codes(code, status, note, created_at, expires_at, max_devices, plan) VALUES (?, ?, ?, ?, ?, ?, ?)',
             (code, 'active', note, now_iso(), future_iso(days), safe_max_devices, plan),
         )
+    add_event('code_created', f'Code {code} created: {plan}, devices {safe_max_devices}', code, plan)
     return code
 
 
@@ -96,6 +115,7 @@ def create_checkout_code(plan: str, max_devices: int, days: int = 30, customer: 
             (external_id, plan, customer, code, 'paid', now_iso()),
         )
         row = con.execute('SELECT code, plan, max_devices, expires_at FROM activation_codes WHERE code = ?', (code,)).fetchone()
+    add_event('checkout_code_created', f'Checkout issued {code}: {plan}, devices {safe_max_devices}', code, plan)
     return dict(row)
 
 
@@ -112,13 +132,17 @@ def revoke_activation_code(code: str) -> bool:
     formatted = format_code(code)
     with connect() as con:
         cursor = con.execute('UPDATE activation_codes SET status = ? WHERE code = ?', ('banned', formatted))
-    return cursor.rowcount > 0
+    if cursor.rowcount > 0:
+        add_event('code_revoked', f'Code {formatted} revoked', formatted, '')
+        return True
+    return False
 
 
 def save_server(name: str, region: str, config_text: str) -> int:
     with connect() as con:
         con.execute('UPDATE servers SET is_active = 0')
         cursor = con.execute('INSERT INTO servers(name, region, config, is_active, created_at) VALUES (?, ?, ?, 1, ?)', (name, region, config_text, now_iso()))
+    add_event('config_added', f'Config {name} saved and activated', '', region)
     return int(cursor.lastrowid)
 
 
@@ -135,20 +159,23 @@ def set_active_server(server_id: int) -> bool:
             return False
         con.execute('UPDATE servers SET is_active = 0')
         con.execute('UPDATE servers SET is_active = 1 WHERE id = ?', (server_id,))
+    add_event('config_activated', f'Config {server_id} activated', '', '')
     return True
 
 
 def delete_server(server_id: int) -> bool:
     with connect() as con:
-        row = con.execute('SELECT id, is_active FROM servers WHERE id = ?', (server_id,)).fetchone()
+        row = con.execute('SELECT id, is_active, name FROM servers WHERE id = ?', (server_id,)).fetchone()
         if not row:
             return False
         was_active = bool(row['is_active'])
+        name = row['name']
         con.execute('DELETE FROM servers WHERE id = ?', (server_id,))
         if was_active:
             replacement = con.execute('SELECT id FROM servers ORDER BY id DESC LIMIT 1').fetchone()
             if replacement:
                 con.execute('UPDATE servers SET is_active = 1 WHERE id = ?', (replacement['id'],))
+    add_event('config_deleted', f'Config {server_id} {name} deleted', '', '')
     return True
 
 
@@ -184,4 +211,5 @@ def validate_activation_code(code: str, device_id: str) -> Dict[str, Any]:
 
         con.execute('UPDATE activation_codes SET device_id = COALESCE(device_id, ?), used_at = COALESCE(used_at, ?) WHERE code = ?', (safe_device_id, current_time, formatted))
 
+    add_event('code_validated', f'Code {formatted} validated: {used_devices}/{max_devices}', formatted, row['plan'])
     return {'ok': True, 'code': formatted, 'usedDevices': used_devices, 'maxDevices': max_devices, 'plan': row['plan']}
