@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -232,21 +231,20 @@ private fun ActivationScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.White)
-            .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
         val compact = maxHeight < 850.dp
-        val pantherHeight = if (compact) maxHeight * 0.54f else maxHeight * 0.58f
-        val pantherTop = if (compact) 42.dp else 74.dp
-        val pantherOffsetX = if (compact) 48.dp else 54.dp
-        val cardHeight = if (compact) 306.dp else 392.dp
+        val pantherHeight = if (compact) maxHeight * 0.59f else maxHeight * 0.62f
+        val pantherTop = if (compact) 66.dp else 88.dp
+        val pantherOffsetX = if (compact) 50.dp else 56.dp
+        val cardHeight = if (compact) 288.dp else 372.dp
 
         Text(
             text = "Skryon",
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 29.dp, top = 0.dp)
-                .offset(y = if (compact) (-10).dp else (-4).dp),
+                .padding(start = 30.dp, top = 0.dp)
+                .offset(y = if (compact) (-2).dp else 2.dp),
             style = TextStyle(
                 fontSize = if (compact) 45.sp else 52.sp,
                 fontWeight = FontWeight.Bold,
@@ -262,7 +260,7 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.18f)
+                .fillMaxWidth(1.24f)
                 .height(pantherHeight),
             contentScale = ContentScale.Fit,
         )
@@ -271,11 +269,11 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(cardHeight + 104.dp)
+                .height(cardHeight + 116.dp)
                 .background(
                     Brush.verticalGradient(
                         0f to Color.White.copy(alpha = 0f),
-                        0.30f to Color.White.copy(alpha = 0.90f),
+                        0.32f to Color.White.copy(alpha = 0.92f),
                         1f to Color.White,
                     ),
                 ),
@@ -287,16 +285,16 @@ private fun ActivationScreen(
                 .fillMaxWidth()
                 .height(cardHeight)
                 .shadow(
-                    elevation = 10.dp,
+                    elevation = 8.dp,
                     shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
-                    spotColor = Color(0x18000000),
+                    spotColor = Color(0x14000000),
                 )
                 .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
                 .background(Color.White)
                 .padding(horizontal = if (compact) 26.dp else 36.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(if (compact) 30.dp else 42.dp))
+            Spacer(Modifier.height(if (compact) 26.dp else 38.dp))
             Text(
                 text = "Активация",
                 style = TextStyle(
@@ -308,7 +306,7 @@ private fun ActivationScreen(
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(9.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = "Введите код для доступа",
                 style = TextStyle(
@@ -319,7 +317,7 @@ private fun ActivationScreen(
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(if (compact) 29.dp else 38.dp))
+            Spacer(Modifier.height(if (compact) 26.dp else 36.dp))
             ActivationCodeInput(
                 code = code,
                 onCodeChange = {
@@ -337,7 +335,7 @@ private fun ActivationScreen(
                 )
                 Spacer(Modifier.height(6.dp))
             } else {
-                Spacer(Modifier.height(if (compact) 18.dp else 26.dp))
+                Spacer(Modifier.height(if (compact) 16.dp else 24.dp))
             }
             Button(
                 onClick = {
