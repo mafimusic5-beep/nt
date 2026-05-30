@@ -237,7 +237,7 @@ private fun ActivationScreen(
         val pantherHeight = if (compact) maxHeight * 0.56f else maxHeight * 0.60f
         val pantherTop = if (compact) 68.dp else 90.dp
         val pantherOffsetX = if (compact) 42.dp else 48.dp
-        val cardHeight = if (compact) 280.dp else 360.dp
+        val cardHeight = if (compact) 272.dp else 352.dp
 
         Text(
             text = "Skryon",
@@ -294,7 +294,7 @@ private fun ActivationScreen(
                 .padding(horizontal = if (compact) 26.dp else 36.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(if (compact) 24.dp else 36.dp))
+            Spacer(Modifier.height(if (compact) 22.dp else 34.dp))
             Text(
                 text = "Активация",
                 style = TextStyle(
@@ -317,7 +317,7 @@ private fun ActivationScreen(
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(if (compact) 26.dp else 36.dp))
+            Spacer(Modifier.height(if (compact) 24.dp else 34.dp))
             ActivationCodeInput(
                 code = code,
                 onCodeChange = {
@@ -335,7 +335,7 @@ private fun ActivationScreen(
                 )
                 Spacer(Modifier.height(6.dp))
             } else {
-                Spacer(Modifier.height(if (compact) 15.dp else 22.dp))
+                Spacer(Modifier.height(if (compact) 13.dp else 20.dp))
             }
             Button(
                 onClick = {
