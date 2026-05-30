@@ -72,6 +72,7 @@ import org.json.JSONObject
 
 private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
 private const val ACTIVATION_CODE_LENGTH = 11
+private const val ACTIVATION_CODE_PLACEHOLDER = "FAFFGT54QTL"
 
 private enum class EmeryRoute { Splash, Activation, Home }
 
@@ -234,11 +235,11 @@ private fun ActivationScreen(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        val compact = maxHeight < 760.dp
-        val pantherHeight = if (compact) maxHeight * 0.48f else maxHeight * 0.56f
-        val pantherTop = if (compact) 96.dp else 112.dp
-        val pantherOffsetX = if (compact) 34.dp else 42.dp
-        val cardHeight = if (compact) 334.dp else 392.dp
+        val compact = maxHeight < 850.dp
+        val pantherHeight = if (compact) maxHeight * 0.46f else maxHeight * 0.55f
+        val pantherTop = if (compact) 82.dp else 106.dp
+        val pantherOffsetX = if (compact) 42.dp else 46.dp
+        val cardHeight = if (compact) 350.dp else 392.dp
 
         Text(
             text = "Skryon",
@@ -246,7 +247,7 @@ private fun ActivationScreen(
                 .align(Alignment.TopStart)
                 .padding(start = 32.dp, top = if (compact) 22.dp else 28.dp),
             style = TextStyle(
-                fontSize = if (compact) 38.sp else 45.sp,
+                fontSize = if (compact) 36.sp else 45.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.sp,
                 color = Color(0xFF07080A),
@@ -260,7 +261,7 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.08f)
+                .fillMaxWidth(1.04f)
                 .height(pantherHeight),
             contentScale = ContentScale.Fit,
         )
@@ -269,11 +270,11 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(cardHeight + 78.dp)
+                .height(cardHeight + 92.dp)
                 .background(
                     Brush.verticalGradient(
                         0f to Color.White.copy(alpha = 0f),
-                        0.20f to Color.White.copy(alpha = 0.92f),
+                        0.27f to Color.White.copy(alpha = 0.88f),
                         1f to Color.White,
                     ),
                 ),
@@ -285,39 +286,39 @@ private fun ActivationScreen(
                 .fillMaxWidth()
                 .height(cardHeight)
                 .shadow(
-                    elevation = 18.dp,
-                    shape = RoundedCornerShape(topStart = 38.dp, topEnd = 38.dp),
-                    spotColor = Color(0x22000000),
+                    elevation = 10.dp,
+                    shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+                    spotColor = Color(0x18000000),
                 )
-                .clip(RoundedCornerShape(topStart = 38.dp, topEnd = 38.dp))
+                .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
                 .background(Color.White)
-                .padding(horizontal = if (compact) 28.dp else 36.dp),
+                .padding(horizontal = if (compact) 26.dp else 36.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(if (compact) 32.dp else 42.dp))
+            Spacer(Modifier.height(if (compact) 30.dp else 42.dp))
             Text(
                 text = "Активация",
                 style = TextStyle(
-                    fontSize = if (compact) 29.sp else 34.sp,
-                    lineHeight = if (compact) 34.sp else 39.sp,
+                    fontSize = if (compact) 28.sp else 34.sp,
+                    lineHeight = if (compact) 33.sp else 39.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF111319),
                     textAlign = TextAlign.Center,
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(9.dp))
             Text(
                 text = "Введите код для доступа",
                 style = TextStyle(
-                    fontSize = if (compact) 18.sp else 20.sp,
-                    lineHeight = if (compact) 24.sp else 26.sp,
+                    fontSize = if (compact) 17.sp else 20.sp,
+                    lineHeight = if (compact) 23.sp else 26.sp,
                     color = Color(0xFF7D828D),
                     textAlign = TextAlign.Center,
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(if (compact) 28.dp else 38.dp))
+            Spacer(Modifier.height(if (compact) 30.dp else 38.dp))
             ActivationCodeInput(
                 code = code,
                 onCodeChange = {
@@ -327,14 +328,15 @@ private fun ActivationScreen(
                 compact = compact,
             )
             if (error.isNotBlank()) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = error,
                     style = TextStyle(fontSize = 14.sp, color = Color(0xFFE54848)),
                     textAlign = TextAlign.Center,
                 )
+                Spacer(Modifier.height(8.dp))
             } else {
-                Spacer(Modifier.height(if (compact) 18.dp else 24.dp))
+                Spacer(Modifier.height(if (compact) 22.dp else 26.dp))
             }
             Button(
                 onClick = {
@@ -388,7 +390,7 @@ private fun ActivationCodeInput(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (compact) 52.dp else 58.dp),
+                    .height(if (compact) 54.dp else 60.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 ActivationCodeSlots(
@@ -414,6 +416,7 @@ private fun ActivationCodeSlots(
 ) {
     val groups = listOf(1, 3, 2, 2, 2, 1)
     var index = 0
+    val hasCode = code.isNotBlank()
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -421,11 +424,15 @@ private fun ActivationCodeSlots(
     ) {
         groups.forEachIndexed { groupIndex, groupSize ->
             repeat(groupSize) {
-                val char = code.getOrNull(index)?.toString().orEmpty()
+                val typedChar = code.getOrNull(index)?.toString().orEmpty()
+                val placeholderChar = ACTIVATION_CODE_PLACEHOLDER.getOrNull(index)?.toString().orEmpty()
+                val char = typedChar.ifBlank { placeholderChar }
+                val isPlaceholder = typedChar.isBlank()
                 index += 1
                 CodeCharacterSlot(
                     char = char,
                     compact = compact,
+                    isPlaceholder = isPlaceholder,
                 )
             }
             if (groupIndex != groups.lastIndex) {
@@ -434,7 +441,7 @@ private fun ActivationCodeSlots(
                     style = TextStyle(
                         fontSize = if (compact) 20.sp else 24.sp,
                         fontWeight = FontWeight.Normal,
-                        color = Color(0xFF111319),
+                        color = if (hasCode) Color(0xFF111319) else Color(0xFF8D949E),
                         textAlign = TextAlign.Center,
                     ),
                     modifier = Modifier.width(if (compact) 10.dp else 13.dp),
@@ -448,6 +455,7 @@ private fun ActivationCodeSlots(
 private fun CodeCharacterSlot(
     char: String,
     compact: Boolean,
+    isPlaceholder: Boolean,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -460,7 +468,7 @@ private fun CodeCharacterSlot(
                 fontSize = if (compact) 20.sp else 24.sp,
                 lineHeight = if (compact) 24.sp else 28.sp,
                 fontWeight = FontWeight.Normal,
-                color = Color(0xFF111319),
+                color = if (isPlaceholder) Color(0xFF8D949E) else Color(0xFF111319),
                 textAlign = TextAlign.Center,
             ),
             modifier = Modifier.height(if (compact) 28.dp else 32.dp),
@@ -470,7 +478,7 @@ private fun CodeCharacterSlot(
             modifier = Modifier
                 .width(if (compact) 19.dp else 23.dp)
                 .height(1.dp)
-                .background(Color(0xFFB7BDC4)),
+                .background(if (isPlaceholder) Color(0xFFD3D8DE) else Color(0xFF9BA2AA)),
         )
     }
 }
