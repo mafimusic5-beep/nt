@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -398,7 +397,7 @@ private fun ActivationCodeInput(
                 )
                 Box(
                     modifier = Modifier
-                        .matchParentSize()
+                        .fillMaxSize()
                         .alpha(0.01f),
                 ) {
                     innerTextField()
