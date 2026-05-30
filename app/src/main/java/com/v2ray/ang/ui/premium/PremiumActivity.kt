@@ -236,18 +236,19 @@ private fun ActivationScreen(
             .navigationBarsPadding(),
     ) {
         val compact = maxHeight < 850.dp
-        val pantherHeight = if (compact) maxHeight * 0.46f else maxHeight * 0.55f
-        val pantherTop = if (compact) 82.dp else 106.dp
-        val pantherOffsetX = if (compact) 42.dp else 46.dp
-        val cardHeight = if (compact) 350.dp else 392.dp
+        val pantherHeight = if (compact) maxHeight * 0.54f else maxHeight * 0.58f
+        val pantherTop = if (compact) 42.dp else 74.dp
+        val pantherOffsetX = if (compact) 48.dp else 54.dp
+        val cardHeight = if (compact) 306.dp else 392.dp
 
         Text(
             text = "Skryon",
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 32.dp, top = if (compact) 22.dp else 28.dp),
+                .padding(start = 29.dp, top = 0.dp)
+                .offset(y = if (compact) (-10).dp else (-4).dp),
             style = TextStyle(
-                fontSize = if (compact) 36.sp else 45.sp,
+                fontSize = if (compact) 45.sp else 52.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.sp,
                 color = Color(0xFF07080A),
@@ -261,7 +262,7 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.04f)
+                .fillMaxWidth(1.18f)
                 .height(pantherHeight),
             contentScale = ContentScale.Fit,
         )
@@ -270,11 +271,11 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(cardHeight + 92.dp)
+                .height(cardHeight + 104.dp)
                 .background(
                     Brush.verticalGradient(
                         0f to Color.White.copy(alpha = 0f),
-                        0.27f to Color.White.copy(alpha = 0.88f),
+                        0.30f to Color.White.copy(alpha = 0.90f),
                         1f to Color.White,
                     ),
                 ),
@@ -299,8 +300,8 @@ private fun ActivationScreen(
             Text(
                 text = "Активация",
                 style = TextStyle(
-                    fontSize = if (compact) 28.sp else 34.sp,
-                    lineHeight = if (compact) 33.sp else 39.sp,
+                    fontSize = if (compact) 29.sp else 34.sp,
+                    lineHeight = if (compact) 34.sp else 39.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF111319),
                     textAlign = TextAlign.Center,
@@ -318,7 +319,7 @@ private fun ActivationScreen(
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(if (compact) 30.dp else 38.dp))
+            Spacer(Modifier.height(if (compact) 29.dp else 38.dp))
             ActivationCodeInput(
                 code = code,
                 onCodeChange = {
@@ -334,9 +335,9 @@ private fun ActivationScreen(
                     style = TextStyle(fontSize = 14.sp, color = Color(0xFFE54848)),
                     textAlign = TextAlign.Center,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
             } else {
-                Spacer(Modifier.height(if (compact) 22.dp else 26.dp))
+                Spacer(Modifier.height(if (compact) 18.dp else 26.dp))
             }
             Button(
                 onClick = {
@@ -416,7 +417,6 @@ private fun ActivationCodeSlots(
 ) {
     val groups = listOf(1, 3, 2, 2, 2, 1)
     var index = 0
-    val hasCode = code.isNotBlank()
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -427,12 +427,10 @@ private fun ActivationCodeSlots(
                 val typedChar = code.getOrNull(index)?.toString().orEmpty()
                 val placeholderChar = ACTIVATION_CODE_PLACEHOLDER.getOrNull(index)?.toString().orEmpty()
                 val char = typedChar.ifBlank { placeholderChar }
-                val isPlaceholder = typedChar.isBlank()
                 index += 1
                 CodeCharacterSlot(
                     char = char,
                     compact = compact,
-                    isPlaceholder = isPlaceholder,
                 )
             }
             if (groupIndex != groups.lastIndex) {
@@ -441,7 +439,7 @@ private fun ActivationCodeSlots(
                     style = TextStyle(
                         fontSize = if (compact) 20.sp else 24.sp,
                         fontWeight = FontWeight.Normal,
-                        color = if (hasCode) Color(0xFF111319) else Color(0xFF8D949E),
+                        color = Color(0xFF111319),
                         textAlign = TextAlign.Center,
                     ),
                     modifier = Modifier.width(if (compact) 10.dp else 13.dp),
@@ -455,7 +453,6 @@ private fun ActivationCodeSlots(
 private fun CodeCharacterSlot(
     char: String,
     compact: Boolean,
-    isPlaceholder: Boolean,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -468,7 +465,7 @@ private fun CodeCharacterSlot(
                 fontSize = if (compact) 20.sp else 24.sp,
                 lineHeight = if (compact) 24.sp else 28.sp,
                 fontWeight = FontWeight.Normal,
-                color = if (isPlaceholder) Color(0xFF8D949E) else Color(0xFF111319),
+                color = Color(0xFF111319),
                 textAlign = TextAlign.Center,
             ),
             modifier = Modifier.height(if (compact) 28.dp else 32.dp),
@@ -477,8 +474,8 @@ private fun CodeCharacterSlot(
         Box(
             modifier = Modifier
                 .width(if (compact) 19.dp else 23.dp)
-                .height(1.dp)
-                .background(if (isPlaceholder) Color(0xFFD3D8DE) else Color(0xFF9BA2AA)),
+                .height(1.35.dp)
+                .background(Color(0xFFC4C9D0)),
         )
     }
 }
