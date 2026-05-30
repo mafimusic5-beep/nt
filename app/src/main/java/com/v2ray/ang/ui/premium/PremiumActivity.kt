@@ -234,17 +234,17 @@ private fun ActivationScreen(
             .navigationBarsPadding(),
     ) {
         val compact = maxHeight < 850.dp
-        val pantherHeight = if (compact) maxHeight * 0.59f else maxHeight * 0.62f
-        val pantherTop = if (compact) 66.dp else 88.dp
-        val pantherOffsetX = if (compact) 50.dp else 56.dp
-        val cardHeight = if (compact) 288.dp else 372.dp
+        val pantherHeight = if (compact) maxHeight * 0.56f else maxHeight * 0.60f
+        val pantherTop = if (compact) 68.dp else 90.dp
+        val pantherOffsetX = if (compact) 42.dp else 48.dp
+        val cardHeight = if (compact) 280.dp else 360.dp
 
         Text(
             text = "Skryon",
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(start = 30.dp, top = 0.dp)
-                .offset(y = if (compact) (-2).dp else 2.dp),
+                .offset(y = if (compact) 4.dp else 6.dp),
             style = TextStyle(
                 fontSize = if (compact) 45.sp else 52.sp,
                 fontWeight = FontWeight.Bold,
@@ -260,7 +260,7 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.24f)
+                .fillMaxWidth(1.17f)
                 .height(pantherHeight),
             contentScale = ContentScale.Fit,
         )
@@ -294,7 +294,7 @@ private fun ActivationScreen(
                 .padding(horizontal = if (compact) 26.dp else 36.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(if (compact) 26.dp else 38.dp))
+            Spacer(Modifier.height(if (compact) 24.dp else 36.dp))
             Text(
                 text = "Активация",
                 style = TextStyle(
@@ -335,7 +335,7 @@ private fun ActivationScreen(
                 )
                 Spacer(Modifier.height(6.dp))
             } else {
-                Spacer(Modifier.height(if (compact) 16.dp else 24.dp))
+                Spacer(Modifier.height(if (compact) 15.dp else 22.dp))
             }
             Button(
                 onClick = {
