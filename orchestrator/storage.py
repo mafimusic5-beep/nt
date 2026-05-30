@@ -1,7 +1,8 @@
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from typing import Any, Dict, Iterator, List, Optional
 
 from config import DATABASE_PATH
 
@@ -29,3 +30,76 @@ def init_storage() -> None:
     with connect() as con:
         con.execute('CREATE TABLE IF NOT EXISTS activation_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT "active", device_id TEXT, note TEXT, created_at TEXT NOT NULL, expires_at TEXT, used_at TEXT)')
         con.execute('CREATE TABLE IF NOT EXISTS servers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, region TEXT NOT NULL, config TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)')
+
+
+def normalize_code(value: str) -> str:
+    return ''.join(ch for ch in value.upper() if ch.isalnum())
+
+
+def format_code(value: str) -> str:
+    groups = [1, 3, 2, 2, 2, 1]
+    normalized = normalize_code(value)
+    parts: List[str] = []
+    index = 0
+    for size in groups:
+        part = normalized[index:index + size]
+        if part:
+            parts.append(part)
+        index += size
+    return '-'.join(parts)
+
+
+def make_code() -> str:
+    alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    raw = ''.join(secrets.choice(alphabet) for _ in range(11))
+    return format_code(raw)
+
+
+def create_activation_code(days: int, note: str = '') -> str:
+    code = make_code()
+    with connect() as con:
+        con.execute('INSERT INTO activation_codes(code, status, note, created_at, expires_at) VALUES (?, ?, ?, ?, ?)', (code, 'active', note, now_iso(), future_iso(days)))
+    return code
+
+
+def get_codes(limit: int = 20) -> List[Dict[str, Any]]:
+    with connect() as con:
+        rows = con.execute('SELECT code, status, device_id, note, created_at, expires_at, used_at FROM activation_codes ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def revoke_activation_code(code: str) -> bool:
+    formatted = format_code(code)
+    with connect() as con:
+        cursor = con.execute('UPDATE activation_codes SET status = ? WHERE code = ?', ('banned', formatted))
+    return cursor.rowcount > 0
+
+
+def save_server(name: str, region: str, config_text: str) -> None:
+    with connect() as con:
+        con.execute('UPDATE servers SET is_active = 0')
+        con.execute('INSERT INTO servers(name, region, config, is_active, created_at) VALUES (?, ?, ?, 1, ?)', (name, region, config_text, now_iso()))
+
+
+def get_active_server() -> Optional[Dict[str, Any]]:
+    with connect() as con:
+        row = con.execute('SELECT name, region, config FROM servers WHERE is_active = 1 ORDER BY id DESC LIMIT 1').fetchone()
+    return dict(row) if row else None
+
+
+def validate_activation_code(code: str, device_id: str) -> Dict[str, Any]:
+    formatted = format_code(code)
+    current_time = now_iso()
+    with connect() as con:
+        row = con.execute('SELECT * FROM activation_codes WHERE code = ?', (formatted,)).fetchone()
+        if not row:
+            return {'ok': False, 'reason': 'not_found'}
+        if row['status'] != 'active':
+            return {'ok': False, 'reason': row['status']}
+        if row['expires_at'] and row['expires_at'] < current_time:
+            con.execute('UPDATE activation_codes SET status = ? WHERE code = ?', ('expired', formatted))
+            return {'ok': False, 'reason': 'expired'}
+        if row['device_id'] and row['device_id'] != device_id:
+            return {'ok': False, 'reason': 'already_bound'}
+        con.execute('UPDATE activation_codes SET device_id = COALESCE(device_id, ?), used_at = COALESCE(used_at, ?) WHERE code = ?', (device_id, current_time, formatted))
+    return {'ok': True, 'code': formatted}
