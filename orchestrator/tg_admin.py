@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import BOT_TOKEN, is_admin
-from storage import create_activation_code, delete_server, get_codes, init_storage, list_servers, revoke_activation_code, save_server, set_active_server
+from storage import create_activation_code, delete_server, get_codes, init_storage, list_events, list_servers, revoke_activation_code, save_server, set_active_server
 
 
 def server_name_from_config(config_text: str) -> str:
@@ -30,10 +30,16 @@ def server_line(row: dict) -> str:
     return marker + ' ' + str(row['id']) + ' | ' + row['name'] + ' | ' + row['region']
 
 
+def event_line(row: dict) -> str:
+    code = row.get('code') or '-'
+    plan = row.get('plan') or '-'
+    return str(row['id']) + ' | ' + row['event_type'] + ' | ' + code + ' | ' + plan + ' | ' + row['created_at']
+
+
 async def start_cmd(message: Message) -> None:
     if not is_admin_message(message):
         return
-    await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID')
+    await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID\n/events')
 
 
 async def newcode_cmd(message: Message) -> None:
@@ -115,6 +121,16 @@ async def delconfig_cmd(message: Message) -> None:
     await message.answer('Конфиг удалён' if ok else 'Конфиг не найден')
 
 
+async def events_cmd(message: Message) -> None:
+    if not is_admin_message(message):
+        return
+    rows = list_events(20)
+    if not rows:
+        await message.answer('Событий пока нет')
+        return
+    await message.answer('\n'.join(event_line(row) for row in rows))
+
+
 async def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError('BOT_TOKEN is empty')
@@ -131,6 +147,7 @@ async def main() -> None:
     dp.message.register(configs_cmd, admin_filter, Command('configs'))
     dp.message.register(useconfig_cmd, admin_filter, Command('useconfig'))
     dp.message.register(delconfig_cmd, admin_filter, Command('delconfig'))
+    dp.message.register(events_cmd, admin_filter, Command('events'))
     dp.message.register(ignore_non_admin)
 
     await dp.start_polling(bot)
