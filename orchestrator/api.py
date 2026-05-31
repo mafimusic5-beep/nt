@@ -6,10 +6,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from checkout_routes import router as checkout_router
 from config import DEFAULT_SERVER_CONFIG, DEFAULT_SERVER_NAME, DEFAULT_SERVER_REGION
 from storage import get_active_server, init_storage, save_server, validate_activation_code
 
 app = FastAPI(title='Skryon Orchestrator API')
+app.include_router(checkout_router)
 
 RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMIT_MAX_ATTEMPTS = 12
@@ -83,4 +85,7 @@ def activate(payload: ActivationRequest, request: Request) -> dict:
         'serverName': server['name'],
         'region': server['region'],
         'config': server['config'],
+        'plan': result.get('plan'),
+        'usedDevices': result.get('usedDevices'),
+        'maxDevices': result.get('maxDevices'),
     }
