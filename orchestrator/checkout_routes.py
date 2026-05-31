@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict
+from typing import Deque, Dict, Optional
 
+from config import CHECKOUT_SECRET
 from storage import create_checkout_code, get_checkout_order
 
 router = APIRouter()
@@ -25,6 +26,13 @@ class CheckoutRequest(BaseModel):
     customer: str = Field(default='', max_length=128)
 
 
+class CheckoutCallbackRequest(BaseModel):
+    externalId: Optional[str] = Field(default=None, max_length=128)
+    plan: str = Field(min_length=1, max_length=32)
+    customer: str = Field(default='', max_length=128)
+    status: str = Field(default='paid', max_length=32)
+
+
 def limited(key: str) -> bool:
     now = time.time()
     bucket = _attempts[key]
@@ -39,6 +47,27 @@ def limited(key: str) -> bool:
 def remote_ip(request: Request) -> str:
     forwarded = request.headers.get('x-forwarded-for', '')
     return forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else 'unknown')
+
+
+def plan_or_error(plan: str):
+    if plan not in PLANS:
+        return None
+    return PLANS[plan]
+
+
+def issue_code(plan: str, customer: str, external_id: Optional[str] = None) -> dict:
+    selected = PLANS[plan]
+    order = create_checkout_code(plan, selected['devices'], selected['days'], customer.strip(), external_id)
+    return {
+        'ok': True,
+        'orderId': order['external_id'],
+        'code': order['code'],
+        'plan': plan,
+        'planTitle': selected['title'],
+        'maxDevices': order['max_devices'],
+        'expiresAt': order['expires_at'],
+        'redirectUrl': '/checkout/code?order=' + order['external_id'],
+    }
 
 
 @router.get('/checkout')
@@ -60,20 +89,20 @@ def plans():
 def get_code(payload: CheckoutRequest, request: Request):
     if limited('checkout:' + remote_ip(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
-    if payload.plan not in PLANS:
+    if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    selected = PLANS[payload.plan]
-    order = create_checkout_code(payload.plan, selected['devices'], selected['days'], payload.customer.strip())
-    return {
-        'ok': True,
-        'orderId': order['external_id'],
-        'code': order['code'],
-        'plan': payload.plan,
-        'planTitle': selected['title'],
-        'maxDevices': order['max_devices'],
-        'expiresAt': order['expires_at'],
-        'redirectUrl': '/checkout/code?order=' + order['external_id'],
-    }
+    return issue_code(payload.plan, payload.customer)
+
+
+@router.post('/api/checkout/callback')
+def callback(payload: CheckoutCallbackRequest, x_checkout_secret: str = Header(default='')):
+    if not CHECKOUT_SECRET or x_checkout_secret != CHECKOUT_SECRET:
+        return JSONResponse(status_code=401, content={'ok': False, 'reason': 'bad_secret'})
+    if payload.status != 'paid':
+        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'not_paid'})
+    if not plan_or_error(payload.plan):
+        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
+    return issue_code(payload.plan, payload.customer, payload.externalId)
 
 
 @router.get('/api/checkout/order/{order_id}')
