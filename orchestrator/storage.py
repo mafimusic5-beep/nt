@@ -96,13 +96,15 @@ def create_activation_code(days: int = 30, note: str = '', max_devices: int = 1,
 
 
 def create_checkout_code(plan: str, max_devices: int, days: int = 30, customer: str = '', external_id: Optional[str] = None) -> Dict[str, Any]:
+    external_id = external_id or secrets.token_urlsafe(18)
     with connect() as con:
-        if external_id:
-            existing = con.execute('SELECT code FROM checkout_orders WHERE external_id = ?', (external_id,)).fetchone()
-            if existing:
-                code = existing['code']
-                row = con.execute('SELECT code, plan, max_devices, expires_at FROM activation_codes WHERE code = ?', (code,)).fetchone()
-                return dict(row) if row else {'code': code, 'plan': plan, 'max_devices': max_devices}
+        existing = con.execute('SELECT code FROM checkout_orders WHERE external_id = ?', (external_id,)).fetchone()
+        if existing:
+            code = existing['code']
+            row = con.execute('SELECT code, plan, max_devices, expires_at FROM activation_codes WHERE code = ?', (code,)).fetchone()
+            result = dict(row) if row else {'code': code, 'plan': plan, 'max_devices': max_devices}
+            result['external_id'] = external_id
+            return result
         code = make_code()
         note = customer or plan
         safe_max_devices = max(1, min(int(max_devices), 20))
@@ -116,7 +118,18 @@ def create_checkout_code(plan: str, max_devices: int, days: int = 30, customer: 
         )
         row = con.execute('SELECT code, plan, max_devices, expires_at FROM activation_codes WHERE code = ?', (code,)).fetchone()
     add_event('checkout_code_created', f'Checkout issued {code}: {plan}, devices {safe_max_devices}', code, plan)
-    return dict(row)
+    result = dict(row)
+    result['external_id'] = external_id
+    return result
+
+
+def get_checkout_order(external_id: str) -> Optional[Dict[str, Any]]:
+    with connect() as con:
+        row = con.execute(
+            'SELECT checkout_orders.external_id, checkout_orders.plan, checkout_orders.customer, checkout_orders.code, checkout_orders.status, checkout_orders.created_at, activation_codes.max_devices, activation_codes.expires_at FROM checkout_orders JOIN activation_codes ON activation_codes.code = checkout_orders.code WHERE checkout_orders.external_id = ?',
+            (external_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def get_codes(limit: int = 20) -> List[Dict[str, Any]]:
