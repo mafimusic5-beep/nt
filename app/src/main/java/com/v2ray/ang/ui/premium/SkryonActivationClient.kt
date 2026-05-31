@@ -61,7 +61,7 @@ internal suspend fun activateSkryonCode(
                 return@withContext SkryonActivationResult(ok = false, error = activationReasonText(json.optString("reason")))
             }
             val config = json.optString("config").trim()
-            if (!config.startsWith("vless://") || VlessFmt.parse(config) == null) {
+            if (!config.startsWith("vless://")) {
                 return@withContext SkryonActivationResult(ok = false, error = "Конфиг сервера повреждён")
             }
             SkryonActivationResult(
