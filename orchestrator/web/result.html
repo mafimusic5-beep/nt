@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skryon result</title>
+</head>
+<body>
+  <h1>Доступ готов</h1>
+  <p>Скопируйте строку ниже и вставьте её в приложении.</p>
+  <pre id="value">Загрузка...</pre>
+  <p id="details"></p>
+  <a href="/checkout">Назад</a>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const order = params.get('order');
+    const value = document.getElementById('value');
+    const details = document.getElementById('details');
+
+    async function loadOrder() {
+      if (!order) {
+        value.textContent = 'Заказ не найден';
+        return;
+      }
+      try {
+        const response = await fetch('/api/checkout/order/' + encodeURIComponent(order));
+        const data = await response.json();
+        if (!data.ok) {
+          value.textContent = 'Данные не найдены';
+          return;
+        }
+        value.textContent = data.code;
+        details.textContent = 'План: ' + data.plan + ', устройств: ' + data.maxDevices + ', действует до: ' + data.expiresAt;
+      } catch (error) {
+        value.textContent = 'Ошибка соединения';
+      }
+    }
+    loadOrder();
+  </script>
+</body>
+</html>
