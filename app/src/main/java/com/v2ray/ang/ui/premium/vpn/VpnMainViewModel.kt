@@ -24,6 +24,9 @@ import org.json.JSONObject
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
+private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
+private const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
+
 class VpnMainViewModel : ViewModel() {
 
     private companion object {
@@ -32,7 +35,7 @@ class VpnMainViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(
         VpnMainUiState(
-            activationKey = DEFAULT_ACCESS_KEY,
+            activationKey = savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY },
         )
     )
     val uiState: StateFlow<VpnMainUiState> = _uiState.asStateFlow()
@@ -50,10 +53,22 @@ class VpnMainViewModel : ViewModel() {
         serversJob = viewModelScope.launch {
             _uiState.update { state ->
                 state.copy(
-                    activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
+                    activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
                     locationsLoading = true,
                     locationsError = "",
                 )
+            }
+
+            val activatedLocation = savedSkryonConfigLocation()
+            if (activatedLocation != null) {
+                applyLocations(listOf(activatedLocation), "")
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H9",
+                    location = "VpnMainViewModel.kt:refreshLocations",
+                    message = "using saved activated skryon config",
+                    data = JSONObject().put("title", activatedLocation.title),
+                )
+                return@launch
             }
 
             val result = withTimeoutOrNull(4_000L) {
@@ -91,6 +106,12 @@ class VpnMainViewModel : ViewModel() {
     }
 
     private suspend fun refreshPoolLocationsFallback(fallbackError: String) {
+        val activatedLocation = savedSkryonConfigLocation()
+        if (activatedLocation != null) {
+            applyLocations(listOf(activatedLocation), "")
+            return
+        }
+
         val key = _uiState.value.activationKey.ifBlank { DEFAULT_ACCESS_KEY }
         val poolResult = withTimeoutOrNull(8_000L) {
             EmeryPoolClient.fetchPoolImportText(key)
@@ -133,13 +154,33 @@ class VpnMainViewModel : ViewModel() {
             val selected = locations.firstOrNull { it.id == state.selectedLocation.id }
                 ?: locations.first()
             state.copy(
-                activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
+                activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
                 locations = locations,
                 selectedLocation = selected,
                 locationsLoading = false,
                 locationsError = error,
             )
         }
+    }
+
+    private fun savedSkryonConfigLocation(): VpnLocationOption? {
+        val config = MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CONFIG_PREF, "")
+            ?.trim()
+            .orEmpty()
+        if (!isImportProfileLink(config)) {
+            return null
+        }
+        return VpnLocationOption(
+            id = "skryon-activated",
+            title = titleFromConfigLink(config, 1),
+            importText = config,
+        )
+    }
+
+    private fun savedActivationCode(): String {
+        return MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CODE_PREF, "")
+            ?.trim()
+            .orEmpty()
     }
 
     private fun isImportProfileLink(link: String): Boolean {
@@ -186,7 +227,7 @@ class VpnMainViewModel : ViewModel() {
 
     fun onConnectClick(startVpnService: (String) -> Boolean = { true }) {
         val currentState = _uiState.value.let { state ->
-            state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
+            state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
         }
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H1",
@@ -214,7 +255,7 @@ class VpnMainViewModel : ViewModel() {
 
         _uiState.update { state ->
             state.copy(
-                activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
+                activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
                 connectionState = VpnConnectionState.Connecting,
                 elapsedSeconds = 0L,
                 locationsError = "",
@@ -305,7 +346,7 @@ class VpnMainViewModel : ViewModel() {
     }
 
     private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
-        val normalizedState = state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
+        val normalizedState = state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
         val serverId = normalizedState.selectedLocation.id.toLongOrNull()
         if (serverId != null) {
             return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
@@ -355,7 +396,7 @@ class VpnMainViewModel : ViewModel() {
         )
         _uiState.update { state ->
             state.copy(
-                activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY },
+                activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
             )
@@ -377,7 +418,7 @@ class VpnMainViewModel : ViewModel() {
                     if (state.connectionState == VpnConnectionState.Connected) {
                         state.copy(elapsedSeconds = state.elapsedSeconds + 1L)
                     } else {
-                        state.copy(activationKey = state.activationKey.ifBlank { DEFAULT_ACCESS_KEY })
+                        state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
                     }
                 }
             }
