@@ -77,7 +77,7 @@ def page_checkout():
 
 @router.get('/checkout/code')
 def page_code():
-    return FileResponse(WEB_DIR / 'code.html')
+    return FileResponse(WEB_DIR / 'result.html')
 
 
 @router.get('/api/checkout/plans')
