@@ -1,11 +1,9 @@
 package com.v2ray.ang.ui.premium
 
 import android.content.Context
-import android.net.Uri
 import android.provider.Settings
 import com.v2ray.ang.BuildConfig
-import com.v2ray.ang.dto.ProfileItem
-import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.fmt.VlessFmt
 import com.v2ray.ang.handler.MmkvManager
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -63,7 +61,7 @@ internal suspend fun activateSkryonCode(
                 return@withContext SkryonActivationResult(ok = false, error = activationReasonText(json.optString("reason")))
             }
             val config = json.optString("config").trim()
-            if (!config.startsWith("vless://")) {
+            if (!config.startsWith("vless://") || VlessFmt.parse(config) == null) {
                 return@withContext SkryonActivationResult(ok = false, error = "Конфиг сервера повреждён")
             }
             SkryonActivationResult(
@@ -82,7 +80,9 @@ internal fun saveActivatedSkryonConfig(config: String): String {
     if (oldGuid.isNotBlank()) {
         MmkvManager.removeServer(oldGuid)
     }
-    val guid = MmkvManager.encodeServerConfig("", parseVlessProfile(config))
+    val profile = requireNotNull(VlessFmt.parse(config)) { "Invalid VLESS config" }
+    val guid = MmkvManager.encodeServerConfig("", profile)
+    MmkvManager.encodeServerRaw(guid, config)
     MmkvManager.setSelectServer(guid)
     return guid
 }
@@ -98,33 +98,9 @@ private fun activationReasonText(reason: String): String {
         "expired" -> "Срок кода истёк"
         "banned" -> "Код отключён"
         "already_bound" -> "Код уже активирован на другом устройстве"
+        "device_limit" -> "Лимит устройств для этого кода исчерпан"
         "no_server" -> "Сервер ещё не добавлен"
         "too_many_attempts" -> "Слишком много попыток. Попробуйте позже"
         else -> "Ошибка активации"
-    }
-}
-
-private fun parseVlessProfile(config: String): ProfileItem {
-    val uri = Uri.parse(config.trim())
-    require(uri.scheme == "vless")
-    val encodedAuthority = uri.encodedAuthority.orEmpty()
-    val uuid = Uri.decode(encodedAuthority.substringBefore('@', "")).trim()
-    val host = uri.host.orEmpty()
-    val port = uri.port.takeIf { it > 0 }?.toString().orEmpty()
-    require(uuid.isNotBlank() && host.isNotBlank() && port.isNotBlank())
-
-    return ProfileItem.create(EConfigType.VLESS).apply {
-        remarks = uri.fragment?.let { Uri.decode(it) }?.takeIf { it.isNotBlank() } ?: "Skryon"
-        server = host
-        serverPort = port
-        password = uuid
-        security = uri.getQueryParameter("security") ?: "reality"
-        sni = uri.getQueryParameter("sni")
-        fingerPrint = uri.getQueryParameter("fp")
-        publicKey = uri.getQueryParameter("pbk")
-        shortId = uri.getQueryParameter("sid")
-        flow = uri.getQueryParameter("flow")
-        network = uri.getQueryParameter("type") ?: "tcp"
-        headerType = "none"
     }
 }
