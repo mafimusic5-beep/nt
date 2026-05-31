@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skryon checkout</title>
+</head>
+<body>
+  <h1>Checkout</h1>
+  <p>Выберите услугу. Пока оплата не подключена, кнопка только вызывает тестовый endpoint и выдаёт код.</p>
+
+  <label>
+    <input type="radio" name="plan" value="personal" checked>
+    Личный — 1 устройство
+  </label>
+  <br>
+  <label>
+    <input type="radio" name="plan" value="personal_plus">
+    Личный+ — 2 устройства
+  </label>
+  <br>
+  <label>
+    <input type="radio" name="plan" value="family">
+    Семейный — 5 устройств
+  </label>
+  <br><br>
+
+  <input id="customer" placeholder="Контакт или заметка" autocomplete="off">
+  <br><br>
+  <button id="getCode">Получить код</button>
+  <pre id="result"></pre>
+
+  <script>
+    const result = document.getElementById('result');
+    document.getElementById('getCode').addEventListener('click', async () => {
+      result.textContent = 'Запрос...';
+      const plan = document.querySelector('input[name="plan"]:checked').value;
+      const customer = document.getElementById('customer').value || '';
+      try {
+        const response = await fetch('/api/checkout/get-code', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({plan, customer})
+        });
+        const data = await response.json();
+        if (!data.ok) {
+          result.textContent = 'Ошибка: ' + (data.reason || 'unknown');
+          return;
+        }
+        location.href = data.redirectUrl;
+      } catch (error) {
+        result.textContent = 'Ошибка соединения';
+      }
+    });
+  </script>
+</body>
+</html>
