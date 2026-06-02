@@ -247,9 +247,14 @@ tasks.named("preBuild").configure {
 }
 
 val hevLibFileName = "libhev-socks5-tunnel.so"
-val hevRequiredAbi = "arm64-v8a"
-val hevOptionalAbi = "armeabi-v7a"
 val hevGeneratedDir = file("$buildDir/generated/hev-jniLibs")
+val hevRequiredAbi = "arm64-v8a"
+val hevAbiDownloadUrls = mapOf(
+    "arm64-v8a" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_arm64-v8a.apk",
+    "armeabi-v7a" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_armeabi-v7a.apk",
+    "x86_64" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_x86_64.apk",
+    "x86" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_x86.apk",
+)
 
 fun existingHevLibCandidates(abi: String): List<java.io.File> {
     val localJni = layout.projectDirectory.file("src/main/jniLibs/$abi/$hevLibFileName").asFile
@@ -289,35 +294,32 @@ fun downloadAndExtractHevLib(url: String, abi: String, targetFile: java.io.File)
 
 val syncHevNativeLibs = tasks.register("syncHevNativeLibs") {
     group = "setup"
-    description = "Ensures hev native libs exist for arm64-v8a (and optional armeabi-v7a)."
+    description = "Ensures hev native libs exist for phone and emulator ABIs."
     doLast {
         val outDir = hevGeneratedDir
-        val requiredTarget = outDir.resolve("$hevRequiredAbi/$hevLibFileName")
-        val optionalTarget = outDir.resolve("$hevOptionalAbi/$hevLibFileName")
-
-        if (!hasHevLib(hevRequiredAbi)) {
-            logger.lifecycle("HEV native lib for $hevRequiredAbi not found locally. Downloading from upstream APK...")
-            downloadAndExtractHevLib(
-                "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_arm64-v8a.apk",
-                hevRequiredAbi,
-                requiredTarget,
-            )
+        hevAbiDownloadUrls.forEach { (abi, url) ->
+            if (!hasHevLib(abi)) {
+                try {
+                    logger.lifecycle("HEV native lib for $abi not found locally. Downloading from upstream APK...")
+                    downloadAndExtractHevLib(
+                        url,
+                        abi,
+                        outDir.resolve("$abi/$hevLibFileName"),
+                    )
+                } catch (e: Exception) {
+                    val message = "HEV native lib download failed for $abi: ${e.message}"
+                    if (abi == hevRequiredAbi || abi == "x86_64") {
+                        throw GradleException(message, e)
+                    }
+                    logger.warn(message)
+                }
+            }
         }
         if (!hasHevLib(hevRequiredAbi)) {
             throw GradleException("Missing required $hevLibFileName for ABI $hevRequiredAbi")
         }
-
-        if (!hasHevLib(hevOptionalAbi)) {
-            try {
-                logger.lifecycle("HEV native lib for $hevOptionalAbi not found locally. Downloading optional ABI...")
-                downloadAndExtractHevLib(
-                    "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_armeabi-v7a.apk",
-                    hevOptionalAbi,
-                    optionalTarget,
-                )
-            } catch (e: Exception) {
-                logger.warn("Optional ABI $hevOptionalAbi HEV lib download failed: ${e.message}")
-            }
+        if (!hasHevLib("x86_64")) {
+            throw GradleException("Missing required $hevLibFileName for emulator ABI x86_64")
         }
     }
 }
@@ -331,6 +333,3 @@ tasks.withType<KotlinCompile>().configureEach {
         jvmTarget.set(JvmTarget.JVM_17)
     }
 }
-
-
-
