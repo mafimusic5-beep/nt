@@ -2,7 +2,6 @@ package com.v2ray.ang.ui.premium
 
 import android.content.Context
 import android.provider.Settings
-import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.fmt.VlessFmt
 import com.v2ray.ang.handler.MmkvManager
 import java.util.concurrent.TimeUnit
@@ -16,6 +15,8 @@ import org.json.JSONObject
 
 internal const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
 internal const val SKRYON_SERVER_GUID_PREF = "SKRYON_SERVER_GUID"
+
+private const val SKRYON_WEBSITE_API_BASE_URL = "https://skryon.ru"
 
 internal data class SkryonActivationResult(
     val ok: Boolean,
@@ -43,7 +44,7 @@ internal suspend fun activateSkryonCode(
             .put("deviceId", stableDeviceId(context))
             .toString()
         val request = Request.Builder()
-            .url(BuildConfig.EMERY_API_BASE_URL.trimEnd('/') + "/api/activate")
+            .url(SKRYON_WEBSITE_API_BASE_URL + "/api/activate")
             .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .header("Accept", "application/json")
             .build()
