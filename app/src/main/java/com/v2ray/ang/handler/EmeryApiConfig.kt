@@ -5,9 +5,18 @@ import com.v2ray.ang.BuildConfig
 
 object EmeryApiConfig {
 
+    private const val DEFAULT_BASE_URL = "http://skryon.ru:9330"
+    private const val LEGACY_BASE_URL = "http://80.71.159.221:9330"
+
     fun baseUrl(): String {
         val saved = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_API_BASE_URL)
-        return if (!saved.isNullOrBlank()) normalize(saved) else normalize(BuildConfig.EMERY_API_BASE_URL)
+        val raw = when {
+            saved.isNullOrBlank() -> BuildConfig.EMERY_API_BASE_URL
+            normalize(saved) == LEGACY_BASE_URL -> DEFAULT_BASE_URL
+            else -> saved
+        }
+        val normalized = normalize(raw)
+        return if (normalized == LEGACY_BASE_URL) DEFAULT_BASE_URL else normalized
     }
 
     fun saveBaseUrl(raw: String) {
