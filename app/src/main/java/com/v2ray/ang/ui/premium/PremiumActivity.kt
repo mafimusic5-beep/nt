@@ -247,10 +247,10 @@ private fun ActivationScreen(
             .navigationBarsPadding(),
     ) {
         val compact = maxHeight < 850.dp
-        val pantherHeight = if (compact) maxHeight * 0.56f else maxHeight * 0.60f
-        val pantherTop = if (compact) 68.dp else 90.dp
-        val pantherOffsetX = if (compact) 42.dp else 48.dp
-        val cardHeight = if (compact) 272.dp else 352.dp
+        val pantherHeight = if (compact) maxHeight * 0.68f else maxHeight * 0.72f
+        val pantherTop = if (compact) 92.dp else 112.dp
+        val pantherOffsetX = if (compact) 64.dp else 86.dp
+        val cardHeight = if (compact) 306.dp else 368.dp
 
         Text(
             text = "Skryon",
@@ -273,7 +273,7 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.17f)
+                .fillMaxWidth(1.62f)
                 .height(pantherHeight),
             contentScale = ContentScale.Fit,
         )
@@ -282,11 +282,11 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(cardHeight + 116.dp)
+                .height(cardHeight + 118.dp)
                 .background(
                     Brush.verticalGradient(
                         0f to Color.White.copy(alpha = 0f),
-                        0.32f to Color.White.copy(alpha = 0.92f),
+                        0.26f to Color.White.copy(alpha = 0.92f),
                         1f to Color.White,
                     ),
                 ),
