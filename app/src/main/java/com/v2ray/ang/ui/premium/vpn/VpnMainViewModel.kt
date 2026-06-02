@@ -31,6 +31,7 @@ class VpnMainViewModel : ViewModel() {
 
     private companion object {
         const val DEFAULT_ACCESS_KEY = "DEV"
+        const val DEFAULT_REGION_TITLE = "Регион"
     }
 
     private val _uiState = MutableStateFlow(
@@ -81,7 +82,7 @@ class VpnMainViewModel : ViewModel() {
                         .map { server ->
                             VpnLocationOption(
                                 id = server.id.toString(),
-                                title = server.city.ifBlank { "Server #${server.id}" },
+                                title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
                             )
                         }
                         .distinctBy { it.id }
@@ -190,12 +191,64 @@ class VpnMainViewModel : ViewModel() {
 
     private fun titleFromConfigLink(link: String, index: Int): String {
         val rawTitle = link.substringAfter('#', "").trim()
-        if (rawTitle.isBlank()) return "Server #$index"
-        return try {
-            URLDecoder.decode(rawTitle, StandardCharsets.UTF_8.name()).ifBlank { "Server #$index" }
+        val decodedTitle = try {
+            URLDecoder.decode(rawTitle, StandardCharsets.UTF_8.name()).trim()
         } catch (_: Exception) {
             rawTitle
         }
+
+        val fromRemark = serverRegionTitleOrBlank(decodedTitle)
+        if (fromRemark.isNotBlank()) return fromRemark
+
+        val host = link.substringAfter('@', "")
+            .substringBefore('?')
+            .substringBefore('#')
+            .substringBefore(':')
+            .trim()
+        val fromHost = serverRegionTitleOrBlank(host)
+        if (fromHost.isNotBlank()) return fromHost
+
+        return decodedTitle.ifBlank { "$DEFAULT_REGION_TITLE #$index" }
+    }
+
+    private fun serverRegionTitle(raw: String, index: Int): String {
+        return serverRegionTitleOrBlank(raw).ifBlank {
+            raw.trim().takeIf { it.isNotBlank() } ?: "$DEFAULT_REGION_TITLE #$index"
+        }
+    }
+
+    private fun serverRegionTitleOrBlank(raw: String): String {
+        val value = raw.trim()
+        if (value.isBlank()) return ""
+
+        val lower = value.lowercase()
+            .replace('_', '-')
+            .replace('.', '-')
+            .replace(' ', '-')
+
+        val code = when {
+            hasRegionToken(lower, "de") || lower.contains("germany") || lower.contains("deutschland") || lower.contains("герман") || lower.contains("frankfurt") || lower.contains("франкфурт") -> "DE"
+            hasRegionToken(lower, "nl") || lower.contains("netherlands") || lower.contains("nederland") || lower.contains("нидер") || lower.contains("amsterdam") || lower.contains("амстердам") -> "NL"
+            hasRegionToken(lower, "fr") || lower.contains("france") || lower.contains("франц") || lower.contains("paris") || lower.contains("париж") -> "FR"
+            hasRegionToken(lower, "ru") || lower.contains("russia") || lower.contains("росси") || lower.contains("moscow") || lower.contains("москва") -> "RU"
+            hasRegionToken(lower, "eu") || lower.contains("europe") || lower.contains("европ") -> "EU"
+            hasRegionToken(lower, "pl") || lower.contains("poland") || lower.contains("польш") || lower.contains("warsaw") || lower.contains("варшав") -> "PL"
+            hasRegionToken(lower, "uk") || hasRegionToken(lower, "gb") || lower.contains("united-kingdom") || lower.contains("london") || lower.contains("лондон") -> "UK"
+            hasRegionToken(lower, "us") || hasRegionToken(lower, "usa") || lower.contains("united-states") || lower.contains("america") || lower.contains("new-york") -> "US"
+            hasRegionToken(lower, "se") || lower.contains("sweden") || lower.contains("stockholm") -> "SE"
+            hasRegionToken(lower, "fi") || lower.contains("finland") || lower.contains("helsinki") -> "FI"
+            hasRegionToken(lower, "es") || lower.contains("spain") || lower.contains("madrid") -> "ES"
+            hasRegionToken(lower, "it") || lower.contains("italy") || lower.contains("milan") || lower.contains("rome") -> "IT"
+            hasRegionToken(lower, "tr") || lower.contains("turkey") || lower.contains("istanbul") -> "TR"
+            hasRegionToken(lower, "sg") || lower.contains("singapore") -> "SG"
+            else -> ""
+        }
+
+        return if (code.isBlank()) "" else "$DEFAULT_REGION_TITLE $code"
+    }
+
+    private fun hasRegionToken(value: String, token: String): Boolean {
+        return Regex("(^|[^a-z0-9])${Regex.escape(token.lowercase())}([^a-z0-9]|$)").containsMatchIn(value)
     }
 
     fun onActivationKeyChanged(value: String) {
@@ -416,7 +469,7 @@ class VpnMainViewModel : ViewModel() {
                 delay(1000L)
                 _uiState.update { state ->
                     if (state.connectionState == VpnConnectionState.Connected) {
-                        state.copy(elapsedSeconds = state.elapsedSeconds + 1L)
+                        state.copy(elapsedSeconds = state.elapsedSeconds + 1)
                     } else {
                         state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
                     }
