@@ -74,7 +74,6 @@ import org.json.JSONObject
 
 private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
 private const val ACTIVATION_CODE_LENGTH = 11
-private const val ACTIVATION_CODE_PLACEHOLDER = "FAFFGT54QTL"
 
 private enum class EmeryRoute { Splash, Activation, Home }
 
@@ -450,9 +449,7 @@ private fun ActivationCodeSlots(
     ) {
         groups.forEachIndexed { groupIndex, groupSize ->
             repeat(groupSize) {
-                val typedChar = code.getOrNull(index)?.toString().orEmpty()
-                val placeholderChar = ACTIVATION_CODE_PLACEHOLDER.getOrNull(index)?.toString().orEmpty()
-                val char = typedChar.ifBlank { placeholderChar }
+                val char = code.getOrNull(index)?.toString().orEmpty()
                 index += 1
                 CodeCharacterSlot(
                     char = char,
