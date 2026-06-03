@@ -90,7 +90,7 @@ fun VpnMainScreen(
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
         val selectedCity = uiState.selectedLocation.cityLabel()
-        val showParisBackground = uiState.connectionState == VpnConnectionState.Connected && selectedCity == "Париж"
+        val showParisBackground = selectedCity == "Париж"
 
         if (showParisBackground) {
             Image(
