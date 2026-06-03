@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -80,7 +79,6 @@ fun VpnMainScreen(
         modifier = modifier
             .fillMaxSize()
             .background(AppUiColors.Background)
-            .statusBarsPadding()
             .navigationBarsPadding()
             .imePadding(),
     ) {
@@ -91,7 +89,7 @@ fun VpnMainScreen(
         BackgroundShape(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = if (tight) 210.dp else 250.dp)
+                .padding(top = if (tight) 170.dp else 205.dp)
                 .fillMaxWidth()
                 .height(if (tight) 360.dp else 430.dp),
         )
@@ -101,7 +99,7 @@ fun VpnMainScreen(
                 .fillMaxSize()
                 .padding(
                     start = horizontalPadding,
-                    top = if (tight) 8.dp else 14.dp,
+                    top = 0.dp,
                     end = horizontalPadding,
                     bottom = if (tight) 8.dp else 12.dp,
                 ),
@@ -112,7 +110,7 @@ fun VpnMainScreen(
                 compact = compact,
             )
 
-            Spacer(Modifier.height(if (tight) 32.dp else if (compact) 48.dp else 64.dp))
+            Spacer(Modifier.height(if (tight) 22.dp else if (compact) 36.dp else 48.dp))
 
             StatusBeacon(
                 connectionState = uiState.connectionState,
