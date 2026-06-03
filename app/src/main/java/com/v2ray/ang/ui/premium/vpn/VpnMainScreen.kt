@@ -87,7 +87,6 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
-        val regionText = uiState.selectedLocation.regionLabel()
 
         BackgroundShape(
             modifier = Modifier
@@ -142,12 +141,8 @@ fun VpnMainScreen(
                 maxLines = 1,
             )
 
-            Spacer(Modifier.height(if (tight) 16.dp else 22.dp))
-
-            ProtectionPill(uiState.connectionState, compact = compact)
-
             if (uiState.locationsError.isNotBlank()) {
-                Spacer(Modifier.height(if (tight) 6.dp else 8.dp))
+                Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
                 Text(
                     text = uiState.locationsError,
                     style = MaterialTheme.typography.bodySmall,
@@ -159,15 +154,6 @@ fun VpnMainScreen(
             }
 
             Spacer(Modifier.weight(1f))
-
-            RegionStatusSection(
-                regionText = regionText,
-                state = uiState.connectionState,
-                compact = compact,
-                tight = tight,
-            )
-
-            Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
             PrimaryConnectButton(
                 state = uiState.connectionState,
@@ -294,112 +280,6 @@ private fun StatusBeacon(
         Box(Modifier.size(beaconSize).clip(CircleShape).background(coreColor.copy(alpha = 0.05f)))
         Box(Modifier.size(midSize).clip(CircleShape).background(coreColor.copy(alpha = 0.11f)))
         Box(Modifier.size(coreSize).clip(CircleShape).background(coreColor))
-    }
-}
-
-@Composable
-private fun ProtectionPill(state: VpnConnectionState, compact: Boolean) {
-    val text = when (state) {
-        VpnConnectionState.Disconnected -> "VPN выключен"
-        VpnConnectionState.Connecting -> "VPN включается"
-        VpnConnectionState.Connected -> "VPN активен"
-    }
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, AppUiColors.Border, RoundedCornerShape(999.dp))
-            .padding(horizontal = if (compact) 18.dp else 22.dp, vertical = if (compact) 9.dp else 11.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MiniIcon(type = MiniIconType.Lock, tint = AppUiColors.PositiveStrong, size = 19.dp)
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = text,
-                style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
-                color = AppUiColors.PositiveStrong,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
-@Composable
-private fun RegionStatusSection(
-    regionText: String,
-    state: VpnConnectionState,
-    compact: Boolean,
-    tight: Boolean,
-) {
-    val statusText = when (state) {
-        VpnConnectionState.Disconnected -> "Ожидает подключения"
-        VpnConnectionState.Connecting -> "Подключение..."
-        VpnConnectionState.Connected -> "Подключено"
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(if (compact) 22.dp else 28.dp))
-            .background(Color.White.copy(alpha = 0.86f))
-            .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 22.dp else 28.dp))
-            .padding(
-                horizontal = if (tight) 18.dp else 22.dp,
-                vertical = if (tight) 14.dp else 18.dp,
-            ),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "ТЕКУЩИЙ РЕГИОН",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AppUiColors.TextSecondary,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    text = regionText,
-                    style = if (tight) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-                    color = AppUiColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            StatusBadge(text = statusText, state = state, compact = compact)
-        }
-    }
-}
-
-@Composable
-private fun StatusBadge(text: String, state: VpnConnectionState, compact: Boolean) {
-    val color = when (state) {
-        VpnConnectionState.Disconnected -> AppUiColors.TextSecondary
-        VpnConnectionState.Connecting -> AppUiColors.Warning
-        VpnConnectionState.Connected -> AppUiColors.PositiveStrong
-    }
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(color.copy(alpha = 0.10f))
-            .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 7.dp else 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(7.dp).clip(CircleShape).background(color))
-        Spacer(Modifier.width(7.dp))
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodySmall,
-            color = color,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-        )
     }
 }
 
@@ -584,7 +464,7 @@ private fun PauseGlyph(tint: Color, compact: Boolean) {
     }
 }
 
-private enum class MiniIconType { Lock, Shield, Globe, Clock, Home, Settings }
+private enum class MiniIconType { Home, Settings }
 
 @Composable
 private fun MiniIcon(type: MiniIconType, tint: Color, size: Dp) {
@@ -594,48 +474,6 @@ private fun MiniIcon(type: MiniIconType, tint: Color, size: Dp) {
         val minSide = this.size.minDimension
         val stroke = (minSide * 0.08f).coerceAtLeast(1.5f)
         when (type) {
-            MiniIconType.Lock -> {
-                drawRoundRect(
-                    color = tint,
-                    topLeft = Offset(sw * 0.24f, sh * 0.44f),
-                    size = androidx.compose.ui.geometry.Size(sw * 0.52f, sh * 0.40f),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw * 0.06f),
-                    style = Stroke(width = stroke),
-                )
-                drawArc(
-                    color = tint,
-                    startAngle = 200f,
-                    sweepAngle = 140f,
-                    useCenter = false,
-                    topLeft = Offset(sw * 0.32f, sh * 0.16f),
-                    size = androidx.compose.ui.geometry.Size(sw * 0.36f, sh * 0.45f),
-                    style = Stroke(width = stroke, cap = StrokeCap.Round),
-                )
-                drawCircle(tint, radius = stroke * 0.65f, center = Offset(sw * 0.50f, sh * 0.62f))
-            }
-            MiniIconType.Shield -> {
-                val p = Path().apply {
-                    moveTo(sw * 0.50f, sh * 0.12f)
-                    lineTo(sw * 0.78f, sh * 0.24f)
-                    lineTo(sw * 0.73f, sh * 0.60f)
-                    cubicTo(sw * 0.68f, sh * 0.76f, sw * 0.56f, sh * 0.86f, sw * 0.50f, sh * 0.90f)
-                    cubicTo(sw * 0.44f, sh * 0.86f, sw * 0.32f, sh * 0.76f, sw * 0.27f, sh * 0.60f)
-                    lineTo(sw * 0.22f, sh * 0.24f)
-                    close()
-                }
-                drawPath(p, tint, style = Stroke(width = stroke, cap = StrokeCap.Round))
-            }
-            MiniIconType.Globe -> {
-                drawCircle(tint, radius = minSide * 0.36f, center = Offset(sw / 2f, sh / 2f), style = Stroke(width = stroke))
-                drawLine(tint, Offset(sw * 0.18f, sh * 0.50f), Offset(sw * 0.82f, sh * 0.50f), strokeWidth = stroke, cap = StrokeCap.Round)
-                drawArc(tint, 90f, 180f, false, Offset(sw * 0.34f, sh * 0.14f), androidx.compose.ui.geometry.Size(sw * 0.32f, sh * 0.72f), style = Stroke(width = stroke))
-                drawArc(tint, -90f, 180f, false, Offset(sw * 0.34f, sh * 0.14f), androidx.compose.ui.geometry.Size(sw * 0.32f, sh * 0.72f), style = Stroke(width = stroke))
-            }
-            MiniIconType.Clock -> {
-                drawCircle(tint, radius = minSide * 0.36f, center = Offset(sw / 2f, sh / 2f), style = Stroke(width = stroke))
-                drawLine(tint, Offset(sw * 0.50f, sh * 0.30f), Offset(sw * 0.50f, sh * 0.52f), strokeWidth = stroke, cap = StrokeCap.Round)
-                drawLine(tint, Offset(sw * 0.50f, sh * 0.52f), Offset(sw * 0.64f, sh * 0.62f), strokeWidth = stroke, cap = StrokeCap.Round)
-            }
             MiniIconType.Home -> {
                 val p = Path().apply {
                     moveTo(sw * 0.18f, sh * 0.48f)
@@ -708,5 +546,4 @@ private object AppUiColors {
     val TextSecondary = Color(0xFF7D828D)
     val Positive = Color(0xFF74C84F)
     val PositiveStrong = Color(0xFF36A852)
-    val Warning = Color(0xFFE1A100)
 }
