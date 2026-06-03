@@ -237,7 +237,7 @@ private fun HeaderBar(
         }
 
         Text(
-            text = selectedLocation.regionLabel(),
+            text = selectedLocation.cityLabel(),
             modifier = Modifier.weight(1f),
             style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
             color = AppUiColors.TextPrimary,
@@ -502,6 +502,33 @@ private fun MiniIcon(type: MiniIconType, tint: Color, size: Dp) {
                 drawCircle(tint, radius = minSide * 0.06f, center = Offset(sw / 2f, sh / 2f))
             }
         }
+    }
+}
+
+private fun VpnLocationOption.cityLabel(): String {
+    val value = title.trim()
+    if (value.isBlank()) return "Париж"
+    val lower = value.lowercase()
+        .replace('_', '-')
+        .replace('.', '-')
+        .replace(' ', '-')
+    return when {
+        lower.contains("paris") || lower.contains("париж") || lower.contains("france") || lower.contains("франц") || hasRegionToken(lower, "fr") -> "Париж"
+        lower.contains("frankfurt") || lower.contains("франкфурт") || lower.contains("germany") || lower.contains("deutschland") || lower.contains("герман") || hasRegionToken(lower, "de") -> "Франкфурт"
+        lower.contains("amsterdam") || lower.contains("амстердам") || lower.contains("netherlands") || lower.contains("nederland") || lower.contains("нидер") || hasRegionToken(lower, "nl") -> "Амстердам"
+        lower.contains("moscow") || lower.contains("москва") || lower.contains("russia") || lower.contains("росси") || hasRegionToken(lower, "ru") -> "Москва"
+        lower.contains("warsaw") || lower.contains("варшав") || lower.contains("poland") || lower.contains("польш") || hasRegionToken(lower, "pl") -> "Варшава"
+        lower.contains("london") || lower.contains("лондон") || lower.contains("united-kingdom") || hasRegionToken(lower, "uk") || hasRegionToken(lower, "gb") -> "Лондон"
+        lower.contains("new-york") || lower.contains("newyork") || lower.contains("united-states") || lower.contains("america") || hasRegionToken(lower, "us") || hasRegionToken(lower, "usa") -> "Нью-Йорк"
+        lower.contains("stockholm") || lower.contains("sweden") || hasRegionToken(lower, "se") -> "Стокгольм"
+        lower.contains("helsinki") || lower.contains("finland") || hasRegionToken(lower, "fi") -> "Хельсинки"
+        lower.contains("madrid") || lower.contains("spain") || hasRegionToken(lower, "es") -> "Мадрид"
+        lower.contains("milan") || lower.contains("italy") || hasRegionToken(lower, "it") -> "Милан"
+        lower.contains("istanbul") || lower.contains("turkey") || hasRegionToken(lower, "tr") -> "Стамбул"
+        lower.contains("singapore") || hasRegionToken(lower, "sg") -> "Сингапур"
+        lower == "skryon" || lower.contains("skryon") -> "Париж"
+        lower.startsWith("регион-eu") || lower == "eu" || lower.contains("europe") || lower.contains("европ") -> "Европа"
+        else -> value
     }
 }
 
