@@ -50,7 +50,7 @@ import com.v2ray.ang.ui.SettingsActivity
 @Composable
 fun VpnMainRoute(
     viewModel: VpnMainViewModel,
-    requestVpnPermission: ((onGranted: () -> Unit),
+    requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
     startVpnService: (String) -> Boolean,
     stopVpnService: () -> Unit,
     modifier: Modifier = Modifier,
