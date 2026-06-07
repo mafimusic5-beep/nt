@@ -239,23 +239,24 @@ private fun BottomNavigationBar(compact: Boolean, onAdvancedClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (compact) 62.dp else 70.dp)
+            .height(if (compact) 66.dp else 74.dp)
             .clip(RoundedCornerShape(if (compact) 22.dp else 26.dp))
-            .background(Color.White.copy(alpha = 0.94f))
+            .background(Color.White.copy(alpha = 0.96f))
             .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 22.dp else 26.dp))
-            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = 8.dp),
+            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 8.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        BottomNavItem(
+        BottomNavButton(
             label = "Главная",
             iconType = MiniIconType.Home,
             selected = true,
             compact = compact,
             modifier = Modifier.weight(1f),
+            onClick = {},
         )
         Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
-        BottomNavItem(
+        BottomNavButton(
             label = "Расширенные",
             iconType = MiniIconType.Settings,
             selected = false,
@@ -267,33 +268,37 @@ private fun BottomNavigationBar(compact: Boolean, onAdvancedClick: () -> Unit) {
 }
 
 @Composable
-private fun BottomNavItem(
+private fun BottomNavButton(
     label: String,
     iconType: MiniIconType,
     selected: Boolean,
     compact: Boolean,
     modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
 ) {
-    val action = onClick != null
-    val tint = if (selected || action) AppUiColors.TextPrimary else AppUiColors.TextSecondary
-    val background = if (selected || action) AppUiColors.SelectedSurface else Color.Transparent
+    val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
+    val containerColor = if (selected) AppUiColors.TextPrimary else Color.White
+    val contentColor = if (selected) Color.White else AppUiColors.TextPrimary
+    val borderColor = if (selected) Color.Transparent else AppUiColors.Border
+
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(background)
-            .clickable(enabled = action) { onClick?.invoke() }
+            .height(if (compact) 46.dp else 54.dp)
+            .clip(shape)
+            .background(containerColor)
+            .border(1.dp, borderColor, shape)
+            .clickable { onClick() }
             .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
-        MiniIcon(type = iconType, tint = tint, size = if (compact) 18.dp else 21.dp)
+        MiniIcon(type = iconType, tint = contentColor, size = if (compact) 18.dp else 21.dp)
         Spacer(Modifier.width(if (compact) 7.dp else 9.dp))
         Text(
             text = label,
             style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-            color = tint,
-            fontWeight = if (selected || action) FontWeight.Medium else FontWeight.Normal,
+            color = contentColor,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
