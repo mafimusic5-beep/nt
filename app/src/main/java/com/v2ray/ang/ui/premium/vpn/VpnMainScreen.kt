@@ -3,6 +3,7 @@ package com.v2ray.ang.ui.premium.vpn
 import android.content.Intent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,12 +39,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.v2ray.ang.R
 import com.v2ray.ang.ui.SettingsActivity
 
 @Composable
@@ -89,14 +93,24 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
+        val showParisBackground = uiState.selectedLocation.cityLabel() == "Париж"
 
-        BackgroundShape(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = if (tight) 170.dp else 205.dp)
-                .fillMaxWidth()
-                .height(if (tight) 360.dp else 430.dp),
-        )
+        if (showParisBackground) {
+            Image(
+                painter = painterResource(id = R.drawable.skryon_bg_paris),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            BackgroundShape(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = if (tight) 170.dp else 205.dp)
+                    .fillMaxWidth()
+                    .height(if (tight) 360.dp else 430.dp),
+            )
+        }
 
         Column(
             modifier = Modifier
