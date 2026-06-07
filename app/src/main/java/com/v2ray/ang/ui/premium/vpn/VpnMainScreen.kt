@@ -2,6 +2,7 @@ package com.v2ray.ang.ui.premium.vpn
 
 import android.content.Intent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,7 +50,7 @@ import com.v2ray.ang.ui.SettingsActivity
 @Composable
 fun VpnMainRoute(
     viewModel: VpnMainViewModel,
-    requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
+    requestVpnPermission: ((onGranted: () -> Unit),
     startVpnService: (String) -> Boolean,
     stopVpnService: () -> Unit,
     modifier: Modifier = Modifier,
@@ -164,6 +165,7 @@ fun VpnMainScreen(
             Spacer(Modifier.height(if (tight) 14.dp else 20.dp))
             BottomNavigationBar(
                 compact = compact,
+                onHomeClick = { },
                 onAdvancedClick = {
                     val intent = Intent(context, SettingsActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -235,7 +237,7 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
 }
 
 @Composable
-private fun BottomNavigationBar(compact: Boolean, onAdvancedClick: () -> Unit) {
+private fun BottomNavigationBar(compact: Boolean, onHomeClick: () -> Unit, onAdvancedClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -253,7 +255,7 @@ private fun BottomNavigationBar(compact: Boolean, onAdvancedClick: () -> Unit) {
             selected = true,
             compact = compact,
             modifier = Modifier.weight(1f),
-            onClick = {},
+            onClick = onHomeClick,
         )
         Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
         BottomNavButton(
@@ -281,16 +283,19 @@ private fun BottomNavButton(
     val contentColor = if (selected) Color.White else AppUiColors.TextPrimary
     val borderColor = if (selected) Color.Transparent else AppUiColors.Border
 
-    Row(
+    Button(
+        onClick = onClick,
         modifier = modifier
-            .height(if (compact) 46.dp else 54.dp)
-            .clip(shape)
-            .background(containerColor)
-            .border(1.dp, borderColor, shape)
-            .clickable { onClick() }
-            .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 10.dp else 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+            .fillMaxWidth()
+            .height(if (compact) 46.dp else 54.dp),
+        shape = shape,
+        border = BorderStroke(1.dp, borderColor),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = contentColor,
+            disabledContainerColor = containerColor,
+            disabledContentColor = contentColor,
+        ),
     ) {
         MiniIcon(type = iconType, tint = contentColor, size = if (compact) 18.dp else 21.dp)
         Spacer(Modifier.width(if (compact) 7.dp else 9.dp))
