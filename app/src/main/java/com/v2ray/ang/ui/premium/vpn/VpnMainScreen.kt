@@ -26,6 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -86,6 +87,7 @@ fun VpnMainScreen(
     modifier: Modifier = Modifier,
 ) {
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
+    var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
 
     BoxWithConstraints(
         modifier = modifier
@@ -125,9 +127,9 @@ fun VpnMainScreen(
             HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
 
             if (selectedTab == MainTab.Home) {
-                Spacer(Modifier.height(if (tight) 22.dp else if (compact) 36.dp else 48.dp))
+                Spacer(Modifier.height(if (tight) 18.dp else if (compact) 28.dp else 38.dp))
                 StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
-                Spacer(Modifier.height(if (tight) 12.dp else 18.dp))
+                Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
                 Text(
                     text = screenTitle(uiState.connectionState),
                     style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
@@ -144,8 +146,17 @@ fun VpnMainScreen(
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                 )
+                Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+                AutoConnectCard(
+                    enabled = autoConnectEnabled,
+                    compact = compact,
+                    onCheckedChange = { enabled ->
+                        autoConnectEnabled = enabled
+                        MmkvManager.encodeStartOnBoot(enabled)
+                    },
+                )
                 if (uiState.locationsError.isNotBlank()) {
-                    Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+                    Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
                     Text(
                         text = uiState.locationsError,
                         style = MaterialTheme.typography.bodySmall,
@@ -162,7 +173,13 @@ fun VpnMainScreen(
                     compact = compact,
                     tight = tight,
                     onClick = {
-                        if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick()
+                        if (uiState.connectionState == VpnConnectionState.Connected) {
+                            onDisconnectClick()
+                        } else {
+                            autoConnectEnabled = true
+                            MmkvManager.encodeStartOnBoot(true)
+                            onConnectClick()
+                        }
                     },
                 )
                 if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
@@ -259,6 +276,47 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
         Box(Modifier.size(beaconSize).clip(CircleShape).background(coreColor.copy(alpha = 0.05f)))
         Box(Modifier.size(midSize).clip(CircleShape).background(coreColor.copy(alpha = 0.11f)))
         Box(Modifier.size(coreSize).clip(CircleShape).background(coreColor))
+    }
+}
+
+@Composable
+private fun AutoConnectCard(
+    enabled: Boolean,
+    compact: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .background(Color.White.copy(alpha = 0.94f))
+            .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .clickable { onCheckedChange(!enabled) }
+            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 10.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Автоподключение",
+                style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
+                color = AppUiColors.TextPrimary,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = if (enabled) "VPN запустится после перезагрузки" else "Включится после первого запуска VPN",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = enabled,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }
 
