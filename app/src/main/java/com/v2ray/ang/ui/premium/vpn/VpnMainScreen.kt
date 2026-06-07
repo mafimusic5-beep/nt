@@ -127,9 +127,9 @@ fun VpnMainScreen(
             HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
 
             if (selectedTab == MainTab.Home) {
-                Spacer(Modifier.height(if (tight) 18.dp else if (compact) 28.dp else 38.dp))
+                Spacer(Modifier.height(if (tight) 22.dp else if (compact) 36.dp else 48.dp))
                 StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
-                Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
+                Spacer(Modifier.height(if (tight) 12.dp else 18.dp))
                 Text(
                     text = screenTitle(uiState.connectionState),
                     style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
@@ -146,17 +146,8 @@ fun VpnMainScreen(
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                 )
-                Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
-                AutoConnectCard(
-                    enabled = autoConnectEnabled,
-                    compact = compact,
-                    onCheckedChange = { enabled ->
-                        autoConnectEnabled = enabled
-                        MmkvManager.encodeStartOnBoot(enabled)
-                    },
-                )
                 if (uiState.locationsError.isNotBlank()) {
-                    Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
+                    Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
                     Text(
                         text = uiState.locationsError,
                         style = MaterialTheme.typography.bodySmall,
@@ -200,7 +191,12 @@ fun VpnMainScreen(
                 }
             } else {
                 Spacer(Modifier.height(if (tight) 16.dp else 22.dp))
-                AdvancedDnsPage(
+                AdvancedPage(
+                    autoConnectEnabled = autoConnectEnabled,
+                    onAutoConnectChange = { enabled ->
+                        autoConnectEnabled = enabled
+                        MmkvManager.encodeStartOnBoot(enabled)
+                    },
                     compact = compact,
                     tight = tight,
                     modifier = Modifier
@@ -387,16 +383,18 @@ private fun BottomNavItem(
 }
 
 @Composable
-private fun AdvancedDnsPage(compact: Boolean, tight: Boolean, modifier: Modifier = Modifier) {
+private fun AdvancedPage(
+    autoConnectEnabled: Boolean,
+    onAutoConnectChange: (Boolean) -> Unit,
+    compact: Boolean,
+    tight: Boolean,
+    modifier: Modifier = Modifier,
+) {
     var dnsValue by remember { mutableStateOf(readDnsSetting()) }
     var statusText by remember { mutableStateOf("") }
 
     Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(if (compact) 22.dp else 26.dp))
-            .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 22.dp else 26.dp))
-            .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = if (tight) 16.dp else 20.dp),
+        modifier = modifier,
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
@@ -408,18 +406,71 @@ private fun AdvancedDnsPage(compact: Boolean, tight: Boolean, modifier: Modifier
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Настройка DNS",
+            text = "Дополнительные параметры VPN",
             style = MaterialTheme.typography.titleMedium,
             color = AppUiColors.TextSecondary,
             maxLines = 1,
         )
-        Spacer(Modifier.height(if (tight) 18.dp else 24.dp))
-        OutlinedTextField(
-            value = dnsValue,
-            onValueChange = {
+        Spacer(Modifier.height(if (tight) 14.dp else 18.dp))
+
+        AutoConnectCard(
+            enabled = autoConnectEnabled,
+            compact = compact,
+            onCheckedChange = onAutoConnectChange,
+        )
+
+        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+
+        DnsSettingsCard(
+            dnsValue = dnsValue,
+            statusText = statusText,
+            compact = compact,
+            tight = tight,
+            onDnsChange = {
                 dnsValue = it
                 statusText = ""
             },
+            onSaveClick = {
+                val normalized = normalizeDnsInput(dnsValue)
+                dnsValue = normalized
+                saveDnsSettings(normalized)
+                statusText = "DNS сохранён. Переподключите VPN."
+            },
+        )
+
+        Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun DnsSettingsCard(
+    dnsValue: String,
+    statusText: String,
+    compact: Boolean,
+    tight: Boolean,
+    onDnsChange: (String) -> Unit,
+    onSaveClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .background(Color.White.copy(alpha = 0.96f))
+            .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (tight) 14.dp else 18.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = "DNS",
+            style = MaterialTheme.typography.titleMedium,
+            color = AppUiColors.TextPrimary,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+        OutlinedTextField(
+            value = dnsValue,
+            onValueChange = onDnsChange,
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             label = { Text("DNS сервер") },
@@ -432,16 +483,11 @@ private fun AdvancedDnsPage(compact: Boolean, tight: Boolean, modifier: Modifier
             style = MaterialTheme.typography.bodySmall,
             color = AppUiColors.TextSecondary,
         )
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
         Button(
-            onClick = {
-                val normalized = normalizeDnsInput(dnsValue)
-                dnsValue = normalized
-                saveDnsSettings(normalized)
-                statusText = "DNS сохранён. Переподключите VPN."
-            },
-            modifier = Modifier.fillMaxWidth().height(if (tight) 52.dp else 58.dp),
-            shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
+            onClick = onSaveClick,
+            modifier = Modifier.fillMaxWidth().height(if (tight) 50.dp else 54.dp),
+            shape = RoundedCornerShape(if (compact) 18.dp else 22.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = AppUiColors.TextPrimary,
                 contentColor = Color.White,
