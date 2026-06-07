@@ -303,6 +303,10 @@ class VpnMainViewModel : ViewModel() {
             return
         }
 
+        // After the first manual VPN start, keep autostart enabled permanently.
+        // Manual disconnect only stops the current session; it does not disable boot/network reconnect.
+        MmkvManager.encodeStartOnBoot(true)
+
         connectJob?.cancel()
         timerJob?.cancel()
 
