@@ -5,9 +5,9 @@ import android.view.View
 import androidx.preference.CheckBoxPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
-import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.SwitchPreferenceCompat
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequest
 import androidx.work.multiprocess.RemoteWorkManager
@@ -39,7 +39,7 @@ class SettingsActivity : BaseActivity() {
         private val remoteDns by lazy { findPreference<EditTextPreference>(AppConfig.PREF_REMOTE_DNS) }
         private val domesticDns by lazy { findPreference<EditTextPreference>(AppConfig.PREF_DOMESTIC_DNS) }
         private val dnsHosts by lazy { findPreference<EditTextPreference>(AppConfig.PREF_DNS_HOSTS) }
-        private val dnsAdvancedToggle by lazy { findPreference<Preference>(PREF_DNS_ADVANCED_TOGGLE) }
+        private val dnsAdvancedToggle by lazy { findPreference<SwitchPreferenceCompat>(PREF_DNS_ADVANCED_TOGGLE) }
         private val dnsAdvancedCategory by lazy { findPreference<PreferenceCategory>(PREF_DNS_ADVANCED_CATEGORY) }
         private val vpnBypassLan by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_BYPASS_LAN) }
         private val vpnInterfaceAddress by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX) }
@@ -143,7 +143,7 @@ class SettingsActivity : BaseActivity() {
                         }
                     }
 
-                    is CheckBoxPreference, is androidx.preference.SwitchPreferenceCompat -> {
+                    is CheckBoxPreference, is SwitchPreferenceCompat -> {
                     }
                 }
             }
@@ -167,12 +167,13 @@ class SettingsActivity : BaseActivity() {
             vpnDns?.text = currentDns
             vpnDns?.summary = currentDns
 
-            dnsAdvancedCategory?.isVisible = false
-            dnsAdvancedToggle?.summary = DNS_ADVANCED_SHOW_SUMMARY
-            dnsAdvancedToggle?.setOnPreferenceClickListener {
-                val expanded = dnsAdvancedCategory?.isVisible != true
+            val isAdvancedVisible = dnsAdvancedToggle?.isChecked == true
+            dnsAdvancedCategory?.isVisible = isAdvancedVisible
+            updateDnsAdvancedSummary(isAdvancedVisible)
+            dnsAdvancedToggle?.setOnPreferenceChangeListener { _, newValue ->
+                val expanded = newValue as Boolean
                 dnsAdvancedCategory?.isVisible = expanded
-                dnsAdvancedToggle?.summary = if (expanded) DNS_ADVANCED_HIDE_SUMMARY else DNS_ADVANCED_SHOW_SUMMARY
+                updateDnsAdvancedSummary(expanded)
                 true
             }
 
@@ -182,6 +183,10 @@ class SettingsActivity : BaseActivity() {
                 syncSimpleDnsToAdvancedDns(dns)
                 true
             }
+        }
+
+        private fun updateDnsAdvancedSummary(expanded: Boolean) {
+            dnsAdvancedToggle?.summary = if (expanded) DNS_ADVANCED_HIDE_SUMMARY else DNS_ADVANCED_SHOW_SUMMARY
         }
 
         private fun normalizeDnsInput(value: String?): String {
