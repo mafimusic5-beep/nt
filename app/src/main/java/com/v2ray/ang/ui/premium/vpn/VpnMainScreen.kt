@@ -1,6 +1,5 @@
 package com.v2ray.ang.ui.premium.vpn
 
-import android.content.Intent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -26,10 +25,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,15 +43,15 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
-import com.v2ray.ang.ui.SettingsActivity
+import com.v2ray.ang.handler.MmkvManager
 
 @Composable
 fun VpnMainRoute(
@@ -82,7 +85,8 @@ fun VpnMainScreen(
     onDisconnectClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
+    var selectedTab by remember { mutableStateOf(MainTab.Home) }
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -93,7 +97,7 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
-        val showParisBackground = uiState.selectedLocation.cityLabel() == "Париж"
+        val showParisBackground = selectedTab == MainTab.Home && uiState.selectedLocation.cityLabel() == "Париж"
 
         if (showParisBackground) {
             Image(
@@ -119,71 +123,81 @@ fun VpnMainScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
-            Spacer(Modifier.height(if (tight) 22.dp else if (compact) 36.dp else 48.dp))
-            StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
-            Spacer(Modifier.height(if (tight) 12.dp else 18.dp))
-            Text(
-                text = screenTitle(uiState.connectionState),
-                style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = AppUiColors.TextPrimary,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
-            Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
-            Text(
-                text = screenSubtitle(uiState.connectionState),
-                style = if (tight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
-                color = AppUiColors.TextSecondary,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
-            if (uiState.locationsError.isNotBlank()) {
-                Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+
+            if (selectedTab == MainTab.Home) {
+                Spacer(Modifier.height(if (tight) 22.dp else if (compact) 36.dp else 48.dp))
+                StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
+                Spacer(Modifier.height(if (tight) 12.dp else 18.dp))
                 Text(
-                    text = uiState.locationsError,
-                    style = MaterialTheme.typography.bodySmall,
+                    text = screenTitle(uiState.connectionState),
+                    style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppUiColors.TextPrimary,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
+                Text(
+                    text = screenSubtitle(uiState.connectionState),
+                    style = if (tight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
                     color = AppUiColors.TextSecondary,
                     textAlign = TextAlign.Center,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
-            }
-            Spacer(Modifier.weight(1f))
-            PrimaryConnectButton(
-                state = uiState.connectionState,
-                enabled = uiState.connectButtonEnabled,
-                compact = compact,
-                tight = tight,
-                onClick = {
-                    if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick()
-                },
-            )
-            if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
-                Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
-                Text(
-                    text = when {
-                        uiState.activationKey.isBlank() -> "Ключ доступа не найден"
-                        uiState.locationsLoading -> "Регион загружается"
-                        uiState.locationsError.isNotBlank() -> uiState.locationsError
-                        else -> "Регион недоступен"
+                if (uiState.locationsError.isNotBlank()) {
+                    Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+                    Text(
+                        text = uiState.locationsError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppUiColors.TextSecondary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                PrimaryConnectButton(
+                    state = uiState.connectionState,
+                    enabled = uiState.connectButtonEnabled,
+                    compact = compact,
+                    tight = tight,
+                    onClick = {
+                        if (uiState.connectionState == VpnConnectionState.Connected) onDisconnectClick() else onConnectClick()
                     },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AppUiColors.TextSecondary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                )
+                if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
+                    Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
+                    Text(
+                        text = when {
+                            uiState.activationKey.isBlank() -> "Ключ доступа не найден"
+                            uiState.locationsLoading -> "Регион загружается"
+                            uiState.locationsError.isNotBlank() -> uiState.locationsError
+                            else -> "Регион недоступен"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = AppUiColors.TextSecondary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            } else {
+                Spacer(Modifier.height(if (tight) 16.dp else 22.dp))
+                AdvancedDnsPage(
+                    compact = compact,
+                    tight = tight,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                 )
             }
+
             Spacer(Modifier.height(if (tight) 14.dp else 20.dp))
             BottomNavigationBar(
+                selectedTab = selectedTab,
                 compact = compact,
-                onAdvancedClick = {
-                    val intent = Intent(context, SettingsActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                },
+                onHomeClick = { selectedTab = MainTab.Home },
+                onAdvancedClick = { selectedTab = MainTab.Advanced },
             )
         }
     }
@@ -249,7 +263,7 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
 }
 
 @Composable
-private fun BottomNavigationBar(compact: Boolean, onAdvancedClick: () -> Unit) {
+private fun BottomNavigationBar(selectedTab: MainTab, compact: Boolean, onHomeClick: () -> Unit, onAdvancedClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -264,15 +278,16 @@ private fun BottomNavigationBar(compact: Boolean, onAdvancedClick: () -> Unit) {
         BottomNavItem(
             label = "Главная",
             iconType = MiniIconType.Home,
-            selected = true,
+            selected = selectedTab == MainTab.Home,
             compact = compact,
             modifier = Modifier.weight(1f),
+            onClick = onHomeClick,
         )
         Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
         BottomNavItem(
             label = "Расширенные",
             iconType = MiniIconType.Settings,
-            selected = false,
+            selected = selectedTab == MainTab.Advanced,
             compact = compact,
             modifier = Modifier.weight(1f),
             onClick = onAdvancedClick,
@@ -287,16 +302,15 @@ private fun BottomNavItem(
     selected: Boolean,
     compact: Boolean,
     modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
 ) {
-    val action = onClick != null
-    val tint = if (selected || action) AppUiColors.TextPrimary else AppUiColors.TextSecondary
-    val background = if (selected || action) AppUiColors.SelectedSurface else Color.Transparent
+    val tint = if (selected) AppUiColors.TextPrimary else AppUiColors.TextSecondary
+    val background = if (selected) AppUiColors.SelectedSurface else Color.Transparent
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .background(background)
-            .clickable(enabled = action) { onClick?.invoke() }
+            .clickable { onClick() }
             .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
@@ -307,11 +321,112 @@ private fun BottomNavItem(
             text = label,
             style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
             color = tint,
-            fontWeight = if (selected || action) FontWeight.Medium else FontWeight.Normal,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+@Composable
+private fun AdvancedDnsPage(compact: Boolean, tight: Boolean, modifier: Modifier = Modifier) {
+    var dnsValue by remember { mutableStateOf(readDnsSetting()) }
+    var statusText by remember { mutableStateOf("") }
+
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(if (compact) 22.dp else 26.dp))
+            .background(Color.White.copy(alpha = 0.96f))
+            .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 22.dp else 26.dp))
+            .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = if (tight) 16.dp else 20.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = "Расширенные",
+            style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
+            color = AppUiColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Настройка DNS",
+            style = MaterialTheme.typography.titleMedium,
+            color = AppUiColors.TextSecondary,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(if (tight) 18.dp else 24.dp))
+        OutlinedTextField(
+            value = dnsValue,
+            onValueChange = {
+                dnsValue = it
+                statusText = ""
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("DNS сервер") },
+            placeholder = { Text("1.1.1.1,8.8.8.8") },
+            shape = RoundedCornerShape(16.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Можно указать один или несколько DNS через запятую.",
+            style = MaterialTheme.typography.bodySmall,
+            color = AppUiColors.TextSecondary,
+        )
+        Spacer(Modifier.weight(1f))
+        Button(
+            onClick = {
+                val normalized = normalizeDnsInput(dnsValue)
+                dnsValue = normalized
+                saveDnsSettings(normalized)
+                statusText = "DNS сохранён. Переподключите VPN."
+            },
+            modifier = Modifier.fillMaxWidth().height(if (tight) 52.dp else 58.dp),
+            shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = AppUiColors.TextPrimary,
+                contentColor = Color.White,
+            ),
+        ) {
+            Text(
+                text = "Сохранить DNS",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+        if (statusText.isNotBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = AppUiColors.PositiveStrong,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+private fun readDnsSetting(): String {
+    return normalizeDnsInput(MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_DNS, AppConfig.DNS_VPN))
+}
+
+private fun saveDnsSettings(dns: String) {
+    MmkvManager.encodeSettings(AppConfig.PREF_VPN_DNS, dns)
+    MmkvManager.encodeSettings(AppConfig.PREF_REMOTE_DNS, dns)
+    MmkvManager.encodeSettings(AppConfig.PREF_DOMESTIC_DNS, dns)
+}
+
+private fun normalizeDnsInput(value: String?): String {
+    return value
+        ?.split(',', '\n', ';', ' ')
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.joinToString(",")
+        ?.takeIf { it.isNotEmpty() }
+        ?: AppConfig.DNS_VPN
 }
 
 @Composable
@@ -412,6 +527,8 @@ private fun PauseGlyph(tint: Color, compact: Boolean) {
         Box(Modifier.width(if (compact) 3.dp else 4.dp).height(if (compact) 16.dp else 18.dp).clip(RoundedCornerShape(999.dp)).background(tint))
     }
 }
+
+private enum class MainTab { Home, Advanced }
 
 private enum class MiniIconType { Home, Settings }
 
