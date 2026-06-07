@@ -165,7 +165,10 @@ fun VpnMainScreen(
             BottomNavigationBar(
                 compact = compact,
                 onAdvancedClick = {
-                    context.startActivity(Intent(context, SettingsActivity::class.java))
+                    val intent = Intent(context, SettingsActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
                 },
             )
         }
@@ -244,30 +247,53 @@ private fun BottomNavigationBar(compact: Boolean, onAdvancedClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        BottomNavItem("Главная", MiniIconType.Home, selected = true, compact = compact, modifier = Modifier.weight(1f))
+        BottomNavItem(
+            label = "Главная",
+            iconType = MiniIconType.Home,
+            selected = true,
+            compact = compact,
+            modifier = Modifier.weight(1f),
+        )
         Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
-        BottomNavItem("Расширенные", MiniIconType.Settings, selected = false, compact = compact, modifier = Modifier.weight(1f), onClick = onAdvancedClick)
+        BottomNavItem(
+            label = "Расширенные",
+            iconType = MiniIconType.Settings,
+            selected = false,
+            compact = compact,
+            modifier = Modifier.weight(1f),
+            onClick = onAdvancedClick,
+        )
     }
 }
 
 @Composable
-private fun BottomNavItem(label: String, iconType: MiniIconType, selected: Boolean, compact: Boolean, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+private fun BottomNavItem(
+    label: String,
+    iconType: MiniIconType,
+    selected: Boolean,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
+    val action = onClick != null
+    val tint = if (selected || action) AppUiColors.TextPrimary else AppUiColors.TextSecondary
+    val background = if (selected || action) AppUiColors.SelectedSurface else Color.Transparent
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) AppUiColors.SelectedSurface else Color.Transparent)
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .background(background)
+            .clickable(enabled = action) { onClick?.invoke() }
             .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
-        MiniIcon(type = iconType, tint = if (selected) AppUiColors.TextPrimary else AppUiColors.TextSecondary, size = if (compact) 18.dp else 21.dp)
+        MiniIcon(type = iconType, tint = tint, size = if (compact) 18.dp else 21.dp)
         Spacer(Modifier.width(if (compact) 7.dp else 9.dp))
         Text(
             text = label,
             style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-            color = if (selected) AppUiColors.TextPrimary else AppUiColors.TextSecondary,
-            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+            color = tint,
+            fontWeight = if (selected || action) FontWeight.Medium else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
