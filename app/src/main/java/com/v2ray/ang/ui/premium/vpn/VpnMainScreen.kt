@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -127,9 +129,9 @@ fun VpnMainScreen(
             HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
 
             if (selectedTab == MainTab.Home) {
-                Spacer(Modifier.height(if (tight) 22.dp else if (compact) 36.dp else 48.dp))
+                Spacer(Modifier.height(if (tight) 18.dp else if (compact) 30.dp else 42.dp))
                 StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
-                Spacer(Modifier.height(if (tight) 12.dp else 18.dp))
+                Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
                 Text(
                     text = screenTitle(uiState.connectionState),
                     style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
@@ -147,7 +149,7 @@ fun VpnMainScreen(
                     maxLines = 1,
                 )
                 if (uiState.locationsError.isNotBlank()) {
-                    Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+                    Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
                     Text(
                         text = uiState.locationsError,
                         style = MaterialTheme.typography.bodySmall,
@@ -158,6 +160,14 @@ fun VpnMainScreen(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                RegionSelectorCard(
+                    selectedLocation = uiState.selectedLocation,
+                    locations = locations,
+                    compact = compact,
+                    tight = tight,
+                    onLocationSelected = onLocationSelected,
+                )
+                Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
                 PrimaryConnectButton(
                     state = uiState.connectionState,
                     enabled = uiState.connectButtonEnabled,
@@ -272,6 +282,211 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
         Box(Modifier.size(beaconSize).clip(CircleShape).background(coreColor.copy(alpha = 0.05f)))
         Box(Modifier.size(midSize).clip(CircleShape).background(coreColor.copy(alpha = 0.11f)))
         Box(Modifier.size(coreSize).clip(CircleShape).background(coreColor))
+    }
+}
+
+@Composable
+private fun RegionSelectorCard(
+    selectedLocation: VpnLocationOption,
+    locations: List<VpnLocationOption>,
+    compact: Boolean,
+    tight: Boolean,
+    onLocationSelected: (String) -> Unit,
+) {
+    val visibleLocations = remember(locations, selectedLocation) {
+        val base = if (locations.isEmpty()) listOf(selectedLocation) else locations
+        if (base.any { it.id == selectedLocation.id || it.title == selectedLocation.title }) {
+            base
+        } else {
+            listOf(selectedLocation) + base
+        }
+    }
+    val selectedCode = selectedLocation.countryCodeLabel()
+    val selectedTitle = selectedLocation.cityLabel()
+    val cardShape = RoundedCornerShape(if (compact) 22.dp else 26.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .background(Color.White.copy(alpha = 0.96f))
+            .border(1.dp, AppUiColors.Border, cardShape)
+            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (tight) 12.dp else 16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Регион",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppUiColors.TextSecondary,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(if (tight) 6.dp else 8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "$selectedTitle • $selectedCode",
+                        style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+                        color = AppUiColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(if (compact) 42.dp else 46.dp)
+                    .clip(CircleShape)
+                    .background(AppUiColors.SelectedSurface),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "⌄",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = AppUiColors.TextPrimary,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(AppUiColors.Border.copy(alpha = 0.75f))
+        )
+        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            visibleLocations.forEachIndexed { index, option ->
+                val selected = option.id == selectedLocation.id || option.title == selectedLocation.title
+                RegionChip(
+                    location = option,
+                    selected = selected,
+                    compact = compact,
+                    onClick = { onLocationSelected(option.title) },
+                )
+                if (index != visibleLocations.lastIndex) {
+                    Spacer(Modifier.width(if (compact) 10.dp else 12.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RegionChip(
+    location: VpnLocationOption,
+    selected: Boolean,
+    compact: Boolean,
+    onClick: () -> Unit,
+) {
+    val code = location.countryCodeLabel()
+    val shape = RoundedCornerShape(if (compact) 16.dp else 18.dp)
+    val background = if (selected) AppUiColors.RegionSelected else Color.White
+    val borderColor = if (selected) AppUiColors.Positive.copy(alpha = 0.22f) else AppUiColors.Border
+
+    Row(
+        modifier = Modifier
+            .width(if (compact) 122.dp else 142.dp)
+            .height(if (compact) 56.dp else 64.dp)
+            .clip(shape)
+            .background(background)
+            .border(1.dp, borderColor, shape)
+            .clickable { onClick() }
+            .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 8.dp else 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FlagMark(code = code, modifier = Modifier.width(22.dp).height(16.dp))
+        Spacer(Modifier.width(9.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = location.cityLabel(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = AppUiColors.TextPrimary,
+                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = code,
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextSecondary,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FlagMark(code: String, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.clip(RoundedCornerShape(3.dp))) {
+        val w = size.width
+        val h = size.height
+        fun stripe(color: Color, left: Float, top: Float, right: Float, bottom: Float) {
+            drawRect(color, topLeft = Offset(w * left, h * top), size = androidx.compose.ui.geometry.Size(w * (right - left), h * (bottom - top)))
+        }
+
+        when (code.uppercase()) {
+            "FR" -> {
+                stripe(Color(0xFF21468B), 0f, 0f, 0.333f, 1f)
+                stripe(Color.White, 0.333f, 0f, 0.666f, 1f)
+                stripe(Color(0xFFEF4135), 0.666f, 0f, 1f, 1f)
+            }
+            "DE" -> {
+                stripe(Color(0xFF111111), 0f, 0f, 1f, 0.333f)
+                stripe(Color(0xFFDD0000), 0f, 0.333f, 1f, 0.666f)
+                stripe(Color(0xFFFFCE00), 0f, 0.666f, 1f, 1f)
+            }
+            "NL" -> {
+                stripe(Color(0xFFAE1C28), 0f, 0f, 1f, 0.333f)
+                stripe(Color.White, 0f, 0.333f, 1f, 0.666f)
+                stripe(Color(0xFF21468B), 0f, 0.666f, 1f, 1f)
+            }
+            "UK", "GB" -> {
+                drawRect(Color(0xFF012169))
+                stripe(Color.White, 0.42f, 0f, 0.58f, 1f)
+                stripe(Color.White, 0f, 0.40f, 1f, 0.60f)
+                stripe(Color(0xFFC8102E), 0.46f, 0f, 0.54f, 1f)
+                stripe(Color(0xFFC8102E), 0f, 0.45f, 1f, 0.55f)
+            }
+            "PL" -> {
+                stripe(Color.White, 0f, 0f, 1f, 0.5f)
+                stripe(Color(0xFFDC143C), 0f, 0.5f, 1f, 1f)
+            }
+            "RU" -> {
+                stripe(Color.White, 0f, 0f, 1f, 0.333f)
+                stripe(Color(0xFF0039A6), 0f, 0.333f, 1f, 0.666f)
+                stripe(Color(0xFFD52B1E), 0f, 0.666f, 1f, 1f)
+            }
+            "US" -> {
+                stripe(Color(0xFFB22234), 0f, 0f, 1f, 1f)
+                stripe(Color.White, 0f, 0.15f, 1f, 0.28f)
+                stripe(Color.White, 0f, 0.43f, 1f, 0.56f)
+                stripe(Color.White, 0f, 0.71f, 1f, 0.84f)
+                stripe(Color(0xFF3C3B6E), 0f, 0f, 0.45f, 0.55f)
+            }
+            "EU" -> {
+                drawRect(Color(0xFF244AA5))
+                drawCircle(Color(0xFFFFD700), radius = h * 0.12f, center = Offset(w * 0.50f, h * 0.50f))
+            }
+            else -> {
+                drawRect(AppUiColors.Border)
+                stripe(Color.White.copy(alpha = 0.62f), 0f, 0f, 1f, 0.5f)
+            }
+        }
     }
 }
 
@@ -693,6 +908,35 @@ private fun VpnLocationOption.cityLabel(): String {
     }
 }
 
+private fun VpnLocationOption.countryCodeLabel(): String {
+    val value = title.trim().lowercase().replace('_', '-').replace('.', '-').replace(' ', '-')
+    return when {
+        cityLabel() == "Париж" -> "FR"
+        cityLabel() == "Франкфурт" -> "DE"
+        cityLabel() == "Амстердам" -> "NL"
+        cityLabel() == "Москва" -> "RU"
+        cityLabel() == "Варшава" -> "PL"
+        cityLabel() == "Лондон" -> "UK"
+        cityLabel() == "Нью-Йорк" -> "US"
+        cityLabel() == "Стокгольм" -> "SE"
+        cityLabel() == "Хельсинки" -> "FI"
+        cityLabel() == "Мадрид" -> "ES"
+        cityLabel() == "Милан" -> "IT"
+        cityLabel() == "Стамбул" -> "TR"
+        cityLabel() == "Сингапур" -> "SG"
+        cityLabel() == "Европа" -> "EU"
+        hasRegionToken(value, "fr") -> "FR"
+        hasRegionToken(value, "de") -> "DE"
+        hasRegionToken(value, "nl") -> "NL"
+        hasRegionToken(value, "ru") -> "RU"
+        hasRegionToken(value, "pl") -> "PL"
+        hasRegionToken(value, "uk") || hasRegionToken(value, "gb") -> "UK"
+        hasRegionToken(value, "us") || hasRegionToken(value, "usa") -> "US"
+        hasRegionToken(value, "eu") -> "EU"
+        else -> "VPN"
+    }
+}
+
 private fun VpnLocationOption.regionLabel(): String {
     val city = cityLabel()
     return when (city) {
@@ -716,6 +960,7 @@ private object AppUiColors {
     val Background = Color.White
     val Surface = Color(0xFFF9FAFB)
     val SelectedSurface = Color(0xFFF4F6F8)
+    val RegionSelected = Color(0xFFF3FAEF)
     val Border = Color(0xFFE6E9EE)
     val TextPrimary = Color(0xFF111319)
     val TextSecondary = Color(0xFF7D828D)
