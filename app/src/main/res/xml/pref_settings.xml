@@ -83,7 +83,8 @@
             android:summary="1.1.1.1"
             android:title="DNS сервер" />
 
-        <Preference
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
             android:key="pref_dns_advanced_toggle"
             android:summary="Показать дополнительные DNS-поля"
             android:title="Расширенные настройки DNS" />
