@@ -80,8 +80,33 @@
 
         <EditTextPreference
             android:key="pref_vpn_dns"
-            android:summary="@string/summary_pref_remote_dns"
-            android:title="@string/title_pref_vpn_dns" />
+            android:summary="1.1.1.1"
+            android:title="DNS сервер" />
+
+        <Preference
+            android:key="pref_dns_advanced_toggle"
+            android:summary="Показать дополнительные DNS-поля"
+            android:title="Расширенные настройки DNS" />
+
+        <PreferenceCategory
+            android:key="pref_dns_advanced_category"
+            android:title="Расширенные DNS">
+
+            <EditTextPreference
+                android:key="pref_remote_dns"
+                android:summary="@string/summary_pref_remote_dns"
+                android:title="@string/title_pref_remote_dns" />
+
+            <EditTextPreference
+                android:key="pref_domestic_dns"
+                android:summary="@string/summary_pref_domestic_dns"
+                android:title="@string/title_pref_domestic_dns" />
+
+            <EditTextPreference
+                android:key="pref_dns_hosts"
+                android:summary="@string/summary_pref_dns_hosts"
+                android:title="@string/title_pref_dns_hosts" />
+        </PreferenceCategory>
 
         <ListPreference
             android:defaultValue="1"
@@ -156,21 +181,6 @@
             android:key="pref_socks_port"
             android:summary="10808"
             android:title="@string/title_pref_socks_port" />
-
-        <EditTextPreference
-            android:key="pref_remote_dns"
-            android:summary="@string/summary_pref_remote_dns"
-            android:title="@string/title_pref_remote_dns" />
-
-        <EditTextPreference
-            android:key="pref_domestic_dns"
-            android:summary="@string/summary_pref_domestic_dns"
-            android:title="@string/title_pref_domestic_dns" />
-
-        <EditTextPreference
-            android:key="pref_dns_hosts"
-            android:summary="@string/summary_pref_dns_hosts"
-            android:title="@string/title_pref_dns_hosts" />
 
         <ListPreference
             android:defaultValue="warning"
