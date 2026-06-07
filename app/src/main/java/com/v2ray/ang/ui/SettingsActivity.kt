@@ -5,6 +5,8 @@ import android.view.View
 import androidx.preference.CheckBoxPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
+import androidx.preference.Preference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequest
@@ -34,6 +36,11 @@ class SettingsActivity : BaseActivity() {
 
         //        private val localDnsPort by lazy { findPreference<EditTextPreference>(AppConfig.PREF_LOCAL_DNS_PORT) }
         private val vpnDns by lazy { findPreference<EditTextPreference>(AppConfig.PREF_VPN_DNS) }
+        private val remoteDns by lazy { findPreference<EditTextPreference>(AppConfig.PREF_REMOTE_DNS) }
+        private val domesticDns by lazy { findPreference<EditTextPreference>(AppConfig.PREF_DOMESTIC_DNS) }
+        private val dnsHosts by lazy { findPreference<EditTextPreference>(AppConfig.PREF_DNS_HOSTS) }
+        private val dnsAdvancedToggle by lazy { findPreference<Preference>(PREF_DNS_ADVANCED_TOGGLE) }
+        private val dnsAdvancedCategory by lazy { findPreference<PreferenceCategory>(PREF_DNS_ADVANCED_CATEGORY) }
         private val vpnBypassLan by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_BYPASS_LAN) }
         private val vpnInterfaceAddress by lazy { findPreference<ListPreference>(AppConfig.PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX) }
         private val vpnMtu by lazy { findPreference<EditTextPreference>(AppConfig.PREF_VPN_MTU) }
@@ -64,6 +71,7 @@ class SettingsActivity : BaseActivity() {
             addPreferencesFromResource(R.xml.pref_settings)
 
             initPreferenceSummaries()
+            initDnsPreferences()
 
             localDns?.setOnPreferenceChangeListener { _, any ->
                 updateLocalDns(any as Boolean)
@@ -152,6 +160,49 @@ class SettingsActivity : BaseActivity() {
             preferenceScreen?.let { traverse(it) }
         }
 
+        private fun initDnsPreferences() {
+            val currentDns = normalizeDnsInput(
+                MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_DNS, AppConfig.DNS_VPN)
+            )
+            vpnDns?.text = currentDns
+            vpnDns?.summary = currentDns
+
+            dnsAdvancedCategory?.isVisible = false
+            dnsAdvancedToggle?.summary = DNS_ADVANCED_SHOW_SUMMARY
+            dnsAdvancedToggle?.setOnPreferenceClickListener {
+                val expanded = dnsAdvancedCategory?.isVisible != true
+                dnsAdvancedCategory?.isVisible = expanded
+                dnsAdvancedToggle?.summary = if (expanded) DNS_ADVANCED_HIDE_SUMMARY else DNS_ADVANCED_SHOW_SUMMARY
+                true
+            }
+
+            vpnDns?.setOnPreferenceChangeListener { _, newValue ->
+                val dns = normalizeDnsInput(newValue as? String)
+                vpnDns?.summary = dns
+                syncSimpleDnsToAdvancedDns(dns)
+                true
+            }
+        }
+
+        private fun normalizeDnsInput(value: String?): String {
+            return value
+                ?.split(',', '\n', ';', ' ')
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.joinToString(",")
+                ?.takeIf { it.isNotEmpty() }
+                ?: AppConfig.DNS_VPN
+        }
+
+        private fun syncSimpleDnsToAdvancedDns(dns: String) {
+            MmkvManager.encodeSettings(AppConfig.PREF_REMOTE_DNS, dns)
+            MmkvManager.encodeSettings(AppConfig.PREF_DOMESTIC_DNS, dns)
+            remoteDns?.text = dns
+            domesticDns?.text = dns
+            remoteDns?.summary = dns
+            domesticDns?.summary = dns
+        }
+
         override fun onStart() {
             super.onStart()
             updateHevTunSettings(MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, true))
@@ -176,6 +227,11 @@ class SettingsActivity : BaseActivity() {
             appendHttpProxy?.isEnabled = vpn
 //            localDnsPort?.isEnabled = vpn
             vpnDns?.isEnabled = vpn
+            remoteDns?.isEnabled = vpn
+            domesticDns?.isEnabled = vpn
+            dnsHosts?.isEnabled = vpn
+            dnsAdvancedToggle?.isEnabled = vpn
+            dnsAdvancedCategory?.isEnabled = vpn
             vpnBypassLan?.isEnabled = vpn
             vpnInterfaceAddress?.isEnabled = vpn
             vpnMtu?.isEnabled = vpn
@@ -200,7 +256,7 @@ class SettingsActivity : BaseActivity() {
         private fun updateLocalDns(enabled: Boolean) {
             fakeDns?.isEnabled = enabled
 //            localDnsPort?.isEnabled = enabled
-            vpnDns?.isEnabled = !enabled
+            vpnDns?.isEnabled = true
         }
 
         private fun configureUpdateTask(interval: Long) {
@@ -261,6 +317,13 @@ class SettingsActivity : BaseActivity() {
         private fun updateHevTunSettings(enabled: Boolean) {
             hevTunLogLevel?.isEnabled = enabled
             hevTunRwTimeout?.isEnabled = enabled
+        }
+
+        private companion object {
+            const val PREF_DNS_ADVANCED_TOGGLE = "pref_dns_advanced_toggle"
+            const val PREF_DNS_ADVANCED_CATEGORY = "pref_dns_advanced_category"
+            const val DNS_ADVANCED_SHOW_SUMMARY = "Показать дополнительные DNS-поля"
+            const val DNS_ADVANCED_HIDE_SUMMARY = "Скрыть дополнительные DNS-поля"
         }
     }
 
