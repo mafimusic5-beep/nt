@@ -6,7 +6,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,11 +20,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -109,14 +110,15 @@ fun VpnMainScreen(
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter,
             )
         } else {
             BackgroundShape(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = if (tight) 170.dp else 205.dp)
+                    .padding(top = if (tight) 150.dp else 180.dp)
                     .fillMaxWidth()
-                    .height(if (tight) 360.dp else 430.dp),
+                    .height(if (tight) 390.dp else 470.dp),
             )
         }
 
@@ -293,28 +295,31 @@ private fun RegionSelectorCard(
     tight: Boolean,
     onLocationSelected: (String) -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(false) }
     val visibleLocations = remember(locations, selectedLocation) {
-        val base = if (locations.isEmpty()) listOf(selectedLocation) else locations
-        if (base.any { it.id == selectedLocation.id || it.title == selectedLocation.title }) {
-            base
+        val selectable = locations.filter { it.isSelectableLocation() }
+        val withSelected = if (selectedLocation.isSelectableLocation() && selectable.none { it.id == selectedLocation.id || it.title == selectedLocation.title }) {
+            listOf(selectedLocation) + selectable
         } else {
-            listOf(selectedLocation) + base
+            selectable
         }
+        withSelected
+            .ifEmpty { listOf(selectedLocation) }
+            .distinctBy { it.title }
     }
     val selectedCode = selectedLocation.countryCodeLabel()
     val selectedTitle = selectedLocation.cityLabel()
     val cardShape = RoundedCornerShape(if (compact) 22.dp else 26.dp)
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(cardShape)
-            .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, AppUiColors.Border, cardShape)
-            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (tight) 12.dp else 16.dp),
-    ) {
+    Box(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(cardShape)
+                .background(Color.White.copy(alpha = 0.92f))
+                .border(1.dp, AppUiColors.Border.copy(alpha = 0.82f), cardShape)
+                .clickable(enabled = visibleLocations.size > 1) { expanded = true }
+                .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (tight) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -324,7 +329,7 @@ private fun RegionSelectorCard(
                     color = AppUiColors.TextSecondary,
                     maxLines = 1,
                 )
-                Spacer(Modifier.height(if (tight) 6.dp else 8.dp))
+                Spacer(Modifier.height(if (tight) 4.dp else 6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
                     Spacer(Modifier.width(10.dp))
@@ -338,94 +343,40 @@ private fun RegionSelectorCard(
                     )
                 }
             }
-            Box(
-                modifier = Modifier
-                    .size(if (compact) 42.dp else 46.dp)
-                    .clip(CircleShape)
-                    .background(AppUiColors.SelectedSurface),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "⌄",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = AppUiColors.TextPrimary,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-
-        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(AppUiColors.Border.copy(alpha = 0.75f))
-        )
-        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            visibleLocations.forEachIndexed { index, option ->
-                val selected = option.id == selectedLocation.id || option.title == selectedLocation.title
-                RegionChip(
-                    location = option,
-                    selected = selected,
-                    compact = compact,
-                    onClick = { onLocationSelected(option.title) },
-                )
-                if (index != visibleLocations.lastIndex) {
-                    Spacer(Modifier.width(if (compact) 10.dp else 12.dp))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RegionChip(
-    location: VpnLocationOption,
-    selected: Boolean,
-    compact: Boolean,
-    onClick: () -> Unit,
-) {
-    val code = location.countryCodeLabel()
-    val shape = RoundedCornerShape(if (compact) 16.dp else 18.dp)
-    val background = if (selected) AppUiColors.RegionSelected else Color.White
-    val borderColor = if (selected) AppUiColors.Positive.copy(alpha = 0.22f) else AppUiColors.Border
-
-    Row(
-        modifier = Modifier
-            .width(if (compact) 122.dp else 142.dp)
-            .height(if (compact) 56.dp else 64.dp)
-            .clip(shape)
-            .background(background)
-            .border(1.dp, borderColor, shape)
-            .clickable { onClick() }
-            .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 8.dp else 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FlagMark(code = code, modifier = Modifier.width(22.dp).height(16.dp))
-        Spacer(Modifier.width(9.dp))
-        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = location.cityLabel(),
-                style = MaterialTheme.typography.bodyMedium,
+                text = "⌄",
+                style = MaterialTheme.typography.headlineSmall,
                 color = AppUiColors.TextPrimary,
-                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(start = 12.dp, end = 6.dp),
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = code,
-                style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextSecondary,
-                maxLines = 1,
-            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(Color.White),
+        ) {
+            visibleLocations.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlagMark(code = option.countryCodeLabel(), modifier = Modifier.width(24.dp).height(17.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "${option.cityLabel()} • ${option.countryCodeLabel()}",
+                                color = AppUiColors.TextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onLocationSelected(option.title)
+                    },
+                )
+            }
         }
     }
 }
@@ -436,7 +387,7 @@ private fun FlagMark(code: String, modifier: Modifier = Modifier) {
         val w = size.width
         val h = size.height
         fun stripe(color: Color, left: Float, top: Float, right: Float, bottom: Float) {
-            drawRect(color, topLeft = Offset(w * left, h * top), size = androidx.compose.ui.geometry.Size(w * (right - left), h * (bottom - top)))
+            drawRect(color, topLeft = Offset(w * left, h * top), size = Size(w * (right - left), h * (bottom - top)))
         }
 
         when (code.uppercase()) {
@@ -937,6 +888,10 @@ private fun VpnLocationOption.countryCodeLabel(): String {
     }
 }
 
+private fun VpnLocationOption.isSelectableLocation(): Boolean {
+    return id.toLongOrNull() != null || importText.isNotBlank()
+}
+
 private fun VpnLocationOption.regionLabel(): String {
     val city = cityLabel()
     return when (city) {
@@ -960,7 +915,6 @@ private object AppUiColors {
     val Background = Color.White
     val Surface = Color(0xFFF9FAFB)
     val SelectedSurface = Color(0xFFF4F6F8)
-    val RegionSelected = Color(0xFFF3FAEF)
     val Border = Color(0xFFE6E9EE)
     val TextPrimary = Color(0xFF111319)
     val TextSecondary = Color(0xFF7D828D)
