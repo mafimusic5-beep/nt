@@ -293,95 +293,51 @@ private fun RegionSelectorCard(
     tight: Boolean,
     onLocationSelected: (String) -> Unit,
 ) {
-    val visibleLocations = remember(locations, selectedLocation) {
-        val base = if (locations.isEmpty()) listOf(selectedLocation) else locations
-        if (base.any { it.id == selectedLocation.id || it.title == selectedLocation.title }) {
-            base
-        } else {
-            listOf(selectedLocation) + base
-        }
-    }
     val selectedCode = selectedLocation.countryCodeLabel()
     val selectedTitle = selectedLocation.cityLabel()
-    val cardShape = RoundedCornerShape(if (compact) 22.dp else 26.dp)
+    val cardShape = RoundedCornerShape(if (compact) 18.dp else 20.dp)
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(if (tight) 72.dp else 78.dp)
             .clip(cardShape)
             .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, AppUiColors.Border, cardShape)
-            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (tight) 12.dp else 16.dp),
+            .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
+            .clickable(enabled = locations.isNotEmpty()) {
+                onLocationSelected(selectedLocation.title)
+            }
+            .padding(horizontal = if (compact) 16.dp else 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Регион",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextSecondary,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(7.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Регион",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AppUiColors.TextSecondary,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.height(if (tight) 6.dp else 8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = "$selectedTitle • $selectedCode",
-                        style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-                        color = AppUiColors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .size(if (compact) 42.dp else 46.dp)
-                    .clip(CircleShape)
-                    .background(AppUiColors.SelectedSurface),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "⌄",
-                    style = MaterialTheme.typography.titleLarge,
+                    text = "$selectedTitle • $selectedCode",
+                    style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
                     color = AppUiColors.TextPrimary,
-                    textAlign = TextAlign.Center,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-
-        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(AppUiColors.Border.copy(alpha = 0.75f))
+        Text(
+            text = "⌄",
+            style = MaterialTheme.typography.titleLarge,
+            color = AppUiColors.TextPrimary,
+            textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            visibleLocations.forEachIndexed { index, option ->
-                val selected = option.id == selectedLocation.id || option.title == selectedLocation.title
-                RegionChip(
-                    location = option,
-                    selected = selected,
-                    compact = compact,
-                    onClick = { onLocationSelected(option.title) },
-                )
-                if (index != visibleLocations.lastIndex) {
-                    Spacer(Modifier.width(if (compact) 10.dp else 12.dp))
-                }
-            }
-        }
     }
 }
 
