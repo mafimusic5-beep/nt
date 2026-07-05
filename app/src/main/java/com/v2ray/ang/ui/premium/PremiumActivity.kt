@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -495,16 +496,27 @@ private fun CodeCharacterSlot(
             ),
             modifier = Modifier
                 .height(if (compact) 28.dp else 32.dp)
-                .offset(y = (6f * characterState.yOffsetProgress).dp)
+                .scale(characterState.scale)
                 .alpha(characterState.alpha),
             maxLines = 1,
         )
         Box(
             modifier = Modifier
                 .width(if (compact) 19.dp else 23.dp)
-                .height(1.35.dp)
-                .background(Color(0xFFC4C9D0)),
-        )
+                .height(1.35.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFC4C9D0)),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(characterState.underlineAlpha)
+                    .background(Color(0xFF111319)),
+            )
+        }
     }
 }
 
