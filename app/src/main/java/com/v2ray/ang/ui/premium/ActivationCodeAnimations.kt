@@ -1,6 +1,7 @@
 package com.v2ray.ang.ui.premium
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -9,7 +10,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 
-private const val CHARACTER_FADE_IN_MS = 240
+private const val CHARACTER_IMPRINT_MS = 190
+private const val CHARACTER_START_SCALE = 0.94f
+private const val UNDERLINE_HIGHLIGHT_ALPHA = 0.42f
 
 @Composable
 internal fun rememberActivationCharacterState(char: String): ActivationCharacterState {
@@ -25,20 +28,28 @@ internal fun rememberActivationCharacterState(char: String): ActivationCharacter
             progress.snapTo(0f)
             progress.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = CHARACTER_FADE_IN_MS),
+                animationSpec = tween(
+                    durationMillis = CHARACTER_IMPRINT_MS,
+                    easing = FastOutSlowInEasing,
+                ),
             )
         }
     }
 
+    val scale = CHARACTER_START_SCALE + (1f - CHARACTER_START_SCALE) * progress.value
+    val underlineAlpha = UNDERLINE_HIGHLIGHT_ALPHA * (1f - kotlin.math.abs((progress.value * 2f) - 1f))
+
     return ActivationCharacterState(
         visibleChar = visibleChar,
         alpha = progress.value,
-        yOffsetProgress = 1f - progress.value,
+        scale = scale,
+        underlineAlpha = underlineAlpha,
     )
 }
 
 internal data class ActivationCharacterState(
     val visibleChar: String,
     val alpha: Float,
-    val yOffsetProgress: Float,
+    val scale: Float,
+    val underlineAlpha: Float,
 )
