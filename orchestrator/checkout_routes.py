@@ -16,6 +16,7 @@ PLANS = {
     'personal_plus': {'title': 'Личный+', 'devices': 2, 'days': 30},
     'family': {'title': 'Семейный', 'devices': 5, 'days': 30},
 }
+VALID_MONTHS = {1, 3, 6, 12}
 WINDOW = 300
 MAX_ATTEMPTS = 12
 _attempts: Dict[str, Deque[float]] = defaultdict(deque)
@@ -24,6 +25,7 @@ _attempts: Dict[str, Deque[float]] = defaultdict(deque)
 class CheckoutRequest(BaseModel):
     plan: str = Field(min_length=1, max_length=32)
     customer: str = Field(default='', max_length=128)
+    months: int = Field(default=1, ge=1, le=12)
 
 
 class CodeLookupRequest(BaseModel):
@@ -39,6 +41,9 @@ class CheckoutCallbackRequest(BaseModel):
     plan: str = Field(min_length=1, max_length=32)
     customer: str = Field(default='', max_length=128)
     status: str = Field(default='paid', max_length=32)
+    months: int = Field(default=1, ge=1, le=12)
+    mode: str = Field(default='new', max_length=16)
+    code: str = Field(default='', max_length=64)
 
 
 def limited(key: str) -> bool:
@@ -63,6 +68,14 @@ def plan_or_error(plan: str):
     return PLANS[plan]
 
 
+def safe_months(value: int) -> int:
+    try:
+        months = int(value)
+    except (TypeError, ValueError):
+        months = 1
+    return months if months in VALID_MONTHS else 1
+
+
 def public_code_row(row: dict) -> dict:
     plan = row.get('plan') or ''
     return {
@@ -77,24 +90,30 @@ def public_code_row(row: dict) -> dict:
     }
 
 
-def issue_code(plan: str, customer: str, external_id: Optional[str] = None) -> dict:
+def issue_code(plan: str, customer: str, external_id: Optional[str] = None, months: int = 1) -> dict:
     selected = PLANS[plan]
-    order = create_checkout_code(plan, selected['devices'], selected['days'], customer.strip(), external_id)
+    selected_months = safe_months(months)
+    days = selected['days'] * selected_months
+    order = create_checkout_code(plan, selected['devices'], days, customer.strip(), external_id)
     return {
         'ok': True,
         'orderId': order['external_id'],
         'code': order['code'],
         'plan': plan,
         'planTitle': selected['title'],
+        'months': selected_months,
+        'days': days,
         'maxDevices': order['max_devices'],
         'expiresAt': order['expires_at'],
         'redirectUrl': '/checkout/code?order=' + order['external_id'],
     }
 
 
-def issue_renewal(code: str, plan: str, customer: str) -> dict:
+def issue_renewal(code: str, plan: str, customer: str, months: int = 1, external_id: Optional[str] = None) -> dict:
     selected = PLANS[plan]
-    order = renew_activation_code(code, plan, selected['devices'], selected['days'], customer.strip())
+    selected_months = safe_months(months)
+    days = selected['days'] * selected_months
+    order = renew_activation_code(code, plan, selected['devices'], days, customer.strip(), external_id)
     if not order:
         return {'ok': False, 'reason': 'not_found'}
     return {
@@ -103,6 +122,8 @@ def issue_renewal(code: str, plan: str, customer: str) -> dict:
         'code': order['code'],
         'plan': plan,
         'planTitle': selected['title'],
+        'months': selected_months,
+        'days': days,
         'maxDevices': order['max_devices'],
         'expiresAt': order['expires_at'],
         'redirectUrl': '/checkout/code?order=' + order['external_id'],
@@ -121,7 +142,7 @@ def page_code():
 
 @router.get('/api/checkout/plans')
 def plans():
-    return {'ok': True, 'plans': PLANS}
+    return {'ok': True, 'plans': PLANS, 'months': sorted(VALID_MONTHS)}
 
 
 @router.post('/api/checkout/get-code')
@@ -130,7 +151,7 @@ def get_code(payload: CheckoutRequest, request: Request):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    return issue_code(payload.plan, payload.customer)
+    return issue_code(payload.plan, payload.customer, months=payload.months)
 
 
 @router.post('/api/checkout/find-code')
@@ -149,7 +170,7 @@ def renew_code(payload: RenewCodeRequest, request: Request):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    result = issue_renewal(payload.code, payload.plan, payload.customer)
+    result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months)
     if not result.get('ok'):
         return JSONResponse(status_code=404, content=result)
     return result
@@ -163,7 +184,14 @@ def callback(payload: CheckoutCallbackRequest, x_checkout_secret: str = Header(d
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'not_paid'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    return issue_code(payload.plan, payload.customer, payload.externalId)
+    if payload.mode == 'renew':
+        if not payload.code:
+            return JSONResponse(status_code=400, content={'ok': False, 'reason': 'missing_code'})
+        result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months, payload.externalId)
+        if not result.get('ok'):
+            return JSONResponse(status_code=404, content=result)
+        return result
+    return issue_code(payload.plan, payload.customer, payload.externalId, payload.months)
 
 
 @router.get('/api/checkout/order/{order_id}')
