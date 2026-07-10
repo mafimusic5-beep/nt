@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from typing import Deque, Dict, Optional
 
 from config import CHECKOUT_SECRET
-from storage import create_checkout_code, get_checkout_order
+from storage import create_checkout_code, get_activation_code, get_checkout_order, renew_activation_code
 
 router = APIRouter()
 WEB_DIR = Path(__file__).resolve().parent / 'web'
@@ -24,6 +24,14 @@ _attempts: Dict[str, Deque[float]] = defaultdict(deque)
 class CheckoutRequest(BaseModel):
     plan: str = Field(min_length=1, max_length=32)
     customer: str = Field(default='', max_length=128)
+
+
+class CodeLookupRequest(BaseModel):
+    code: str = Field(min_length=3, max_length=64)
+
+
+class RenewCodeRequest(CheckoutRequest):
+    code: str = Field(min_length=3, max_length=64)
 
 
 class CheckoutCallbackRequest(BaseModel):
@@ -55,9 +63,40 @@ def plan_or_error(plan: str):
     return PLANS[plan]
 
 
+def public_code_row(row: dict) -> dict:
+    plan = row.get('plan') or ''
+    return {
+        'ok': True,
+        'code': row.get('code'),
+        'status': row.get('status', 'active'),
+        'plan': plan,
+        'planTitle': PLANS.get(plan, {}).get('title', plan or '—'),
+        'maxDevices': row.get('max_devices'),
+        'usedDevices': row.get('used_devices'),
+        'expiresAt': row.get('expires_at'),
+    }
+
+
 def issue_code(plan: str, customer: str, external_id: Optional[str] = None) -> dict:
     selected = PLANS[plan]
     order = create_checkout_code(plan, selected['devices'], selected['days'], customer.strip(), external_id)
+    return {
+        'ok': True,
+        'orderId': order['external_id'],
+        'code': order['code'],
+        'plan': plan,
+        'planTitle': selected['title'],
+        'maxDevices': order['max_devices'],
+        'expiresAt': order['expires_at'],
+        'redirectUrl': '/checkout/code?order=' + order['external_id'],
+    }
+
+
+def issue_renewal(code: str, plan: str, customer: str) -> dict:
+    selected = PLANS[plan]
+    order = renew_activation_code(code, plan, selected['devices'], selected['days'], customer.strip())
+    if not order:
+        return {'ok': False, 'reason': 'not_found'}
     return {
         'ok': True,
         'orderId': order['external_id'],
@@ -92,6 +131,28 @@ def get_code(payload: CheckoutRequest, request: Request):
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
     return issue_code(payload.plan, payload.customer)
+
+
+@router.post('/api/checkout/find-code')
+def find_code(payload: CodeLookupRequest, request: Request):
+    if limited('find-code:' + remote_ip(request)):
+        return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
+    row = get_activation_code(payload.code)
+    if not row:
+        return JSONResponse(status_code=404, content={'ok': False, 'reason': 'not_found'})
+    return public_code_row(row)
+
+
+@router.post('/api/checkout/renew-code')
+def renew_code(payload: RenewCodeRequest, request: Request):
+    if limited('renew-code:' + remote_ip(request)):
+        return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
+    if not plan_or_error(payload.plan):
+        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
+    result = issue_renewal(payload.code, payload.plan, payload.customer)
+    if not result.get('ok'):
+        return JSONResponse(status_code=404, content=result)
+    return result
 
 
 @router.post('/api/checkout/callback')
