@@ -15,6 +15,26 @@ def future_iso(days: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0).isoformat()
 
 
+def parse_iso(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def extend_iso(existing_value: Optional[str], days: int) -> str:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    base = parse_iso(existing_value) or now
+    if base < now:
+        base = now
+    return (base + timedelta(days=days)).replace(microsecond=0).isoformat()
+
+
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
     con = sqlite3.connect(DATABASE_PATH)
@@ -119,6 +139,45 @@ def create_checkout_code(plan: str, max_devices: int, days: int = 30, customer: 
         row = con.execute('SELECT code, plan, max_devices, expires_at FROM activation_codes WHERE code = ?', (code,)).fetchone()
     add_event('checkout_code_created', f'Checkout issued {code}: {plan}, devices {safe_max_devices}', code, plan)
     result = dict(row)
+    result['external_id'] = external_id
+    return result
+
+
+def get_activation_code(code: str) -> Optional[Dict[str, Any]]:
+    formatted = format_code(code)
+    with connect() as con:
+        row = con.execute(
+            'SELECT code, status, expires_at, max_devices, plan, (SELECT COUNT(*) FROM code_devices WHERE code_devices.code = activation_codes.code) AS used_devices FROM activation_codes WHERE code = ?',
+            (formatted,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def renew_activation_code(code: str, plan: str, max_devices: int, days: int = 30, customer: str = '', external_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    formatted = format_code(code)
+    external_id = external_id or secrets.token_urlsafe(18)
+    safe_max_devices = max(1, min(int(max_devices), 20))
+    with connect() as con:
+        row = con.execute('SELECT code, expires_at FROM activation_codes WHERE code = ?', (formatted,)).fetchone()
+        if not row:
+            return None
+
+        new_expires_at = extend_iso(row['expires_at'], days)
+        con.execute(
+            'UPDATE activation_codes SET status = ?, note = ?, expires_at = ?, max_devices = ?, plan = ? WHERE code = ?',
+            ('active', customer or plan, new_expires_at, safe_max_devices, plan, formatted),
+        )
+        con.execute(
+            'INSERT INTO checkout_orders(external_id, plan, customer, code, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            (external_id, plan, customer, formatted, 'paid', now_iso()),
+        )
+        updated = con.execute(
+            'SELECT code, plan, max_devices, expires_at FROM activation_codes WHERE code = ?',
+            (formatted,),
+        ).fetchone()
+
+    add_event('checkout_code_renewed', f'Checkout renewed {formatted}: {plan}, devices {safe_max_devices}', formatted, plan)
+    result = dict(updated)
     result['external_id'] = external_id
     return result
 
