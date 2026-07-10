@@ -16,7 +16,8 @@ PLANS = {
     'personal_plus': {'title': 'Личный+', 'devices': 2, 'days': 30},
     'family': {'title': 'Семейный', 'devices': 5, 'days': 30},
 }
-VALID_MONTHS = {1, 3, 6, 12}
+MIN_MONTHS = 1
+MAX_MONTHS = 12
 WINDOW = 300
 MAX_ATTEMPTS = 12
 _attempts: Dict[str, Deque[float]] = defaultdict(deque)
@@ -25,7 +26,7 @@ _attempts: Dict[str, Deque[float]] = defaultdict(deque)
 class CheckoutRequest(BaseModel):
     plan: str = Field(min_length=1, max_length=32)
     customer: str = Field(default='', max_length=128)
-    months: int = Field(default=1, ge=1, le=12)
+    months: int = Field(default=1, ge=MIN_MONTHS, le=MAX_MONTHS)
 
 
 class CodeLookupRequest(BaseModel):
@@ -41,7 +42,7 @@ class CheckoutCallbackRequest(BaseModel):
     plan: str = Field(min_length=1, max_length=32)
     customer: str = Field(default='', max_length=128)
     status: str = Field(default='paid', max_length=32)
-    months: int = Field(default=1, ge=1, le=12)
+    months: int = Field(default=1, ge=MIN_MONTHS, le=MAX_MONTHS)
     mode: str = Field(default='new', max_length=16)
     code: str = Field(default='', max_length=64)
 
@@ -72,8 +73,8 @@ def safe_months(value: int) -> int:
     try:
         months = int(value)
     except (TypeError, ValueError):
-        months = 1
-    return months if months in VALID_MONTHS else 1
+        months = MIN_MONTHS
+    return max(MIN_MONTHS, min(months, MAX_MONTHS))
 
 
 def public_code_row(row: dict) -> dict:
@@ -142,7 +143,7 @@ def page_code():
 
 @router.get('/api/checkout/plans')
 def plans():
-    return {'ok': True, 'plans': PLANS, 'months': sorted(VALID_MONTHS)}
+    return {'ok': True, 'plans': PLANS, 'months': {'min': MIN_MONTHS, 'max': MAX_MONTHS}}
 
 
 @router.post('/api/checkout/get-code')
