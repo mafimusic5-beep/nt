@@ -2,28 +2,23 @@ package com.v2ray.ang.ui.premium
 
 import android.content.Context
 import android.provider.Settings
+import android.util.Log
 import com.v2ray.ang.fmt.VlessFmt
+import com.v2ray.ang.handler.EmeryApiConfig
 import com.v2ray.ang.handler.MmkvManager
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 internal const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
 internal const val SKRYON_SERVER_GUID_PREF = "SKRYON_SERVER_GUID"
 
-private const val SKRYON_WEBSITE_API_BASE_URL = "https://skryon.ru"
-
-internal data class SkryonActivationResult(
-    val ok: Boolean,
-    val code: String = "",
-    val config: String = "",
-    val error: String = "",
-)
+private const val SKRYON_ACTIVATION_TAG = "SkryonActivation"
 
 private val client by lazy {
     OkHttpClient.Builder()
@@ -44,7 +39,7 @@ internal suspend fun activateSkryonCode(
             .put("deviceId", stableDeviceId(context))
             .toString()
         val request = Request.Builder()
-            .url(SKRYON_WEBSITE_API_BASE_URL + "/api/activate")
+            .url(EmeryApiConfig.baseUrl() + "/api/activate")
             .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .header("Accept", "application/json")
             .build()
@@ -71,10 +66,18 @@ internal suspend fun activateSkryonCode(
                 config = config,
             )
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        Log.e(SKRYON_ACTIVATION_TAG, "Activation request failed", e)
         SkryonActivationResult(ok = false, error = "Нет соединения с сервером")
     }
 }
+
+internal data class SkryonActivationResult(
+    val ok: Boolean,
+    val code: String = "",
+    val config: String = "",
+    val error: String = "",
+)
 
 internal fun saveActivatedSkryonConfig(config: String): String {
     val oldGuid = MmkvManager.decodeSettingsString(SKRYON_SERVER_GUID_PREF, "")?.trim().orEmpty()
