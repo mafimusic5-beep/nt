@@ -1,4 +1,4 @@
-﻿import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
+import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
@@ -26,8 +26,8 @@ android {
         versionName = "2.0.15"
         multiDexEnabled = true
 
-        // Emery orchestrator API on deployed VPS backend.
-        buildConfigField("String", "EMERY_API_BASE_URL", "\"http://80.71.159.221:9330\"")
+        // Public Skryon API endpoint. Nginx/Cloudflare proxy requests to the backend VPS.
+        buildConfigField("String", "EMERY_API_BASE_URL", "\"https://skryon.ru\"")
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -166,6 +166,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
@@ -230,7 +231,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
         libv2rayAar.parentFile?.mkdirs()
         val url =
             URI(
-                "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
+                "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2RayVersionProperty/libv2ray.aar",
             ).toURL()
         logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
         url.openStream().use { input: InputStream ->
