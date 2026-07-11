@@ -133,7 +133,7 @@ androidComponents {
         variant.outputs.forEach { output ->
             val abi = output.filters.find { it.filterType == ABI }?.identifier ?: "universal"
 
-            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default names.
+            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default output names.
             if (isFdroid) {
                 val suffix = fdroidAbiSuffix[abi] ?: return@forEach
                 output.versionCode.set((100 * appVersionCode + suffix) + 5_000_000)
@@ -165,7 +165,6 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     debugImplementation(libs.androidx.compose.ui.tooling)
@@ -231,7 +230,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
         libv2rayAar.parentFile?.mkdirs()
         val url =
             URI(
-                "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2RayVersionProperty/libv2ray.aar",
+                "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
             ).toURL()
         logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
         url.openStream().use { input: InputStream ->
