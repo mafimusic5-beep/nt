@@ -16,7 +16,6 @@ import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
-import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -40,8 +39,14 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private companion object {
         const val DEFAULT_ACCESS_KEY = "DEV"
         const val DEFAULT_REGION_TITLE = "Регион"
-        const val SERVICE_STATE_RECHECK_DELAY_MS = 1_500L
+        const val SERVICE_STATE_SYNC_ATTEMPTS = 5
+        const val SERVICE_START_CONFIRMATION_ATTEMPTS = 15
+        const val SERVICE_STATE_SYNC_DELAY_MS = 700L
+        const val SERVICE_START_CONFIRMATION_DELAY_MS = 1_000L
     }
+
+    private val appContext: Context
+        get() = getApplication<Application>().applicationContext
 
     private val _uiState = MutableStateFlow(
         VpnMainUiState(
@@ -53,20 +58,31 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private var connectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
-    private var serviceStateRecheckJob: Job? = null
-    private var serviceReceiverRegistered = false
+    private var serviceStateSyncJob: Job? = null
+    private var serviceStateReceiverRegistered = false
+    private var waitingForStartConfirmation = false
 
     private val serviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.getIntExtra("key", 0)) {
                 AppConfig.MSG_STATE_RUNNING,
-                AppConfig.MSG_STATE_START_SUCCESS -> setConnectedFromService()
+                AppConfig.MSG_STATE_START_SUCCESS -> onServiceRunning()
 
-                AppConfig.MSG_STATE_NOT_RUNNING,
-                AppConfig.MSG_STATE_STOP_SUCCESS -> setDisconnectedFromService()
+                AppConfig.MSG_STATE_NOT_RUNNING -> {
+                    if (!waitingForStartConfirmation) {
+                        onServiceStopped()
+                    }
+                }
 
                 AppConfig.MSG_STATE_START_FAILURE -> {
+                    waitingForStartConfirmation = false
+                    serviceStateSyncJob?.cancel()
                     setDisconnectedWithError("Не удалось запустить VPN-сервис")
+                }
+
+                AppConfig.MSG_STATE_STOP_SUCCESS -> {
+                    waitingForStartConfirmation = false
+                    onServiceStopped()
                 }
             }
         }
@@ -74,81 +90,85 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         registerServiceStateReceiver()
-        requestServiceState()
+        refreshConnectionState()
         refreshLocations()
     }
 
     private fun registerServiceStateReceiver() {
-        if (serviceReceiverRegistered) return
+        if (serviceStateReceiverRegistered) return
 
-        val application = getApplication<Application>()
-        runCatching {
+        try {
             ContextCompat.registerReceiver(
-                application,
+                appContext,
                 serviceStateReceiver,
                 IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY),
-                Utils.receiverFlags(),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
             )
-        }.onSuccess {
-            serviceReceiverRegistered = true
-        }.onFailure { error ->
+            serviceStateReceiverRegistered = true
+        } catch (error: Exception) {
             VpnUiDebugLogger.log(
                 hypothesisId = "H10",
                 location = "VpnMainViewModel.kt:registerServiceStateReceiver",
-                message = "premium service-state receiver registration failed",
+                message = "failed to register service state receiver",
                 data = JSONObject().put("error", error.message ?: "unknown"),
             )
         }
     }
 
-    private fun requestServiceState() {
-        MessageUtil.sendMsg2Service(
-            getApplication(),
-            AppConfig.MSG_REGISTER_CLIENT,
-            "",
-        )
-    }
+    fun refreshConnectionState() {
+        registerServiceStateReceiver()
+        if (!serviceStateReceiverRegistered) return
 
-    private fun scheduleServiceStateRecheck() {
-        serviceStateRecheckJob?.cancel()
-        serviceStateRecheckJob = viewModelScope.launch {
-            delay(SERVICE_STATE_RECHECK_DELAY_MS)
-            if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
-                requestServiceState()
+        serviceStateSyncJob?.cancel()
+        serviceStateSyncJob = viewModelScope.launch {
+            repeat(SERVICE_STATE_SYNC_ATTEMPTS) { attempt ->
+                MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_REGISTER_CLIENT, "")
+                if (attempt < SERVICE_STATE_SYNC_ATTEMPTS - 1) {
+                    delay(SERVICE_STATE_SYNC_DELAY_MS)
+                }
             }
         }
     }
 
-    private fun setConnectedFromService() {
-        connectJob?.cancel()
-        serviceStateRecheckJob?.cancel()
+    private fun awaitServiceStartConfirmation() {
+        if (!waitingForStartConfirmation || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+            return
+        }
+
+        serviceStateSyncJob?.cancel()
+        serviceStateSyncJob = viewModelScope.launch {
+            repeat(SERVICE_START_CONFIRMATION_ATTEMPTS) {
+                MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_REGISTER_CLIENT, "")
+                delay(SERVICE_START_CONFIRMATION_DELAY_MS)
+                if (!waitingForStartConfirmation || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+                    return@launch
+                }
+            }
+
+            if (waitingForStartConfirmation && _uiState.value.connectionState == VpnConnectionState.Connecting) {
+                waitingForStartConfirmation = false
+                setDisconnectedWithError("VPN-сервис не подтвердил подключение")
+            }
+        }
+    }
+
+    private fun onServiceRunning() {
+        waitingForStartConfirmation = false
+        serviceStateSyncJob?.cancel()
         _uiState.update { state ->
             state.copy(
-                activationKey = state.activationKey.ifBlank {
-                    savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
-                },
                 connectionState = VpnConnectionState.Connected,
                 locationsError = "",
             )
         }
         startTimer()
-        VpnUiDebugLogger.log(
-            hypothesisId = "H10",
-            location = "VpnMainViewModel.kt:setConnectedFromService",
-            message = "premium UI synchronized with running VPN service",
-            data = JSONObject(),
-        )
     }
 
-    private fun setDisconnectedFromService() {
-        connectJob?.cancel()
+    private fun onServiceStopped() {
+        serviceStateSyncJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
         _uiState.update { state ->
             state.copy(
-                activationKey = state.activationKey.ifBlank {
-                    savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
-                },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
             )
@@ -414,7 +434,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
         connectJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
+        waitingForStartConfirmation = true
 
         _uiState.update { state ->
             state.copy(
@@ -447,6 +467,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         false
                     }
                     if (!serviceStartRequested) {
+                        waitingForStartConfirmation = false
                         setDisconnectedWithError("Не удалось запустить VPN-сервис")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -459,18 +480,20 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         return@fold
                     }
 
-                    VpnUiDebugLogger.log(
-                        hypothesisId = "H10",
+                    AgentDebugNdjsonLogger.log(
+                        hypothesisId = "H2",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "VPN service start requested; waiting for runtime confirmation",
+                        message = "premium_waiting_for_service_confirmation",
+                        runId = "service-state-sync",
                         data = JSONObject()
                             .put("serverId", payload.serverId)
                             .put("city", payload.city)
                             .put("selectedGuid", payload.selectedGuid),
                     )
-                    scheduleServiceStateRecheck()
+                    awaitServiceStartConfirmation()
                 },
                 onFailure = { error ->
+                    waitingForStartConfirmation = false
                     setDisconnectedWithError("Не удалось подключиться к серверу")
                     VpnUiDebugLogger.log(
                         hypothesisId = "H7",
@@ -486,8 +509,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun setDisconnectedWithError(message: String) {
+        waitingForStartConfirmation = false
+        serviceStateSyncJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
         _uiState.update { state ->
             state.copy(
                 connectionState = VpnConnectionState.Disconnected,
@@ -537,8 +561,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
     fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
         connectJob?.cancel()
+        serviceStateSyncJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
+        waitingForStartConfirmation = false
         stopVpnService()
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H2",
@@ -582,16 +607,16 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
-        serviceStateRecheckJob?.cancel()
-
-        if (serviceReceiverRegistered) {
-            MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_UNREGISTER_CLIENT, "")
-            runCatching {
-                getApplication<Application>().unregisterReceiver(serviceStateReceiver)
+        serviceStateSyncJob?.cancel()
+        if (serviceStateReceiverRegistered) {
+            MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_UNREGISTER_CLIENT, "")
+            try {
+                appContext.unregisterReceiver(serviceStateReceiver)
+            } catch (_: IllegalArgumentException) {
+                // Receiver was already unregistered by the framework.
             }
-            serviceReceiverRegistered = false
+            serviceStateReceiverRegistered = false
         }
-
         super.onCleared()
     }
 }
