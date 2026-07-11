@@ -6,7 +6,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,25 +15,34 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +77,7 @@ fun VpnMainRoute(
         uiState = uiState,
         locations = uiState.locations,
         onLocationSelected = viewModel::onLocationSelected,
+        onRefreshLocations = viewModel::refreshLocations,
         onConnectClick = {
             requestVpnPermission {
                 viewModel.onConnectClick(startVpnService)
@@ -84,12 +93,32 @@ fun VpnMainScreen(
     uiState: VpnMainUiState,
     locations: List<VpnLocationOption>,
     onLocationSelected: (String) -> Unit,
+    onRefreshLocations: () -> Unit = {},
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selectedTab by remember { mutableStateOf(MainTab.Home) }
+    var selectedTab by rememberSaveable { mutableStateOf(MainTab.Home) }
     var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
+    var showRegionPicker by rememberSaveable { mutableStateOf(false) }
+
+    val selectableLocations = locations.filter { it.isSelectable() }
+    val canChangeRegion = uiState.connectionState == VpnConnectionState.Disconnected && selectableLocations.isNotEmpty()
+
+    if (showRegionPicker) {
+        RegionPickerSheet(
+            locations = selectableLocations,
+            selectedLocation = uiState.selectedLocation,
+            loading = uiState.locationsLoading,
+            error = uiState.locationsError,
+            onRefresh = onRefreshLocations,
+            onSelect = { location ->
+                onLocationSelected(location.id)
+                showRegionPicker = false
+            },
+            onDismiss = { showRegionPicker = false },
+        )
+    }
 
     BoxWithConstraints(
         modifier = modifier
@@ -124,7 +153,12 @@ fun VpnMainScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = horizontalPadding, top = 0.dp, end = horizontalPadding, bottom = if (tight) 8.dp else 12.dp),
+                .padding(
+                    start = horizontalPadding,
+                    top = 0.dp,
+                    end = horizontalPadding,
+                    bottom = if (tight) 8.dp else 12.dp,
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
@@ -156,17 +190,20 @@ fun VpnMainScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Spacer(Modifier.weight(1f))
                 RegionSelectorCard(
                     selectedLocation = uiState.selectedLocation,
-                    locations = locations,
+                    onlineCount = selectableLocations.size,
+                    loading = uiState.locationsLoading,
+                    enabled = canChangeRegion,
+                    connectionState = uiState.connectionState,
                     compact = compact,
                     tight = tight,
-                    onLocationSelected = onLocationSelected,
+                    onClick = { showRegionPicker = true },
                 )
                 Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
                 PrimaryConnectButton(
@@ -189,14 +226,14 @@ fun VpnMainScreen(
                     Text(
                         text = when {
                             uiState.activationKey.isBlank() -> "Ключ доступа не найден"
-                            uiState.locationsLoading -> "Регион загружается"
+                            uiState.locationsLoading -> "Загружаем регионы из сети"
                             uiState.locationsError.isNotBlank() -> uiState.locationsError
-                            else -> "Регион недоступен"
+                            else -> "Нет доступных регионов"
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -254,7 +291,12 @@ private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
                 maxLines = 1,
             )
             Spacer(Modifier.width(7.dp))
-            Text(text = "VPN", style = MaterialTheme.typography.titleSmall, color = AppUiColors.TextSecondary, maxLines = 1)
+            Text(
+                text = "VPN",
+                style = MaterialTheme.typography.titleSmall,
+                color = AppUiColors.TextSecondary,
+                maxLines = 1,
+            )
         }
         Text(
             text = selectedLocation.cityLabel(),
@@ -271,14 +313,34 @@ private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
 }
 
 @Composable
-private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean = false, tight: Boolean = false) {
+private fun StatusBeacon(
+    connectionState: VpnConnectionState,
+    compact: Boolean = false,
+    tight: Boolean = false,
+) {
     val coreColor by animateColorAsState(
-        targetValue = if (connectionState == VpnConnectionState.Connected) AppUiColors.PositiveStrong else AppUiColors.Positive,
+        targetValue = if (connectionState == VpnConnectionState.Connected) {
+            AppUiColors.PositiveStrong
+        } else {
+            AppUiColors.Positive
+        },
         label = "beacon-core",
     )
-    val beaconSize = when { tight -> 72.dp; compact -> 88.dp; else -> 104.dp }
-    val midSize = when { tight -> 52.dp; compact -> 64.dp; else -> 74.dp }
-    val coreSize = when { tight -> 25.dp; compact -> 30.dp; else -> 34.dp }
+    val beaconSize = when {
+        tight -> 72.dp
+        compact -> 88.dp
+        else -> 104.dp
+    }
+    val midSize = when {
+        tight -> 52.dp
+        compact -> 64.dp
+        else -> 74.dp
+    }
+    val coreSize = when {
+        tight -> 25.dp
+        compact -> 30.dp
+        else -> 34.dp
+    }
     Box(Modifier.size(beaconSize), contentAlignment = Alignment.Center) {
         Box(Modifier.size(beaconSize).clip(CircleShape).background(coreColor.copy(alpha = 0.05f)))
         Box(Modifier.size(midSize).clip(CircleShape).background(coreColor.copy(alpha = 0.11f)))
@@ -289,101 +351,249 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
 @Composable
 private fun RegionSelectorCard(
     selectedLocation: VpnLocationOption,
-    locations: List<VpnLocationOption>,
+    onlineCount: Int,
+    loading: Boolean,
+    enabled: Boolean,
+    connectionState: VpnConnectionState,
     compact: Boolean,
     tight: Boolean,
-    onLocationSelected: (String) -> Unit,
+    onClick: () -> Unit,
 ) {
     val selectedCode = selectedLocation.countryCodeLabel()
     val selectedTitle = selectedLocation.cityLabel()
     val cardShape = RoundedCornerShape(if (compact) 18.dp else 20.dp)
+    val actionLabel = when {
+        connectionState != VpnConnectionState.Disconnected -> "Подключено"
+        loading -> "Обновляем"
+        enabled -> "Выбрать"
+        else -> "Недоступно"
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (tight) 72.dp else 78.dp)
+            .height(if (tight) 82.dp else 90.dp)
             .clip(cardShape)
-            .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
-            .clickable(enabled = locations.isNotEmpty()) {
-                onLocationSelected(selectedLocation.title)
-            }
-            .padding(horizontal = if (compact) 16.dp else 18.dp, vertical = 12.dp),
+            .background(Color.White.copy(alpha = 0.97f))
+            .border(1.dp, AppUiColors.Border.copy(alpha = 0.62f), cardShape)
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = if (compact) 15.dp else 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        FlagMark(code = selectedCode, modifier = Modifier.width(32.dp).height(23.dp))
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Регион",
+                text = selectedTitle,
+                style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                color = AppUiColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = when {
+                    connectionState != VpnConnectionState.Disconnected -> "Отключите VPN, чтобы сменить регион"
+                    loading -> "Получаем актуальный список серверов"
+                    onlineCount > 0 -> "$onlineCount ${regionCountWord(onlineCount)} в сети"
+                    else -> "Нет доступных регионов"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
-                fontWeight = FontWeight.Medium,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(7.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = "$selectedTitle • $selectedCode",
-                    style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+        }
+        Spacer(Modifier.width(12.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(if (enabled) AppUiColors.TextPrimary else AppUiColors.SelectedSurface)
+                .padding(horizontal = 13.dp, vertical = 9.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(17.dp),
+                    strokeWidth = 2.dp,
                     color = AppUiColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
+                )
+            } else {
+                Text(
+                    text = actionLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (enabled) Color.White else AppUiColors.TextSecondary,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-        Text(
-            text = "⌄",
-            style = MaterialTheme.typography.titleLarge,
-            color = AppUiColors.TextPrimary,
-            textAlign = TextAlign.Center,
-        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RegionPickerSheet(
+    locations: List<VpnLocationOption>,
+    selectedLocation: VpnLocationOption,
+    loading: Boolean,
+    error: String,
+    onRefresh: () -> Unit,
+    onSelect: (VpnLocationOption) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color.White,
+        contentColor = AppUiColors.TextPrimary,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(start = 20.dp, end = 20.dp, bottom = 18.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Выберите регион",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = if (loading) {
+                            "Обновляем список серверов"
+                        } else {
+                            "${locations.size} ${regionCountWord(locations.size)} сейчас в сети"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = AppUiColors.TextSecondary,
+                    )
+                }
+                TextButton(onClick = onRefresh, enabled = !loading) {
+                    Text(if (loading) "Загрузка..." else "Обновить")
+                }
+            }
+
+            if (loading) {
+                Spacer(Modifier.height(10.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.CenterHorizontally).size(24.dp),
+                    strokeWidth = 2.dp,
+                    color = AppUiColors.TextPrimary,
+                )
+            }
+
+            if (error.isNotBlank() && locations.isEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppUiColors.TextSecondary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(
+                    items = locations,
+                    key = { location -> location.id },
+                ) { location ->
+                    RegionPickerRow(
+                        location = location,
+                        selected = location.id == selectedLocation.id,
+                        onClick = { onSelect(location) },
+                    )
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun RegionChip(
+private fun RegionPickerRow(
     location: VpnLocationOption,
     selected: Boolean,
-    compact: Boolean,
     onClick: () -> Unit,
 ) {
     val code = location.countryCodeLabel()
-    val shape = RoundedCornerShape(if (compact) 16.dp else 18.dp)
-    val background = if (selected) AppUiColors.RegionSelected else Color.White
-    val borderColor = if (selected) AppUiColors.Positive.copy(alpha = 0.22f) else AppUiColors.Border
-
+    val shape = RoundedCornerShape(18.dp)
     Row(
         modifier = Modifier
-            .width(if (compact) 122.dp else 142.dp)
-            .height(if (compact) 56.dp else 64.dp)
+            .fillMaxWidth()
             .clip(shape)
-            .background(background)
-            .border(1.dp, borderColor, shape)
+            .background(if (selected) AppUiColors.RegionSelected else AppUiColors.Surface)
+            .border(
+                width = 1.dp,
+                color = if (selected) AppUiColors.Positive.copy(alpha = 0.42f) else AppUiColors.Border,
+                shape = shape,
+            )
             .clickable { onClick() }
-            .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 8.dp else 10.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FlagMark(code = code, modifier = Modifier.width(22.dp).height(16.dp))
-        Spacer(Modifier.width(9.dp))
+        FlagMark(code = code, modifier = Modifier.width(31.dp).height(22.dp))
+        Spacer(Modifier.width(13.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = location.cityLabel(),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 color = AppUiColors.TextPrimary,
-                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(3.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(AppUiColors.PositiveStrong))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "В сети • $code",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppUiColors.TextSecondary,
+                )
+            }
+        }
+        if (selected) {
             Text(
-                text = code,
-                style = MaterialTheme.typography.bodySmall,
+                text = "✓",
+                style = MaterialTheme.typography.titleLarge,
+                color = AppUiColors.PositiveStrong,
+                fontWeight = FontWeight.Bold,
+            )
+        } else {
+            Text(
+                text = "›",
+                style = MaterialTheme.typography.headlineSmall,
                 color = AppUiColors.TextSecondary,
-                maxLines = 1,
             )
         }
+    }
+}
+
+private fun regionCountWord(count: Int): String {
+    val mod100 = count % 100
+    val mod10 = count % 10
+    return when {
+        mod100 in 11..14 -> "регионов"
+        mod10 == 1 -> "регион"
+        mod10 in 2..4 -> "региона"
+        else -> "регионов"
     }
 }
 
@@ -393,7 +603,11 @@ private fun FlagMark(code: String, modifier: Modifier = Modifier) {
         val w = size.width
         val h = size.height
         fun stripe(color: Color, left: Float, top: Float, right: Float, bottom: Float) {
-            drawRect(color, topLeft = Offset(w * left, h * top), size = androidx.compose.ui.geometry.Size(w * (right - left), h * (bottom - top)))
+            drawRect(
+                color,
+                topLeft = Offset(w * left, h * top),
+                size = androidx.compose.ui.geometry.Size(w * (right - left), h * (bottom - top)),
+            )
         }
 
         when (code.uppercase()) {
@@ -434,6 +648,35 @@ private fun FlagMark(code: String, modifier: Modifier = Modifier) {
                 stripe(Color.White, 0f, 0.43f, 1f, 0.56f)
                 stripe(Color.White, 0f, 0.71f, 1f, 0.84f)
                 stripe(Color(0xFF3C3B6E), 0f, 0f, 0.45f, 0.55f)
+            }
+            "SE" -> {
+                drawRect(Color(0xFF006AA7))
+                stripe(Color(0xFFFECC00), 0.30f, 0f, 0.43f, 1f)
+                stripe(Color(0xFFFECC00), 0f, 0.42f, 1f, 0.58f)
+            }
+            "FI" -> {
+                drawRect(Color.White)
+                stripe(Color(0xFF003580), 0.28f, 0f, 0.42f, 1f)
+                stripe(Color(0xFF003580), 0f, 0.42f, 1f, 0.58f)
+            }
+            "ES" -> {
+                stripe(Color(0xFFAA151B), 0f, 0f, 1f, 0.25f)
+                stripe(Color(0xFFF1BF00), 0f, 0.25f, 1f, 0.75f)
+                stripe(Color(0xFFAA151B), 0f, 0.75f, 1f, 1f)
+            }
+            "IT" -> {
+                stripe(Color(0xFF009246), 0f, 0f, 0.333f, 1f)
+                stripe(Color.White, 0.333f, 0f, 0.666f, 1f)
+                stripe(Color(0xFFCE2B37), 0.666f, 0f, 1f, 1f)
+            }
+            "TR" -> {
+                drawRect(Color(0xFFE30A17))
+                drawCircle(Color.White, radius = h * 0.26f, center = Offset(w * 0.43f, h * 0.50f))
+                drawCircle(Color(0xFFE30A17), radius = h * 0.20f, center = Offset(w * 0.49f, h * 0.50f))
+            }
+            "SG" -> {
+                stripe(Color(0xFFEF3340), 0f, 0f, 1f, 0.5f)
+                stripe(Color.White, 0f, 0.5f, 1f, 1f)
             }
             "EU" -> {
                 drawRect(Color(0xFF244AA5))
@@ -481,15 +724,17 @@ private fun AutoConnectCard(
             )
         }
         Spacer(Modifier.width(12.dp))
-        Switch(
-            checked = enabled,
-            onCheckedChange = onCheckedChange,
-        )
+        Switch(checked = enabled, onCheckedChange = onCheckedChange)
     }
 }
 
 @Composable
-private fun BottomNavigationBar(selectedTab: MainTab, compact: Boolean, onHomeClick: () -> Unit, onAdvancedClick: () -> Unit) {
+private fun BottomNavigationBar(
+    selectedTab: MainTab,
+    compact: Boolean,
+    onHomeClick: () -> Unit,
+    onAdvancedClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -565,10 +810,7 @@ private fun AdvancedPage(
     var dnsValue by remember { mutableStateOf(readDnsSetting()) }
     var statusText by remember { mutableStateOf("") }
 
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.Start,
-    ) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.Start) {
         Text(
             text = "Расширенные",
             style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
@@ -710,8 +952,16 @@ private fun BackgroundShape(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
-        drawCircle(Color(0xFFF1F5F7).copy(alpha = 0.78f), radius = w * 0.30f, center = Offset(w * 0.13f, h * 0.36f))
-        drawCircle(Color(0xFFF1F5F7).copy(alpha = 0.72f), radius = w * 0.31f, center = Offset(w * 0.85f, h * 0.34f))
+        drawCircle(
+            Color(0xFFF1F5F7).copy(alpha = 0.78f),
+            radius = w * 0.30f,
+            center = Offset(w * 0.13f, h * 0.36f),
+        )
+        drawCircle(
+            Color(0xFFF1F5F7).copy(alpha = 0.72f),
+            radius = w * 0.31f,
+            center = Offset(w * 0.85f, h * 0.34f),
+        )
         val center = Path().apply {
             moveTo(w * 0.50f, h * 0.04f)
             lineTo(w * 0.92f, h * 0.74f)
@@ -725,7 +975,9 @@ private fun BackgroundShape(modifier: Modifier = Modifier) {
 
 @Composable
 fun HumanSilhouetteBlock(uiState: VpnMainUiState, modifier: Modifier = Modifier) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) { StatusBeacon(uiState.connectionState) }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        StatusBeacon(uiState.connectionState)
+    }
 }
 
 @Composable
@@ -734,40 +986,89 @@ fun HologramManBlock(uiState: VpnMainUiState, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun LocationSelector(selectedLocation: VpnLocationOption, locations: List<VpnLocationOption>, onLocationSelected: (String) -> Unit, modifier: Modifier = Modifier) {
+fun LocationSelector(
+    selectedLocation: VpnLocationOption,
+    locations: List<VpnLocationOption>,
+    onLocationSelected: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showPicker by rememberSaveable { mutableStateOf(false) }
+    val selectableLocations = locations.filter { it.isSelectable() }
+
+    if (showPicker) {
+        RegionPickerSheet(
+            locations = selectableLocations,
+            selectedLocation = selectedLocation,
+            loading = false,
+            error = "",
+            onRefresh = {},
+            onSelect = {
+                onLocationSelected(it.id)
+                showPicker = false
+            },
+            onDismiss = { showPicker = false },
+        )
+    }
+
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .background(AppUiColors.Surface)
             .border(1.dp, AppUiColors.Border, RoundedCornerShape(18.dp))
-            .clickable(enabled = locations.isNotEmpty()) { onLocationSelected(selectedLocation.title) }
+            .clickable(enabled = selectableLocations.isNotEmpty()) { showPicker = true }
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = selectedLocation.regionLabel(),
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyLarge,
             color = AppUiColors.TextPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        Text("Выбрать", style = MaterialTheme.typography.labelLarge, color = AppUiColors.TextPrimary)
     }
 }
 
 @Composable
 fun ConnectionTimer(time: String) {
-    Text(time, style = MaterialTheme.typography.headlineMedium, color = AppUiColors.TextPrimary, fontWeight = FontWeight.Medium)
+    Text(
+        text = time,
+        style = MaterialTheme.typography.headlineMedium,
+        color = AppUiColors.TextPrimary,
+        fontWeight = FontWeight.Medium,
+    )
 }
 
 @Composable
-fun ConnectionStatusOverlay(uiState: VpnMainUiState, modifier: Modifier = Modifier) { Box(modifier = modifier) }
+fun ConnectionStatusOverlay(uiState: VpnMainUiState, modifier: Modifier = Modifier) {
+    Box(modifier = modifier)
+}
 
 @Composable
-fun ActivationKeyField(value: String, onValueChange: (String) -> Unit, enabled: Boolean, modifier: Modifier = Modifier) { Box(modifier = modifier) }
+fun ActivationKeyField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier)
+}
 
 @Composable
-fun PrimaryConnectButton(state: VpnConnectionState, enabled: Boolean, onClick: () -> Unit, compact: Boolean = false, tight: Boolean = false, modifier: Modifier = Modifier) {
-    val containerColor by animateColorAsState(targetValue = if (enabled) Color(0xFF101319) else Color(0xFFB9BEC6), label = "primary-button-color")
+fun PrimaryConnectButton(
+    state: VpnConnectionState,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false,
+    tight: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val containerColor by animateColorAsState(
+        targetValue = if (enabled) Color(0xFF101319) else Color(0xFFB9BEC6),
+        label = "primary-button-color",
+    )
     val label = when (state) {
         VpnConnectionState.Disconnected -> "Включить VPN"
         VpnConnectionState.Connecting -> "Включаем..."
@@ -790,7 +1091,12 @@ fun PrimaryConnectButton(state: VpnConnectionState, enabled: Boolean, onClick: (
                 PauseGlyph(tint = Color.White.copy(alpha = 0.86f), compact = compact)
                 Spacer(Modifier.width(18.dp))
             }
-            Text(text = label, style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(
+                text = label,
+                style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -798,9 +1104,21 @@ fun PrimaryConnectButton(state: VpnConnectionState, enabled: Boolean, onClick: (
 @Composable
 private fun PauseGlyph(tint: Color, compact: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(if (compact) 3.dp else 4.dp).height(if (compact) 16.dp else 18.dp).clip(RoundedCornerShape(999.dp)).background(tint))
+        Box(
+            Modifier
+                .width(if (compact) 3.dp else 4.dp)
+                .height(if (compact) 16.dp else 18.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(tint),
+        )
         Spacer(Modifier.width(6.dp))
-        Box(Modifier.width(if (compact) 3.dp else 4.dp).height(if (compact) 16.dp else 18.dp).clip(RoundedCornerShape(999.dp)).background(tint))
+        Box(
+            Modifier
+                .width(if (compact) 3.dp else 4.dp)
+                .height(if (compact) 16.dp else 18.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(tint),
+        )
     }
 }
 
@@ -828,11 +1146,22 @@ private fun MiniIcon(type: MiniIconType, tint: Color, size: Dp) {
                 drawPath(p, tint)
             }
             MiniIconType.Settings -> {
-                drawCircle(tint, radius = minSide * 0.23f, center = Offset(sw / 2f, sh / 2f), style = Stroke(width = stroke))
+                drawCircle(
+                    tint,
+                    radius = minSide * 0.23f,
+                    center = Offset(sw / 2f, sh / 2f),
+                    style = Stroke(width = stroke),
+                )
                 repeat(6) { index ->
                     val angle = Math.toRadians((index * 60.0) - 90.0)
-                    val start = Offset(sw / 2f + kotlin.math.cos(angle).toFloat() * minSide * 0.30f, sh / 2f + kotlin.math.sin(angle).toFloat() * minSide * 0.30f)
-                    val end = Offset(sw / 2f + kotlin.math.cos(angle).toFloat() * minSide * 0.42f, sh / 2f + kotlin.math.sin(angle).toFloat() * minSide * 0.42f)
+                    val start = Offset(
+                        sw / 2f + kotlin.math.cos(angle).toFloat() * minSide * 0.30f,
+                        sh / 2f + kotlin.math.sin(angle).toFloat() * minSide * 0.30f,
+                    )
+                    val end = Offset(
+                        sw / 2f + kotlin.math.cos(angle).toFloat() * minSide * 0.42f,
+                        sh / 2f + kotlin.math.sin(angle).toFloat() * minSide * 0.42f,
+                    )
                     drawLine(tint, start, end, strokeWidth = stroke, cap = StrokeCap.Round)
                 }
                 drawCircle(tint, radius = minSide * 0.06f, center = Offset(sw / 2f, sh / 2f))
@@ -841,11 +1170,17 @@ private fun MiniIcon(type: MiniIconType, tint: Color, size: Dp) {
     }
 }
 
+private fun VpnLocationOption.isSelectable(): Boolean {
+    return id.toLongOrNull() != null || importText.isNotBlank()
+}
+
 private fun VpnLocationOption.cityLabel(): String {
     val value = title.trim()
     val lower = value.lowercase().replace('_', '-').replace('.', '-').replace(' ', '-')
     return when {
-        value.isBlank() -> "Париж"
+        id == "loading" -> "Загрузка"
+        id == "unavailable" -> "Недоступно"
+        value.isBlank() -> "Регион"
         lower.contains("paris") || lower.contains("париж") || lower.contains("france") || hasRegionToken(lower, "fr") -> "Париж"
         lower.contains("frankfurt") || lower.contains("germany") || hasRegionToken(lower, "de") -> "Франкфурт"
         lower.contains("amsterdam") || lower.contains("netherlands") || hasRegionToken(lower, "nl") -> "Амстердам"
@@ -856,10 +1191,9 @@ private fun VpnLocationOption.cityLabel(): String {
         lower.contains("stockholm") || hasRegionToken(lower, "se") -> "Стокгольм"
         lower.contains("helsinki") || hasRegionToken(lower, "fi") -> "Хельсинки"
         lower.contains("madrid") || hasRegionToken(lower, "es") -> "Мадрид"
-        lower.contains("milan") || hasRegionToken(lower, "it") -> "Милан"
+        lower.contains("milan") || lower.contains("rome") || hasRegionToken(lower, "it") -> "Милан"
         lower.contains("istanbul") || hasRegionToken(lower, "tr") -> "Стамбул"
         lower.contains("singapore") || hasRegionToken(lower, "sg") -> "Сингапур"
-        lower.contains("skryon") -> "Париж"
         lower.contains("europe") || hasRegionToken(lower, "eu") -> "Европа"
         else -> value
     }
@@ -889,6 +1223,12 @@ private fun VpnLocationOption.countryCodeLabel(): String {
         hasRegionToken(value, "pl") -> "PL"
         hasRegionToken(value, "uk") || hasRegionToken(value, "gb") -> "UK"
         hasRegionToken(value, "us") || hasRegionToken(value, "usa") -> "US"
+        hasRegionToken(value, "se") -> "SE"
+        hasRegionToken(value, "fi") -> "FI"
+        hasRegionToken(value, "es") -> "ES"
+        hasRegionToken(value, "it") -> "IT"
+        hasRegionToken(value, "tr") -> "TR"
+        hasRegionToken(value, "sg") -> "SG"
         hasRegionToken(value, "eu") -> "EU"
         else -> "VPN"
     }
@@ -896,17 +1236,8 @@ private fun VpnLocationOption.countryCodeLabel(): String {
 
 private fun VpnLocationOption.regionLabel(): String {
     val city = cityLabel()
-    return when (city) {
-        "Париж" -> "Регион FR"
-        "Франкфурт" -> "Регион DE"
-        "Амстердам" -> "Регион NL"
-        "Москва" -> "Регион RU"
-        "Варшава" -> "Регион PL"
-        "Лондон" -> "Регион UK"
-        "Нью-Йорк" -> "Регион US"
-        "Европа" -> "Регион EU"
-        else -> city
-    }
+    val code = countryCodeLabel()
+    return if (code == "VPN") city else "$city • $code"
 }
 
 private fun hasRegionToken(value: String, token: String): Boolean {
