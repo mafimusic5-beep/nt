@@ -13,6 +13,12 @@ plugins {
 
 /** Must match [android.defaultConfig.versionCode] (used in [androidComponents] per-ABI overrides). */
 val appVersionCode = 715
+val skryonAllowedSignatureSha256s = (providers.gradleProperty("SKRYON_ALLOWED_SIGNATURE_SHA256S").orNull ?: "")
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+val skryonBlockTamperedRuntime = (providers.gradleProperty("SKRYON_BLOCK_TAMPERED_RUNTIME").orNull ?: "true")
+    .lowercase()
+    .let { value -> if (value == "false" || value == "0" || value == "no") "false" else "true" }
 
 android {
     namespace = "com.v2ray.ang"
@@ -28,6 +34,11 @@ android {
 
         // Public Skryon API endpoint. Nginx/Cloudflare proxy requests to the backend VPS.
         buildConfigField("String", "EMERY_API_BASE_URL", "\"https://skryon.ru\"")
+        // Production release builds should be made with:
+        // -PSKRYON_ALLOWED_SIGNATURE_SHA256S=<SHA256_OF_RELEASE_SIGNING_CERT>
+        // Empty value keeps local/debug builds installable while still sending integrity headers.
+        buildConfigField("String", "SKRYON_ALLOWED_SIGNATURE_SHA256S", "\"$skryonAllowedSignatureSha256s\"")
+        buildConfigField("boolean", "SKRYON_BLOCK_TAMPERED_RUNTIME", skryonBlockTamperedRuntime)
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -53,7 +64,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Release APKs should be obfuscated so access checks and API paths are harder to patch out.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -218,118 +231,3 @@ dependencies {
  * Upstream CI downloads it from 2dust/AndroidLibXrayLite; local clones often omit the binary.
  * Override tag: ./gradlew assembleDebug -Plibv2ray.version=v26.3.9
  */
-val libv2rayAar = layout.projectDirectory.file("libs/libv2ray.aar").asFile
-val libv2rayVersionProperty =
-    (project.findProperty("libv2ray.version") as String?)?.trim()?.takeIf { it.isNotEmpty() } ?: "v26.3.9"
-
-val downloadLibv2ray = tasks.register("downloadLibv2ray") {
-    group = "setup"
-    description = "Downloads libv2ray.aar from AndroidLibXrayLite if app/libs/libv2ray.aar is missing."
-    onlyIf { !libv2rayAar.exists() }
-    doLast {
-        libv2rayAar.parentFile?.mkdirs()
-        val url =
-            URI(
-                "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
-            ).toURL()
-        logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
-        url.openStream().use { input: InputStream ->
-            libv2rayAar.outputStream().use { output: OutputStream ->
-                input.copyTo(output)
-            }
-        }
-        logger.lifecycle("Saved to {}", libv2rayAar.absolutePath)
-    }
-}
-
-tasks.named("preBuild").configure {
-    dependsOn(downloadLibv2ray)
-}
-
-val hevLibFileName = "libhev-socks5-tunnel.so"
-val hevGeneratedDir = file("$buildDir/generated/hev-jniLibs")
-val hevRequiredAbi = "arm64-v8a"
-val hevAbiDownloadUrls = mapOf(
-    "arm64-v8a" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_arm64-v8a.apk",
-    "armeabi-v7a" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_armeabi-v7a.apk",
-    "x86_64" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_x86_64.apk",
-    "x86" to "https://github.com/2dust/v2rayNG/releases/download/2.0.15/v2rayNG_2.0.15_x86.apk",
-)
-
-fun existingHevLibCandidates(abi: String): List<java.io.File> {
-    val localJni = layout.projectDirectory.file("src/main/jniLibs/$abi/$hevLibFileName").asFile
-    val localLegacy = layout.projectDirectory.file("libs/$abi/$hevLibFileName").asFile
-    val generated = File(hevGeneratedDir, "$abi/$hevLibFileName")
-    return listOf(localJni, localLegacy, generated)
-}
-
-fun hasHevLib(abi: String): Boolean {
-    return existingHevLibCandidates(abi).any { it.exists() && it.length() > 0L }
-}
-
-fun downloadAndExtractHevLib(url: String, abi: String, targetFile: java.io.File) {
-    val tmpFile = targetFile.parentFile.resolve("$abi.apk.tmp")
-    tmpFile.parentFile?.mkdirs()
-    URI(url).toURL().openStream().use { input ->
-        tmpFile.outputStream().use { output -> input.copyTo(output) }
-    }
-    var extracted = false
-    ZipInputStream(tmpFile.inputStream().buffered()).use { zip ->
-        var entry = zip.nextEntry
-        while (entry != null) {
-            if (!entry.isDirectory && entry.name == "lib/$abi/$hevLibFileName") {
-                targetFile.parentFile.mkdirs()
-                targetFile.outputStream().use { out -> zip.copyTo(out) }
-                extracted = true
-                break
-            }
-            entry = zip.nextEntry
-        }
-    }
-    tmpFile.delete()
-    if (!extracted || !targetFile.exists() || targetFile.length() == 0L) {
-        throw GradleException("Failed to extract $hevLibFileName for ABI $abi from $url")
-    }
-}
-
-val syncHevNativeLibs = tasks.register("syncHevNativeLibs") {
-    group = "setup"
-    description = "Ensures hev native libs exist for phone and emulator ABIs."
-    doLast {
-        val outDir = hevGeneratedDir
-        hevAbiDownloadUrls.forEach { (abi, url) ->
-            if (!hasHevLib(abi)) {
-                try {
-                    logger.lifecycle("HEV native lib for $abi not found locally. Downloading from upstream APK...")
-                    downloadAndExtractHevLib(
-                        url,
-                        abi,
-                        outDir.resolve("$abi/$hevLibFileName"),
-                    )
-                } catch (e: Exception) {
-                    val message = "HEV native lib download failed for $abi: ${e.message}"
-                    if (abi == hevRequiredAbi || abi == "x86_64") {
-                        throw GradleException(message, e)
-                    }
-                    logger.warn(message)
-                }
-            }
-        }
-        if (!hasHevLib(hevRequiredAbi)) {
-            throw GradleException("Missing required $hevLibFileName for ABI $hevRequiredAbi")
-        }
-        if (!hasHevLib("x86_64")) {
-            throw GradleException("Missing required $hevLibFileName for emulator ABI x86_64")
-        }
-    }
-}
-
-tasks.named("preBuild").configure {
-    dependsOn(syncHevNativeLibs)
-}
-
-tasks.withType<KotlinCompile>().configureEach {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
-    }
-}
