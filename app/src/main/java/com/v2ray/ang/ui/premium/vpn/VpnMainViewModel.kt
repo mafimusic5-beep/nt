@@ -35,6 +35,8 @@ import java.nio.charset.StandardCharsets
 private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
 private const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
 private const val SKRYON_SELECTED_REGION_PREF = "SKRYON_SELECTED_REGION"
+private const val SKRYON_LAST_CONNECTED_REGION_ID_PREF = "SKRYON_LAST_CONNECTED_REGION_ID"
+private const val SKRYON_LAST_CONNECTED_REGION_TITLE_PREF = "SKRYON_LAST_CONNECTED_REGION_TITLE"
 
 class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -48,6 +50,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val SERVER_LIST_TIMEOUT_MS = 1_500L
         const val POOL_LIST_TIMEOUT_MS = 1_500L
     }
+
+    private data class ConnectAttemptResult(
+        val payload: EmeryVpnSync.ConnectServerResult,
+        val location: VpnLocationOption,
+    )
 
     private val appContext: Context
         get() = getApplication<Application>().applicationContext
@@ -269,6 +276,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     .put("poolCount", poolLocations.size)
                     .put("visibleCount", visibleLocations.size)
                     .put("fallbackUsed", fallbackLocation != null)
+                    .put("lastConnectedRegionId", savedLastConnectedRegionId())
                     .put("backendError", backendResult.exceptionOrNull()?.message.orEmpty())
                     .put("poolError", poolResult.exceptionOrNull()?.message.orEmpty()),
             )
@@ -332,11 +340,16 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         val safeLocations = locations
             .filter(::isSelectableLocation)
             .ifEmpty { VpnDemoData.unavailableLocations }
+        val savedLastRegionId = savedLastConnectedRegionId()
+        val savedLastRegionTitle = savedLastConnectedRegionTitle()
         val savedRegion = savedSelectedRegion()
 
         _uiState.update { state ->
-            val selected = safeLocations.firstOrNull { it.id == state.selectedLocation.id }
-                ?: safeLocations.firstOrNull { it.title.equals(savedRegion, ignoreCase = true) }
+            val currentSelected = state.selectedLocation.takeIf(::isSelectableLocation)
+            val selected = safeLocations.firstOrNull { currentSelected != null && it.id == currentSelected.id }
+                ?: safeLocations.firstOrNull { savedLastRegionId.isNotBlank() && it.id == savedLastRegionId }
+                ?: safeLocations.firstOrNull { savedLastRegionTitle.isNotBlank() && it.title.equals(savedLastRegionTitle, ignoreCase = true) }
+                ?: safeLocations.firstOrNull { savedRegion.isNotBlank() && it.title.equals(savedRegion, ignoreCase = true) }
                 ?: safeLocations.first()
             state.copy(
                 activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
@@ -372,6 +385,24 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         return MmkvManager.decodeSettingsString(SKRYON_SELECTED_REGION_PREF, "")
             ?.trim()
             .orEmpty()
+    }
+
+    private fun savedLastConnectedRegionId(): String {
+        return MmkvManager.decodeSettingsString(SKRYON_LAST_CONNECTED_REGION_ID_PREF, "")
+            ?.trim()
+            .orEmpty()
+    }
+
+    private fun savedLastConnectedRegionTitle(): String {
+        return MmkvManager.decodeSettingsString(SKRYON_LAST_CONNECTED_REGION_TITLE_PREF, "")
+            ?.trim()
+            .orEmpty()
+    }
+
+    private fun saveLastConnectedLocation(location: VpnLocationOption) {
+        MmkvManager.encodeSettings(SKRYON_LAST_CONNECTED_REGION_ID_PREF, location.id)
+        MmkvManager.encodeSettings(SKRYON_LAST_CONNECTED_REGION_TITLE_PREF, location.title)
+        MmkvManager.encodeSettings(SKRYON_SELECTED_REGION_PREF, location.title)
     }
 
     private fun isImportProfileLink(link: String): Boolean {
@@ -526,7 +557,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob = viewModelScope.launch {
             val result = connectSelectedLocation(currentState)
             result.fold(
-                onSuccess = { payload ->
+                onSuccess = { attempt ->
+                    val payload = attempt.payload
                     val serviceStartRequested = try {
                         startVpnService(payload.selectedGuid)
                     } catch (e: Exception) {
@@ -552,6 +584,14 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         return@fold
                     }
 
+                    saveLastConnectedLocation(attempt.location)
+                    _uiState.update { state ->
+                        state.copy(
+                            selectedLocation = attempt.location,
+                            locationsError = "",
+                        )
+                    }
+
                     AgentDebugNdjsonLogger.log(
                         hypothesisId = "H2",
                         location = "VpnMainViewModel.kt:onConnectClick",
@@ -560,17 +600,19 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         data = JSONObject()
                             .put("serverId", payload.serverId)
                             .put("city", payload.city)
-                            .put("selectedGuid", payload.selectedGuid),
+                            .put("selectedGuid", payload.selectedGuid)
+                            .put("locationId", attempt.location.id)
+                            .put("locationTitle", attempt.location.title),
                     )
                     awaitServiceStartConfirmation()
                 },
                 onFailure = { error ->
                     waitingForStartConfirmation = false
-                    setDisconnectedWithError("Не удалось подключиться к серверу")
+                    setDisconnectedWithError("Все регионы заняты или недоступны")
                     VpnUiDebugLogger.log(
                         hypothesisId = "H7",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "connect failed",
+                        message = "connect failed after fallback candidates",
                         data = JSONObject()
                             .put("serverId", currentState.selectedLocation.id)
                             .put("error", error.message ?: "unknown"),
@@ -593,14 +635,71 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
+    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<ConnectAttemptResult> {
         val normalizedState = state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
-        val serverId = normalizedState.selectedLocation.id.toLongOrNull()
-        if (serverId != null) {
-            return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
+        val selectableLocations = normalizedState.locations.filter(::isSelectableLocation)
+        val preferredLocation = normalizedState.selectedLocation.takeIf(::isSelectableLocation)
+        val candidates = distinctLocations(listOfNotNull(preferredLocation) + selectableLocations)
+
+        if (candidates.isEmpty()) {
+            return Result.failure(IllegalStateException("missing_region_candidates"))
         }
 
-        val importText = normalizedState.selectedLocation.importText.orEmpty().trim()
+        var lastError: Throwable? = null
+        candidates.forEachIndexed { index, location ->
+            val result = connectLocationCandidate(normalizedState.activationKey, location)
+            if (result.isSuccess) {
+                if (index > 0) {
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H12",
+                        location = "VpnMainViewModel.kt:connectSelectedLocation",
+                        message = "selected region failed, fallback region connected",
+                        data = JSONObject()
+                            .put("fallbackIndex", index)
+                            .put("fallbackLocationId", location.id)
+                            .put("fallbackLocationTitle", location.title),
+                    )
+                }
+                return result
+            }
+            lastError = result.exceptionOrNull()
+            VpnUiDebugLogger.log(
+                hypothesisId = "H12",
+                location = "VpnMainViewModel.kt:connectSelectedLocation",
+                message = "region candidate unavailable",
+                data = JSONObject()
+                    .put("candidateIndex", index)
+                    .put("locationId", location.id)
+                    .put("locationTitle", location.title)
+                    .put("error", lastError?.message ?: "unknown"),
+            )
+        }
+
+        return Result.failure(lastError ?: IllegalStateException("all_regions_unavailable"))
+    }
+
+    private fun distinctLocations(locations: List<VpnLocationOption>): List<VpnLocationOption> {
+        val seen = mutableSetOf<String>()
+        return locations.filter { location ->
+            val key = when {
+                location.id.isNotBlank() -> "id:${location.id}"
+                location.importText.isNotBlank() -> "import:${location.importText.hashCode()}"
+                else -> "title:${location.title.lowercase()}"
+            }
+            seen.add(key)
+        }
+    }
+
+    private suspend fun connectLocationCandidate(accessKey: String, location: VpnLocationOption): Result<ConnectAttemptResult> {
+        val serverId = location.id.toLongOrNull()
+        if (serverId != null) {
+            val payload = EmeryVpnSync.connectToServer(accessKey, serverId).getOrElse { error ->
+                return Result.failure(error)
+            }
+            return Result.success(ConnectAttemptResult(payload, location))
+        }
+
+        val importText = location.importText.trim()
         if (importText.isBlank()) {
             return Result.failure(IllegalStateException("missing_import_text"))
         }
@@ -622,10 +721,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
             MmkvManager.setSelectServer(selectedGuid)
             Result.success(
-                EmeryVpnSync.ConnectServerResult(
-                    serverId = -1L,
-                    city = normalizedState.selectedLocation.title,
-                    selectedGuid = selectedGuid,
+                ConnectAttemptResult(
+                    payload = EmeryVpnSync.ConnectServerResult(
+                        serverId = -1L,
+                        city = location.title,
+                        selectedGuid = selectedGuid,
+                    ),
+                    location = location,
                 )
             )
         }
