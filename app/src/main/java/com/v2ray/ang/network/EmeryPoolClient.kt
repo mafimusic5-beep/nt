@@ -1,6 +1,7 @@
 package com.v2ray.ang.network
 
 import com.v2ray.ang.handler.EmeryApiConfig
+import com.v2ray.ang.security.AppSecurity
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,6 +29,17 @@ object EmeryPoolClient {
 
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
+    private fun premiumApiBlocked(): IllegalStateException? {
+        return AppSecurity.premiumApiBlockReason()?.let(::IllegalStateException)
+    }
+
+    private fun Request.Builder.withSkryonSecurityHeaders(): Request.Builder {
+        AppSecurity.securityHeaders().forEach { (name, value) ->
+            header(name, value)
+        }
+        return this
+    }
+
     private fun authorizedGet(path: String, accessKey: String): Request {
         val credential = accessKey.trim()
         val proof = EmeryDeviceIdentity.buildRequestProof(method = "GET", path = path, authSecret = credential)
@@ -39,11 +51,13 @@ object EmeryPoolClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .withSkryonSecurityHeaders()
             .get()
             .build()
     }
 
     suspend fun fetchPoolImportText(accessKey: String): Result<String> = withContext(Dispatchers.IO) {
+        premiumApiBlocked()?.let { return@withContext Result.failure(it) }
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
 
