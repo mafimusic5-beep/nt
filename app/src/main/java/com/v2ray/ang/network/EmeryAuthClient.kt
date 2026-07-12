@@ -3,6 +3,7 @@ package com.v2ray.ang.network
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryApiConfig
+import com.v2ray.ang.security.AppSecurity
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.Dispatchers
@@ -11,9 +12,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import org.json.JSONObject
 
 object EmeryAuthClient {
 
@@ -26,14 +27,27 @@ object EmeryAuthClient {
 
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
+    private fun premiumApiBlocked(): IllegalStateException? {
+        return AppSecurity.premiumApiBlockReason()?.let(::IllegalStateException)
+    }
+
+    private fun Request.Builder.withSkryonSecurityHeaders(): Request.Builder {
+        AppSecurity.securityHeaders().forEach { (name, value) ->
+            header(name, value)
+        }
+        return this
+    }
+
     /**
      * POST /auth/key with device-bound proof.
      * The backend should verify:
      * 1) the access key was issued by the bot/backend;
      * 2) the device public key/signature pair is valid;
-     * 3) the key has not exceeded its allowed device count.
+     * 3) the key has not exceeded its allowed device count;
+     * 4) app-integrity headers match an allowed release signing certificate before any config is returned.
      */
     suspend fun verifyAccessKey(key: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
+        premiumApiBlocked()?.let { return@withContext Result.failure(it) }
         val trimmed = key.trim()
         if (trimmed.isEmpty()) {
             return@withContext Result.failure(IllegalStateException("bad_request"))
@@ -74,6 +88,7 @@ object EmeryAuthClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .withSkryonSecurityHeaders()
             .post(bodyJson.toRequestBody(jsonMedia))
             .build()
 
