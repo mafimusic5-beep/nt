@@ -18,6 +18,7 @@ import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,8 +45,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val SERVICE_START_CONFIRMATION_ATTEMPTS = 15
         const val SERVICE_STATE_SYNC_DELAY_MS = 700L
         const val SERVICE_START_CONFIRMATION_DELAY_MS = 1_000L
-        const val SERVER_LIST_TIMEOUT_MS = 6_000L
-        const val POOL_LIST_TIMEOUT_MS = 10_000L
+        const val SERVER_LIST_TIMEOUT_MS = 1_500L
+        const val POOL_LIST_TIMEOUT_MS = 1_500L
     }
 
     private val appContext: Context
@@ -181,25 +182,50 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     fun refreshLocations() {
         serversJob?.cancel()
         serversJob = viewModelScope.launch {
-            _uiState.update { state ->
-                state.copy(
-                    activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
-                    locationsLoading = true,
-                    locationsError = "",
-                )
+            val fallbackLocation = savedSkryonConfigLocation()
+            val existingLocations = _uiState.value.locations.filter(::isSelectableLocation)
+            val instantLocations = when {
+                existingLocations.isNotEmpty() -> existingLocations
+                fallbackLocation != null -> listOf(fallbackLocation)
+                else -> emptyList()
+            }
+
+            if (instantLocations.isNotEmpty()) {
+                applyLocations(instantLocations, "")
+                _uiState.update { state ->
+                    state.copy(
+                        activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
+                        locationsLoading = false,
+                        locationsError = "",
+                    )
+                }
+            } else {
+                _uiState.update { state ->
+                    state.copy(
+                        activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
+                        locationsLoading = true,
+                        locationsError = "",
+                    )
+                }
             }
 
             val accessKey = _uiState.value.activationKey.ifBlank {
                 savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
             }
 
-            val backendResult = withTimeoutOrNull(SERVER_LIST_TIMEOUT_MS) {
-                EmeryBackendClient.fetchVpnServers()
-            } ?: Result.failure(IllegalStateException("server_list_timeout"))
+            val backendDeferred = async(Dispatchers.IO) {
+                withTimeoutOrNull(SERVER_LIST_TIMEOUT_MS) {
+                    EmeryBackendClient.fetchVpnServers()
+                } ?: Result.failure(IllegalStateException("server_list_timeout"))
+            }
+            val poolDeferred = async(Dispatchers.IO) {
+                withTimeoutOrNull(POOL_LIST_TIMEOUT_MS) {
+                    EmeryPoolClient.fetchPoolImportText(accessKey)
+                } ?: Result.failure(IllegalStateException("pool_list_timeout"))
+            }
 
-            val poolResult = withTimeoutOrNull(POOL_LIST_TIMEOUT_MS) {
-                EmeryPoolClient.fetchPoolImportText(accessKey)
-            } ?: Result.failure(IllegalStateException("pool_list_timeout"))
+            val backendResult = backendDeferred.await()
+            val poolResult = poolDeferred.await()
 
             val backendLocations = backendResult.getOrNull()
                 .orEmpty()
@@ -221,16 +247,15 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 .orEmpty()
 
             val onlineLocations = mergeOnlineLocations(backendLocations, poolLocations)
-            val fallbackLocation = savedSkryonConfigLocation()
             val visibleLocations = if (onlineLocations.isNotEmpty()) {
                 onlineLocations
             } else {
-                listOfNotNull(fallbackLocation)
+                instantLocations.ifEmpty { listOfNotNull(fallbackLocation) }
             }
 
             val error = when {
                 onlineLocations.isNotEmpty() -> ""
-                fallbackLocation != null -> "Не удалось обновить список регионов. Доступен сохранённый сервер."
+                visibleLocations.isNotEmpty() -> ""
                 backendResult.isFailure && poolResult.isFailure -> "Не удалось загрузить регионы из сети"
                 else -> "Серверы сейчас недоступны"
             }
@@ -238,11 +263,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             VpnUiDebugLogger.log(
                 hypothesisId = "H11",
                 location = "VpnMainViewModel.kt:refreshLocations",
-                message = "online region list refreshed",
+                message = "online region list refreshed without blocking saved server",
                 data = JSONObject()
                     .put("backendCount", backendLocations.size)
                     .put("poolCount", poolLocations.size)
                     .put("visibleCount", visibleLocations.size)
+                    .put("fallbackUsed", fallbackLocation != null)
                     .put("backendError", backendResult.exceptionOrNull()?.message.orEmpty())
                     .put("poolError", poolResult.exceptionOrNull()?.message.orEmpty()),
             )
