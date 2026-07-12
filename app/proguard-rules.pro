@@ -1,21 +1,20 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Project-specific ProGuard/R8 rules for Skryon.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Keep JSON DTO shapes used by Gson/reflection when release minification is enabled.
+-keep class com.v2ray.ang.dto.** { *; }
+-keep class com.v2ray.ang.handler.EmeryAccessProfile { *; }
+-keep class com.v2ray.ang.network.EmeryBackendClient$BackendServer { *; }
+-keep class com.v2ray.ang.network.EmeryBackendClient$ConnectPayload { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep native bridge classes required by v2ray/libxray.
+-keep class go.** { *; }
+-keep class libv2ray.** { *; }
+-keep class com.tencent.mmkv.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Preserve annotations/signatures required by libraries while still obfuscating app code.
+-keepattributes Signature,InnerClasses,EnclosingMethod,RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations
+
+# Do not print noisy warnings for optional platform/instrumentation classes.
+-dontwarn de.robv.android.xposed.**
+-dontwarn re.frida.**
+-dontwarn com.saurik.substrate.**
