@@ -608,11 +608,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 },
                 onFailure = { error ->
                     waitingForStartConfirmation = false
-                    setDisconnectedWithError("Все регионы заняты или недоступны")
+                    setDisconnectedWithError("Не удалось подключиться к выбранному региону")
                     VpnUiDebugLogger.log(
                         hypothesisId = "H7",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "connect failed after fallback candidates",
+                        message = "connect failed for selected region",
                         data = JSONObject()
                             .put("serverId", currentState.selectedLocation.id)
                             .put("error", error.message ?: "unknown"),
@@ -637,57 +637,22 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<ConnectAttemptResult> {
         val normalizedState = state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
-        val selectableLocations = normalizedState.locations.filter(::isSelectableLocation)
-        val preferredLocation = normalizedState.selectedLocation.takeIf(::isSelectableLocation)
-        val candidates = distinctLocations(listOfNotNull(preferredLocation) + selectableLocations)
+        val selectedLocation = normalizedState.selectedLocation.takeIf(::isSelectableLocation)
+            ?: return Result.failure(IllegalStateException("missing_selected_region"))
 
-        if (candidates.isEmpty()) {
-            return Result.failure(IllegalStateException("missing_region_candidates"))
-        }
-
-        var lastError: Throwable? = null
-        candidates.forEachIndexed { index, location ->
-            val result = connectLocationCandidate(normalizedState.activationKey, location)
-            if (result.isSuccess) {
-                if (index > 0) {
-                    VpnUiDebugLogger.log(
-                        hypothesisId = "H12",
-                        location = "VpnMainViewModel.kt:connectSelectedLocation",
-                        message = "selected region failed, fallback region connected",
-                        data = JSONObject()
-                            .put("fallbackIndex", index)
-                            .put("fallbackLocationId", location.id)
-                            .put("fallbackLocationTitle", location.title),
-                    )
-                }
-                return result
-            }
-            lastError = result.exceptionOrNull()
+        val result = connectLocationCandidate(normalizedState.activationKey, selectedLocation)
+        if (result.isFailure) {
             VpnUiDebugLogger.log(
                 hypothesisId = "H12",
                 location = "VpnMainViewModel.kt:connectSelectedLocation",
-                message = "region candidate unavailable",
+                message = "selected region unavailable",
                 data = JSONObject()
-                    .put("candidateIndex", index)
-                    .put("locationId", location.id)
-                    .put("locationTitle", location.title)
-                    .put("error", lastError?.message ?: "unknown"),
+                    .put("locationId", selectedLocation.id)
+                    .put("locationTitle", selectedLocation.title)
+                    .put("error", result.exceptionOrNull()?.message ?: "unknown"),
             )
         }
-
-        return Result.failure(lastError ?: IllegalStateException("all_regions_unavailable"))
-    }
-
-    private fun distinctLocations(locations: List<VpnLocationOption>): List<VpnLocationOption> {
-        val seen = mutableSetOf<String>()
-        return locations.filter { location ->
-            val key = when {
-                location.id.isNotBlank() -> "id:${location.id}"
-                location.importText.isNotBlank() -> "import:${location.importText.hashCode()}"
-                else -> "title:${location.title.lowercase()}"
-            }
-            seen.add(key)
-        }
+        return result
     }
 
     private suspend fun connectLocationCandidate(accessKey: String, location: VpnLocationOption): Result<ConnectAttemptResult> {
