@@ -7,6 +7,8 @@ import android.os.Build
 import android.os.Debug
 import com.v2ray.ang.AngApplication
 import com.v2ray.ang.BuildConfig
+import okhttp3.CertificatePinner
+import okhttp3.OkHttpClient
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -38,6 +40,8 @@ object AppSecurity {
         "lsposed",
         "substrate",
         "zygisk",
+        "riru",
+        "magisk",
     )
 
     private val suspiciousPackages = listOf(
@@ -58,6 +62,7 @@ object AppSecurity {
         "/data/local/bin/su",
         "/data/local/tmp/frida-server",
         "/data/adb/magisk",
+        "/data/adb/zygisk",
         "/data/adb/modules",
         "/system/app/Superuser.apk",
         "/system/app/SuperSU.apk",
@@ -84,11 +89,11 @@ object AppSecurity {
             return "tamper_package_detected"
         }
 
-        if (BuildConfig.SKRYON_BLOCK_ROOTED_DEVICE && isLikelyRooted()) {
+        if (BuildConfig.SKRYON_BLOCK_ROOTED_RUNTIME && isLikelyRooted()) {
             return "root_detected"
         }
 
-        if (BuildConfig.SKRYON_BLOCK_EMULATOR && isLikelyEmulator()) {
+        if (BuildConfig.SKRYON_BLOCK_EMULATOR_RUNTIME && isLikelyEmulator()) {
             return "emulator_detected"
         }
 
@@ -109,6 +114,18 @@ object AppSecurity {
         )
     }
 
+    fun hardenedOkHttpBuilder(): OkHttpClient.Builder {
+        val builder = OkHttpClient.Builder()
+        val pins = apiCertificatePins()
+        if (pins.isNotEmpty()) {
+            val pinner = CertificatePinner.Builder().apply {
+                pins.forEach { pin -> add("skryon.ru", pin) }
+            }.build()
+            builder.certificatePinner(pinner)
+        }
+        return builder
+    }
+
     fun appCertificateSha256s(context: Context = AngApplication.application): List<String> {
         return runCatching {
             val signatures = packageSignatures(context)
@@ -116,6 +133,15 @@ object AppSecurity {
                 .filter { it.isNotBlank() }
                 .distinct()
         }.getOrDefault(emptyList())
+    }
+
+    private fun apiCertificatePins(): List<String> {
+        return BuildConfig.SKRYON_API_PIN_SHA256S
+            .split(',', ';', ' ', '\n', '\t')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .map { pin -> if (pin.startsWith("sha256/", ignoreCase = true)) pin else "sha256/$pin" }
+            .distinct()
     }
 
     private fun hasAllowedAppSignature(context: Context): Boolean {
