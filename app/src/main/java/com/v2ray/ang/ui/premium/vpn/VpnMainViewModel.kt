@@ -20,11 +20,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -49,6 +49,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val SERVICE_START_CONFIRMATION_DELAY_MS = 1_000L
         const val SERVER_LIST_TIMEOUT_MS = 1_500L
         const val POOL_LIST_TIMEOUT_MS = 1_500L
+        const val REGION_LIST_WATCH_INTERVAL_MS = 30_000L
     }
 
     private data class ConnectAttemptResult(
@@ -69,9 +70,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private var connectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
+    private var regionListWatchJob: Job? = null
     private var serviceStateSyncJob: Job? = null
     private var serviceStateReceiverRegistered = false
     private var waitingForStartConfirmation = false
+    private var lastAppliedLocationsSignature = ""
 
     private val serviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -103,6 +106,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         registerServiceStateReceiver()
         refreshConnectionState()
         refreshLocations()
+        startRegionListWatcher()
     }
 
     private fun registerServiceStateReceiver() {
@@ -187,6 +191,35 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun refreshLocations() {
+        refreshLocationsInternal(
+            source = "manual_or_startup",
+            forceApply = true,
+            showLoadingWhenEmpty = true,
+        )
+    }
+
+    private fun startRegionListWatcher() {
+        if (regionListWatchJob?.isActive == true) return
+        regionListWatchJob = viewModelScope.launch {
+            while (isActive) {
+                delay(REGION_LIST_WATCH_INTERVAL_MS)
+                refreshLocationsInternal(
+                    source = "region_change_watch",
+                    forceApply = false,
+                    showLoadingWhenEmpty = false,
+                )
+            }
+        }
+    }
+
+    private fun refreshLocationsInternal(
+        source: String,
+        forceApply: Boolean,
+        showLoadingWhenEmpty: Boolean,
+    ) {
+        if (!forceApply && serversJob?.isActive == true) {
+            return
+        }
         serversJob?.cancel()
         serversJob = viewModelScope.launch {
             val fallbackLocation = savedSkryonConfigLocation()
@@ -197,7 +230,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 else -> emptyList()
             }
 
-            if (instantLocations.isNotEmpty()) {
+            if (forceApply && instantLocations.isNotEmpty()) {
                 applyLocations(instantLocations, "")
                 _uiState.update { state ->
                     state.copy(
@@ -206,7 +239,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         locationsError = "",
                     )
                 }
-            } else {
+            } else if (showLoadingWhenEmpty && instantLocations.isEmpty()) {
                 _uiState.update { state ->
                     state.copy(
                         activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
@@ -259,6 +292,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 instantLocations.ifEmpty { listOfNotNull(fallbackLocation) }
             }
+            val visibleSignature = locationsSignature(visibleLocations)
+            val changed = visibleSignature.isNotBlank() && visibleSignature != lastAppliedLocationsSignature
 
             val error = when {
                 onlineLocations.isNotEmpty() -> ""
@@ -268,21 +303,50 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             }
 
             VpnUiDebugLogger.log(
-                hypothesisId = "H11",
-                location = "VpnMainViewModel.kt:refreshLocations",
-                message = "online region list refreshed without blocking saved server",
+                hypothesisId = "H14",
+                location = "VpnMainViewModel.kt:refreshLocationsInternal",
+                message = "region list checked for remote changes",
                 data = JSONObject()
+                    .put("source", source)
                     .put("backendCount", backendLocations.size)
                     .put("poolCount", poolLocations.size)
                     .put("visibleCount", visibleLocations.size)
+                    .put("changed", changed)
+                    .put("forceApply", forceApply)
+                    .put("signature", visibleSignature)
+                    .put("previousSignature", lastAppliedLocationsSignature)
                     .put("fallbackUsed", fallbackLocation != null)
                     .put("lastConnectedRegionId", savedLastConnectedRegionId())
                     .put("backendError", backendResult.exceptionOrNull()?.message.orEmpty())
                     .put("poolError", poolResult.exceptionOrNull()?.message.orEmpty()),
             )
 
-            applyLocations(visibleLocations, error)
+            if (forceApply || changed || _uiState.value.locations.none(::isSelectableLocation)) {
+                if (visibleSignature.isNotBlank()) {
+                    lastAppliedLocationsSignature = visibleSignature
+                }
+                applyLocations(visibleLocations, error)
+            } else if (error.isBlank()) {
+                _uiState.update { state -> state.copy(locationsLoading = false, locationsError = "") }
+            } else if (showLoadingWhenEmpty && _uiState.value.locations.none(::isSelectableLocation)) {
+                _uiState.update { state -> state.copy(locationsLoading = false, locationsError = error) }
+            }
         }
+    }
+
+    private fun locationsSignature(locations: List<VpnLocationOption>): String {
+        return locations
+            .filter(::isSelectableLocation)
+            .map { location ->
+                listOf(
+                    regionIdentity(location),
+                    location.id.trim(),
+                    location.title.trim(),
+                    location.importText.trim().hashCode().toString(),
+                ).joinToString("|")
+            }
+            .sorted()
+            .joinToString(";")
     }
 
     private fun locationsFromPoolImportText(importText: String): List<VpnLocationOption> {
@@ -746,6 +810,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
+        regionListWatchJob?.cancel()
         serviceStateSyncJob?.cancel()
         if (serviceStateReceiverRegistered) {
             MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_UNREGISTER_CLIENT, "")
