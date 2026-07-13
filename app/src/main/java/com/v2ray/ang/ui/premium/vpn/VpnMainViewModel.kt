@@ -14,6 +14,7 @@ import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
+import com.v2ray.ang.network.EmeryRegionEventsClient
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
 import kotlinx.coroutines.Dispatchers
@@ -49,7 +50,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val SERVICE_START_CONFIRMATION_DELAY_MS = 1_000L
         const val SERVER_LIST_TIMEOUT_MS = 1_500L
         const val POOL_LIST_TIMEOUT_MS = 1_500L
-        const val REGION_LIST_WATCH_INTERVAL_MS = 30_000L
+        const val REGION_EVENT_RECONNECT_DELAY_MS = 5_000L
     }
 
     private data class ConnectAttemptResult(
@@ -70,11 +71,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private var connectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
-    private var regionListWatchJob: Job? = null
+    private var regionEventsJob: Job? = null
     private var serviceStateSyncJob: Job? = null
     private var serviceStateReceiverRegistered = false
     private var waitingForStartConfirmation = false
     private var lastAppliedLocationsSignature = ""
+    private var lastRegionRevision = ""
 
     private val serviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -106,7 +108,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         registerServiceStateReceiver()
         refreshConnectionState()
         refreshLocations()
-        startRegionListWatcher()
+        startRegionEventListener()
     }
 
     private fun registerServiceStateReceiver() {
@@ -198,16 +200,73 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    private fun startRegionListWatcher() {
-        if (regionListWatchJob?.isActive == true) return
-        regionListWatchJob = viewModelScope.launch {
+    private fun startRegionEventListener() {
+        if (regionEventsJob?.isActive == true) return
+        regionEventsJob = viewModelScope.launch {
             while (isActive) {
-                delay(REGION_LIST_WATCH_INTERVAL_MS)
-                refreshLocationsInternal(
-                    source = "region_change_watch",
-                    forceApply = false,
-                    showLoadingWhenEmpty = false,
-                )
+                val accessKey = _uiState.value.activationKey.ifBlank {
+                    savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
+                }
+
+                if (accessKey.isBlank() || accessKey == DEFAULT_ACCESS_KEY) {
+                    delay(REGION_EVENT_RECONNECT_DELAY_MS)
+                    continue
+                }
+
+                if (lastRegionRevision.isBlank()) {
+                    EmeryRegionEventsClient.fetchRegionsRevision(accessKey)
+                        .onSuccess { revision ->
+                            lastRegionRevision = revision
+                            VpnUiDebugLogger.log(
+                                hypothesisId = "H14",
+                                location = "VpnMainViewModel.kt:startRegionEventListener",
+                                message = "region revision listener initialized",
+                                data = JSONObject().put("revision", revision),
+                            )
+                        }
+                        .onFailure { error ->
+                            VpnUiDebugLogger.log(
+                                hypothesisId = "H14",
+                                location = "VpnMainViewModel.kt:startRegionEventListener",
+                                message = "region revision init failed",
+                                data = JSONObject().put("error", error.message ?: "unknown"),
+                            )
+                            delay(REGION_EVENT_RECONNECT_DELAY_MS)
+                            continue
+                        }
+                }
+
+                val knownRevision = lastRegionRevision
+                EmeryRegionEventsClient.awaitRegionsChanged(accessKey, knownRevision)
+                    .onSuccess { revision ->
+                        if (revision.isNotBlank() && revision != lastRegionRevision) {
+                            val previousRevision = lastRegionRevision
+                            lastRegionRevision = revision
+                            VpnUiDebugLogger.log(
+                                hypothesisId = "H14",
+                                location = "VpnMainViewModel.kt:startRegionEventListener",
+                                message = "backend region change event received",
+                                data = JSONObject()
+                                    .put("previousRevision", previousRevision)
+                                    .put("revision", revision),
+                            )
+                            refreshLocationsInternal(
+                                source = "backend_region_event",
+                                forceApply = false,
+                                showLoadingWhenEmpty = false,
+                            )
+                        }
+                    }
+                    .onFailure { error ->
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H14",
+                            location = "VpnMainViewModel.kt:startRegionEventListener",
+                            message = "region event listener disconnected",
+                            data = JSONObject().put("error", error.message ?: "unknown"),
+                        )
+                    }
+
+                delay(REGION_EVENT_RECONNECT_DELAY_MS)
             }
         }
     }
@@ -305,7 +364,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             VpnUiDebugLogger.log(
                 hypothesisId = "H14",
                 location = "VpnMainViewModel.kt:refreshLocationsInternal",
-                message = "region list checked for remote changes",
+                message = "region list applied from explicit refresh/event",
                 data = JSONObject()
                     .put("source", source)
                     .put("backendCount", backendLocations.size)
@@ -810,7 +869,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
-        regionListWatchJob?.cancel()
+        regionEventsJob?.cancel()
         serviceStateSyncJob?.cancel()
         if (serviceStateReceiverRegistered) {
             MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_UNREGISTER_CLIENT, "")
