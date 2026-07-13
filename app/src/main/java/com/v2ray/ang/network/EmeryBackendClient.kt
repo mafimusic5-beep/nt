@@ -13,7 +13,6 @@ import com.v2ray.ang.util.JsonUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -26,7 +25,7 @@ import java.util.concurrent.TimeUnit
  */
 object EmeryBackendClient {
 
-    private val client = OkHttpClient.Builder()
+    private val client = AppSecurity.hardenedOkHttpBuilder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
