@@ -9,7 +9,6 @@ import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -19,7 +18,7 @@ import java.util.concurrent.TimeUnit
 object EmeryAuthClient {
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
-    private val client = OkHttpClient.Builder()
+    private val client = AppSecurity.hardenedOkHttpBuilder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
