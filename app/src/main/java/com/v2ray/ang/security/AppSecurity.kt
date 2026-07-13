@@ -8,6 +8,8 @@ import android.os.Debug
 import com.v2ray.ang.AngApplication
 import com.v2ray.ang.BuildConfig
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -38,6 +40,29 @@ object AppSecurity {
         "zygisk",
     )
 
+    private val suspiciousPackages = listOf(
+        "de.robv.android.xposed.installer",
+        "org.lsposed.manager",
+        "io.github.huskydg.magisk",
+        "com.topjohnwu.magisk",
+        "com.devadvance.rootcloak",
+        "com.saurik.substrate",
+    )
+
+    private val rootIndicatorFiles = listOf(
+        "/system/bin/su",
+        "/system/xbin/su",
+        "/sbin/su",
+        "/su/bin/su",
+        "/data/local/xbin/su",
+        "/data/local/bin/su",
+        "/data/local/tmp/frida-server",
+        "/data/adb/magisk",
+        "/data/adb/modules",
+        "/system/app/Superuser.apk",
+        "/system/app/SuperSU.apk",
+    )
+
     fun premiumApiBlockReason(context: Context = AngApplication.application): String? {
         if (!hasAllowedAppSignature(context)) {
             return "app_signature_not_allowed"
@@ -51,8 +76,20 @@ object AppSecurity {
             return "debugger_detected"
         }
 
-        if (hasHookClassLoaded() || hasHookLibraryMapped()) {
+        if (hasHookClassLoaded() || hasHookLibraryMapped() || hasFridaPortOpen()) {
             return "runtime_hook_detected"
+        }
+
+        if (hasSuspiciousPackages(context)) {
+            return "tamper_package_detected"
+        }
+
+        if (BuildConfig.SKRYON_BLOCK_ROOTED_DEVICE && isLikelyRooted()) {
+            return "root_detected"
+        }
+
+        if (BuildConfig.SKRYON_BLOCK_EMULATOR && isLikelyEmulator()) {
+            return "emulator_detected"
         }
 
         return null
@@ -67,6 +104,8 @@ object AppSecurity {
             "X-Skryon-App-Debug" to BuildConfig.DEBUG.toString(),
             "X-Skryon-App-Signature-Sha256" to appCertificateSha256s(context).joinToString(","),
             "X-Skryon-App-Integrity" to (reason ?: "ok"),
+            "X-Skryon-Rooted" to isLikelyRooted().toString(),
+            "X-Skryon-Emulator" to isLikelyEmulator().toString(),
         )
     }
 
@@ -129,12 +168,63 @@ object AppSecurity {
 
         return runCatching {
             maps.bufferedReader().useLines { lines ->
-                lines.take(2048).any { line ->
+                lines.take(4096).any { line ->
                     val lower = line.lowercase(Locale.US)
                     suspiciousMapTokens.any { token -> lower.contains(token) }
                 }
             }
         }.getOrDefault(false)
+    }
+
+    private fun hasFridaPortOpen(): Boolean {
+        return listOf(27042, 27043).any { port ->
+            runCatching {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress("127.0.0.1", port), 90)
+                }
+                true
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun hasSuspiciousPackages(context: Context): Boolean {
+        val packageManager = context.packageManager
+        return suspiciousPackages.any { packageName ->
+            runCatching {
+                packageManager.getPackageInfo(packageName, 0)
+                true
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun isLikelyRooted(): Boolean {
+        if ((Build.TAGS ?: "").contains("test-keys", ignoreCase = true)) return true
+        return rootIndicatorFiles.any { path ->
+            runCatching { File(path).exists() }.getOrDefault(false)
+        }
+    }
+
+    private fun isLikelyEmulator(): Boolean {
+        val fingerprint = Build.FINGERPRINT.orEmpty().lowercase(Locale.US)
+        val model = Build.MODEL.orEmpty().lowercase(Locale.US)
+        val manufacturer = Build.MANUFACTURER.orEmpty().lowercase(Locale.US)
+        val brand = Build.BRAND.orEmpty().lowercase(Locale.US)
+        val device = Build.DEVICE.orEmpty().lowercase(Locale.US)
+        val product = Build.PRODUCT.orEmpty().lowercase(Locale.US)
+        val hardware = Build.HARDWARE.orEmpty().lowercase(Locale.US)
+
+        return fingerprint.startsWith("generic") ||
+            fingerprint.contains("vbox") ||
+            fingerprint.contains("test-keys") ||
+            model.contains("google_sdk") ||
+            model.contains("emulator") ||
+            model.contains("android sdk built for") ||
+            manufacturer.contains("genymotion") ||
+            hardware.contains("goldfish") ||
+            hardware.contains("ranchu") ||
+            brand.startsWith("generic") && device.startsWith("generic") ||
+            product.contains("sdk") ||
+            product.contains("vbox")
     }
 
     private fun sha256Hex(bytes: ByteArray): String {
