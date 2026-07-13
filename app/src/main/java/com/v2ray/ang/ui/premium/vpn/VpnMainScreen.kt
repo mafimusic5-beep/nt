@@ -2,7 +2,6 @@ package com.v2ray.ang.ui.premium.vpn
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -48,20 +47,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 
 @Composable
@@ -130,25 +124,6 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
-        val showParisBackground = selectedTab == MainTab.Home && uiState.selectedLocation.cityLabel() == "Париж"
-
-        if (showParisBackground) {
-            Image(
-                painter = painterResource(id = R.drawable.skryon_bg_paris),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                alignment = Alignment.TopCenter,
-            )
-        } else {
-            BackgroundShape(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = if (tight) 170.dp else 205.dp)
-                    .fillMaxWidth()
-                    .height(if (tight) 360.dp else 430.dp),
-            )
-        }
 
         Column(
             modifier = Modifier
@@ -161,7 +136,7 @@ fun VpnMainScreen(
                 ),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
+            HeaderBar(compact = compact)
 
             if (selectedTab == MainTab.Home) {
                 Spacer(Modifier.height(if (tight) 18.dp else if (compact) 30.dp else 42.dp))
@@ -277,9 +252,11 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 }
 
 @Composable
-private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
+private fun HeaderBar(compact: Boolean) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(if (compact) 48.dp else 54.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (compact) 48.dp else 54.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -298,16 +275,6 @@ private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
                 maxLines = 1,
             )
         }
-        Text(
-            text = selectedLocation.cityLabel(),
-            modifier = Modifier.weight(1f),
-            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-            color = AppUiColors.TextPrimary,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-        )
         Spacer(modifier = Modifier.weight(1f))
     }
 }
@@ -319,11 +286,7 @@ private fun StatusBeacon(
     tight: Boolean = false,
 ) {
     val coreColor by animateColorAsState(
-        targetValue = if (connectionState == VpnConnectionState.Connected) {
-            AppUiColors.PositiveStrong
-        } else {
-            AppUiColors.Positive
-        },
+        targetValue = if (connectionState == VpnConnectionState.Connected) AppUiColors.PositiveStrong else AppUiColors.Positive,
         label = "beacon-core",
     )
     val beaconSize = when {
@@ -457,10 +420,7 @@ private fun RegionPickerSheet(
                 .navigationBarsPadding()
                 .padding(start = 20.dp, end = 20.dp, bottom = 18.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Выберите регион",
@@ -469,11 +429,7 @@ private fun RegionPickerSheet(
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        text = if (loading) {
-                            "Обновляем список серверов"
-                        } else {
-                            "${locations.size} ${regionCountWord(locations.size)} сейчас в сети"
-                        },
+                        text = if (loading) "Обновляем список серверов" else "${locations.size} ${regionCountWord(locations.size)} сейчас в сети",
                         style = MaterialTheme.typography.bodyMedium,
                         color = AppUiColors.TextSecondary,
                     )
@@ -510,10 +466,7 @@ private fun RegionPickerSheet(
                     .heightIn(max = 520.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(
-                    items = locations,
-                    key = { location -> location.id },
-                ) { location ->
+                items(items = locations, key = { location -> location.id }) { location ->
                     RegionPickerRow(
                         location = location,
                         selected = location.id == selectedLocation.id,
@@ -526,11 +479,7 @@ private fun RegionPickerSheet(
 }
 
 @Composable
-private fun RegionPickerRow(
-    location: VpnLocationOption,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
+private fun RegionPickerRow(location: VpnLocationOption, selected: Boolean, onClick: () -> Unit) {
     val code = location.countryCodeLabel()
     val shape = RoundedCornerShape(18.dp)
     Row(
@@ -538,11 +487,7 @@ private fun RegionPickerRow(
             .fillMaxWidth()
             .clip(shape)
             .background(if (selected) AppUiColors.RegionSelected else AppUiColors.Surface)
-            .border(
-                width = 1.dp,
-                color = if (selected) AppUiColors.Positive.copy(alpha = 0.42f) else AppUiColors.Border,
-                shape = shape,
-            )
+            .border(1.dp, if (selected) AppUiColors.Positive.copy(alpha = 0.42f) else AppUiColors.Border, shape)
             .clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -569,20 +514,12 @@ private fun RegionPickerRow(
                 )
             }
         }
-        if (selected) {
-            Text(
-                text = "✓",
-                style = MaterialTheme.typography.titleLarge,
-                color = AppUiColors.PositiveStrong,
-                fontWeight = FontWeight.Bold,
-            )
-        } else {
-            Text(
-                text = "›",
-                style = MaterialTheme.typography.headlineSmall,
-                color = AppUiColors.TextSecondary,
-            )
-        }
+        Text(
+            text = if (selected) "✓" else "›",
+            style = if (selected) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+            color = if (selected) AppUiColors.PositiveStrong else AppUiColors.TextSecondary,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+        )
     }
 }
 
@@ -599,103 +536,25 @@ private fun regionCountWord(count: Int): String {
 
 @Composable
 private fun FlagMark(code: String, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.clip(RoundedCornerShape(3.dp))) {
-        val w = size.width
-        val h = size.height
-        fun stripe(color: Color, left: Float, top: Float, right: Float, bottom: Float) {
-            drawRect(
-                color,
-                topLeft = Offset(w * left, h * top),
-                size = androidx.compose.ui.geometry.Size(w * (right - left), h * (bottom - top)),
-            )
-        }
-
-        when (code.uppercase()) {
-            "FR" -> {
-                stripe(Color(0xFF21468B), 0f, 0f, 0.333f, 1f)
-                stripe(Color.White, 0.333f, 0f, 0.666f, 1f)
-                stripe(Color(0xFFEF4135), 0.666f, 0f, 1f, 1f)
-            }
-            "DE" -> {
-                stripe(Color(0xFF111111), 0f, 0f, 1f, 0.333f)
-                stripe(Color(0xFFDD0000), 0f, 0.333f, 1f, 0.666f)
-                stripe(Color(0xFFFFCE00), 0f, 0.666f, 1f, 1f)
-            }
-            "NL" -> {
-                stripe(Color(0xFFAE1C28), 0f, 0f, 1f, 0.333f)
-                stripe(Color.White, 0f, 0.333f, 1f, 0.666f)
-                stripe(Color(0xFF21468B), 0f, 0.666f, 1f, 1f)
-            }
-            "UK", "GB" -> {
-                drawRect(Color(0xFF012169))
-                stripe(Color.White, 0.42f, 0f, 0.58f, 1f)
-                stripe(Color.White, 0f, 0.40f, 1f, 0.60f)
-                stripe(Color(0xFFC8102E), 0.46f, 0f, 0.54f, 1f)
-                stripe(Color(0xFFC8102E), 0f, 0.45f, 1f, 0.55f)
-            }
-            "PL" -> {
-                stripe(Color.White, 0f, 0f, 1f, 0.5f)
-                stripe(Color(0xFFDC143C), 0f, 0.5f, 1f, 1f)
-            }
-            "RU" -> {
-                stripe(Color.White, 0f, 0f, 1f, 0.333f)
-                stripe(Color(0xFF0039A6), 0f, 0.333f, 1f, 0.666f)
-                stripe(Color(0xFFD52B1E), 0f, 0.666f, 1f, 1f)
-            }
-            "US" -> {
-                stripe(Color(0xFFB22234), 0f, 0f, 1f, 1f)
-                stripe(Color.White, 0f, 0.15f, 1f, 0.28f)
-                stripe(Color.White, 0f, 0.43f, 1f, 0.56f)
-                stripe(Color.White, 0f, 0.71f, 1f, 0.84f)
-                stripe(Color(0xFF3C3B6E), 0f, 0f, 0.45f, 0.55f)
-            }
-            "SE" -> {
-                drawRect(Color(0xFF006AA7))
-                stripe(Color(0xFFFECC00), 0.30f, 0f, 0.43f, 1f)
-                stripe(Color(0xFFFECC00), 0f, 0.42f, 1f, 0.58f)
-            }
-            "FI" -> {
-                drawRect(Color.White)
-                stripe(Color(0xFF003580), 0.28f, 0f, 0.42f, 1f)
-                stripe(Color(0xFF003580), 0f, 0.42f, 1f, 0.58f)
-            }
-            "ES" -> {
-                stripe(Color(0xFFAA151B), 0f, 0f, 1f, 0.25f)
-                stripe(Color(0xFFF1BF00), 0f, 0.25f, 1f, 0.75f)
-                stripe(Color(0xFFAA151B), 0f, 0.75f, 1f, 1f)
-            }
-            "IT" -> {
-                stripe(Color(0xFF009246), 0f, 0f, 0.333f, 1f)
-                stripe(Color.White, 0.333f, 0f, 0.666f, 1f)
-                stripe(Color(0xFFCE2B37), 0.666f, 0f, 1f, 1f)
-            }
-            "TR" -> {
-                drawRect(Color(0xFFE30A17))
-                drawCircle(Color.White, radius = h * 0.26f, center = Offset(w * 0.43f, h * 0.50f))
-                drawCircle(Color(0xFFE30A17), radius = h * 0.20f, center = Offset(w * 0.49f, h * 0.50f))
-            }
-            "SG" -> {
-                stripe(Color(0xFFEF3340), 0f, 0f, 1f, 0.5f)
-                stripe(Color.White, 0f, 0.5f, 1f, 1f)
-            }
-            "EU" -> {
-                drawRect(Color(0xFF244AA5))
-                drawCircle(Color(0xFFFFD700), radius = h * 0.12f, center = Offset(w * 0.50f, h * 0.50f))
-            }
-            else -> {
-                drawRect(AppUiColors.Border)
-                stripe(Color.White.copy(alpha = 0.62f), 0f, 0f, 1f, 0.5f)
-            }
-        }
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(AppUiColors.SelectedSurface)
+            .border(1.dp, AppUiColors.Border, RoundedCornerShape(3.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = code.take(3).uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = AppUiColors.TextSecondary,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 
 @Composable
-private fun AutoConnectCard(
-    enabled: Boolean,
-    compact: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
+private fun AutoConnectCard(enabled: Boolean, compact: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -826,15 +685,8 @@ private fun AdvancedPage(
             maxLines = 1,
         )
         Spacer(Modifier.height(if (tight) 14.dp else 18.dp))
-
-        AutoConnectCard(
-            enabled = autoConnectEnabled,
-            compact = compact,
-            onCheckedChange = onAutoConnectChange,
-        )
-
+        AutoConnectCard(enabled = autoConnectEnabled, compact = compact, onCheckedChange = onAutoConnectChange)
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
-
         DnsSettingsCard(
             dnsValue = dnsValue,
             statusText = statusText,
@@ -851,7 +703,6 @@ private fun AdvancedPage(
                 statusText = "DNS сохранён. Переподключите VPN."
             },
         )
-
         Spacer(Modifier.weight(1f))
     }
 }
@@ -948,32 +799,6 @@ private fun normalizeDnsInput(value: String?): String {
 }
 
 @Composable
-private fun BackgroundShape(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        drawCircle(
-            Color(0xFFF1F5F7).copy(alpha = 0.78f),
-            radius = w * 0.30f,
-            center = Offset(w * 0.13f, h * 0.36f),
-        )
-        drawCircle(
-            Color(0xFFF1F5F7).copy(alpha = 0.72f),
-            radius = w * 0.31f,
-            center = Offset(w * 0.85f, h * 0.34f),
-        )
-        val center = Path().apply {
-            moveTo(w * 0.50f, h * 0.04f)
-            lineTo(w * 0.92f, h * 0.74f)
-            lineTo(w * 0.08f, h * 0.74f)
-            close()
-        }
-        drawPath(center, Color.White.copy(alpha = 0.52f))
-        drawRect(brush = Brush.verticalGradient(0f to Color.White.copy(alpha = 0f), 1f to Color.White))
-    }
-}
-
-@Composable
 fun HumanSilhouetteBlock(uiState: VpnMainUiState, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         StatusBeacon(uiState.connectionState)
@@ -1047,12 +872,7 @@ fun ConnectionStatusOverlay(uiState: VpnMainUiState, modifier: Modifier = Modifi
 }
 
 @Composable
-fun ActivationKeyField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-) {
+fun ActivationKeyField(value: String, onValueChange: (String) -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
     Box(modifier = modifier)
 }
 
@@ -1135,23 +955,12 @@ private fun MiniIcon(type: MiniIconType, tint: Color, size: Dp) {
         val stroke = (minSide * 0.08f).coerceAtLeast(1.5f)
         when (type) {
             MiniIconType.Home -> {
-                val p = Path().apply {
-                    moveTo(sw * 0.18f, sh * 0.48f)
-                    lineTo(sw * 0.50f, sh * 0.20f)
-                    lineTo(sw * 0.82f, sh * 0.48f)
-                    lineTo(sw * 0.76f, sh * 0.82f)
-                    lineTo(sw * 0.28f, sh * 0.82f)
-                    close()
-                }
-                drawPath(p, tint)
+                drawLine(tint, Offset(sw * 0.18f, sh * 0.52f), Offset(sw * 0.50f, sh * 0.24f), strokeWidth = stroke, cap = StrokeCap.Round)
+                drawLine(tint, Offset(sw * 0.50f, sh * 0.24f), Offset(sw * 0.82f, sh * 0.52f), strokeWidth = stroke, cap = StrokeCap.Round)
+                drawRect(tint, topLeft = Offset(sw * 0.30f, sh * 0.52f), size = androidx.compose.ui.geometry.Size(sw * 0.40f, sh * 0.30f))
             }
             MiniIconType.Settings -> {
-                drawCircle(
-                    tint,
-                    radius = minSide * 0.23f,
-                    center = Offset(sw / 2f, sh / 2f),
-                    style = Stroke(width = stroke),
-                )
+                drawCircle(tint, radius = minSide * 0.23f, center = Offset(sw / 2f, sh / 2f), style = Stroke(width = stroke))
                 repeat(6) { index ->
                     val angle = Math.toRadians((index * 60.0) - 90.0)
                     val start = Offset(
