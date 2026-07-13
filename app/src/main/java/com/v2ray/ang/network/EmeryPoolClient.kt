@@ -5,7 +5,6 @@ import com.v2ray.ang.security.AppSecurity
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,7 +20,7 @@ import java.util.concurrent.TimeUnit
  */
 object EmeryPoolClient {
 
-    private val client = OkHttpClient.Builder()
+    private val client = AppSecurity.hardenedOkHttpBuilder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
