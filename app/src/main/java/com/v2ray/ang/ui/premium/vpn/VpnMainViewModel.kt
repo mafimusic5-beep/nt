@@ -214,26 +214,27 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 }
 
                 if (lastRegionRevision.isBlank()) {
-                    EmeryRegionEventsClient.fetchRegionsRevision(accessKey)
-                        .onSuccess { revision ->
-                            lastRegionRevision = revision
-                            VpnUiDebugLogger.log(
-                                hypothesisId = "H14",
-                                location = "VpnMainViewModel.kt:startRegionEventListener",
-                                message = "region revision listener initialized",
-                                data = JSONObject().put("revision", revision),
-                            )
-                        }
-                        .onFailure { error ->
-                            VpnUiDebugLogger.log(
-                                hypothesisId = "H14",
-                                location = "VpnMainViewModel.kt:startRegionEventListener",
-                                message = "region revision init failed",
-                                data = JSONObject().put("error", error.message ?: "unknown"),
-                            )
-                            delay(REGION_EVENT_RECONNECT_DELAY_MS)
-                            continue
-                        }
+                    val revisionResult = EmeryRegionEventsClient.fetchRegionsRevision(accessKey)
+                    if (revisionResult.isSuccess) {
+                        val revision = revisionResult.getOrNull().orEmpty()
+                        lastRegionRevision = revision
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H14",
+                            location = "VpnMainViewModel.kt:startRegionEventListener",
+                            message = "region revision listener initialized",
+                            data = JSONObject().put("revision", revision),
+                        )
+                    } else {
+                        val error = revisionResult.exceptionOrNull()
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H14",
+                            location = "VpnMainViewModel.kt:startRegionEventListener",
+                            message = "region revision init failed",
+                            data = JSONObject().put("error", error?.message ?: "unknown"),
+                        )
+                        delay(REGION_EVENT_RECONNECT_DELAY_MS)
+                        continue
+                    }
                 }
 
                 val knownRevision = lastRegionRevision
