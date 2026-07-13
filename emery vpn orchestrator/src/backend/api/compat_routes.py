@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import logging
 import os
+import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -111,6 +114,14 @@ def _require_app_integrity(request: Request) -> None:
             raise HTTPException(status_code=403, detail="emulator_client_not_allowed")
 
 
+def _require_active_subscription(access_key: str, db: Session):
+    service = SubscriptionService(db)
+    code, sub = service.resolve_subscription_by_access_key(access_key)
+    if not code or not sub:
+        raise HTTPException(status_code=401, detail="invalid_or_expired_key")
+    return service, code, sub
+
+
 def _register_or_require_device(
     db: Session,
     service: SubscriptionService,
@@ -123,6 +134,30 @@ def _register_or_require_device(
     device = service._register_device_inner(subscription_id, device_id, "android", device_name)
     db.commit()
     return device
+
+
+def _row_value(row, key: str, default=None):
+    if isinstance(row, dict):
+        return row.get(key, default)
+    return getattr(row, key, default)
+
+
+def _region_revision_snapshot(db: Session) -> tuple[str, int]:
+    rows = SubscriptionService(db).list_vpn_servers()
+    normalized = []
+    for row in rows:
+        normalized.append(
+            {
+                "id": str(_row_value(row, "id", "")),
+                "city": str(_row_value(row, "city", _row_value(row, "region_code", ""))),
+                "region_code": str(_row_value(row, "region_code", _row_value(row, "regionCode", ""))),
+                "health_status": str(_row_value(row, "health_status", _row_value(row, "healthStatus", ""))),
+                "is_available": bool(_row_value(row, "is_available", _row_value(row, "isAvailable", True))),
+            }
+        )
+    normalized.sort(key=lambda item: (item["region_code"], item["city"], item["id"]))
+    payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest(), len(normalized)
 
 
 @compat_router.post("/auth/key")
@@ -202,6 +237,51 @@ def vpn_config(request: Request, access_key: str = Depends(_bearer_key), db: Ses
 def vpn_servers(request: Request, db: Session = Depends(get_db)):
     _require_app_integrity(request)
     return SubscriptionService(db).list_vpn_servers()
+
+
+@compat_router.get("/api/v1/vpn/regions/revision")
+@compat_router.get("/vpn/regions/revision")
+def vpn_regions_revision(request: Request, access_key: str = Depends(_bearer_key), db: Session = Depends(get_db)):
+    _require_app_integrity(request)
+    _require_active_subscription(access_key, db)
+    revision, server_count = _region_revision_snapshot(db)
+    return {
+        "revision": revision,
+        "server_count": server_count,
+    }
+
+
+@compat_router.get("/api/v1/vpn/regions/events")
+@compat_router.get("/vpn/regions/events")
+def vpn_regions_events(
+    request: Request,
+    since: str = "",
+    access_key: str = Depends(_bearer_key),
+    db: Session = Depends(get_db),
+):
+    _require_app_integrity(request)
+    _require_active_subscription(access_key, db)
+
+    wait_seconds = max(5.0, min(float(os.getenv("SKRYON_REGION_EVENT_WAIT_SECONDS", "55")), 70.0))
+    tick_seconds = max(0.5, min(float(os.getenv("SKRYON_REGION_EVENT_TICK_SECONDS", "1.5")), 5.0))
+    deadline = time.monotonic() + wait_seconds
+
+    while True:
+        db.expire_all()
+        revision, server_count = _region_revision_snapshot(db)
+        if not since or revision != since:
+            return {
+                "changed": True,
+                "revision": revision,
+                "server_count": server_count,
+            }
+        if time.monotonic() >= deadline:
+            return {
+                "changed": False,
+                "revision": revision,
+                "server_count": server_count,
+            }
+        time.sleep(tick_seconds)
 
 
 @compat_router.post("/vpn/connect")
