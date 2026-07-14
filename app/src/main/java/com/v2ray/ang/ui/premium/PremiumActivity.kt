@@ -14,6 +14,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,7 +56,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -78,6 +81,7 @@ import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
 import java.util.Locale
+import kotlin.math.min
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -427,7 +431,7 @@ private fun ActivationCodeInput(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (compact) 60.dp else 66.dp),
+                    .height(if (compact) 66.dp else 74.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 ActivationCodeSlots(
@@ -460,7 +464,7 @@ private fun ActivationCodeSlots(
     ) {
         ACTIVATION_CODE_GROUPS.forEachIndexed { groupIndex, groupSize ->
             Row(
-                horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 repeat(groupSize) {
@@ -483,14 +487,7 @@ private fun ActivationCodeSlots(
 
 @Composable
 private fun ActivationCodeSeparator(compact: Boolean) {
-    Box(
-        modifier = Modifier
-            .padding(horizontal = if (compact) 5.dp else 6.dp)
-            .width(if (compact) 8.dp else 10.dp)
-            .height(2.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(Color(0xFFD5DAE2)),
-    )
+    Spacer(Modifier.width(if (compact) 5.dp else 7.dp))
 }
 
 @Composable
@@ -500,92 +497,149 @@ private fun CodeCharacterSlot(
     compact: Boolean,
 ) {
     val filled = char.isNotBlank()
-    val shape = RoundedCornerShape(if (compact) 11.dp else 13.dp)
     val scale by animateFloatAsState(
         targetValue = when {
-            active -> 1.06f
+            active -> 1.045f
             filled -> 1.0f
-            else -> 0.96f
+            else -> 0.985f
         },
         animationSpec = tween(durationMillis = 170),
-        label = "activation-slot-scale",
+        label = "activation-ticket-slot-scale",
     )
     val elevation by animateDpAsState(
         targetValue = when {
             active -> 8.dp
-            filled -> 4.dp
+            filled -> 2.dp
             else -> 0.dp
         },
         animationSpec = tween(durationMillis = 180),
-        label = "activation-slot-elevation",
+        label = "activation-ticket-slot-elevation",
     )
     val borderColor by animateColorAsState(
         targetValue = when {
-            active -> Color(0xFF36A852)
-            filled -> Color(0xFF151821)
-            else -> Color(0xFFD9DEE7)
+            active -> Color(0xFF0E4D36)
+            filled -> Color(0xFFC2C9D2)
+            else -> Color(0xFFD4DAE2)
         },
         animationSpec = tween(durationMillis = 180),
-        label = "activation-slot-border",
+        label = "activation-ticket-slot-border",
     )
     val backgroundColor by animateColorAsState(
-        targetValue = when {
-            filled -> Color(0xFF111319)
-            active -> Color(0xFFF3FAEF)
-            else -> Color(0xFFF8FAFC)
-        },
+        targetValue = if (active) Color(0xFFFFFFFF) else Color(0xFFFCFDFE),
         animationSpec = tween(durationMillis = 180),
-        label = "activation-slot-background",
+        label = "activation-ticket-slot-background",
+    )
+    val underlineColor by animateColorAsState(
+        targetValue = if (active) Color(0xFF0E4D36) else Color(0xFFC9CED6),
+        animationSpec = tween(durationMillis = 180),
+        label = "activation-ticket-slot-underline",
+    )
+    val underlineWidth by animateDpAsState(
+        targetValue = if (active) 18.dp else 16.dp,
+        animationSpec = tween(durationMillis = 180),
+        label = "activation-ticket-slot-underline-width",
     )
     val textAlpha by animateFloatAsState(
         targetValue = if (filled) 1f else 0f,
         animationSpec = tween(durationMillis = 120),
-        label = "activation-slot-text-alpha",
+        label = "activation-ticket-slot-text-alpha",
     )
-    val blink = rememberInfiniteTransition(label = "activation-slot-cursor")
+    val blink = rememberInfiniteTransition(label = "activation-ticket-slot-cursor")
     val cursorAlpha by blink.animateFloat(
-        initialValue = 0.25f,
+        initialValue = 0.24f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 620),
             repeatMode = RepeatMode.Reverse,
         ),
-        label = "activation-slot-cursor-alpha",
+        label = "activation-ticket-slot-cursor-alpha",
     )
 
-    Box(
-        modifier = Modifier
-            .width(if (compact) 22.dp else 25.dp)
-            .height(if (compact) 46.dp else 52.dp)
-            .scale(scale)
-            .shadow(elevation = elevation, shape = shape, spotColor = Color(0x1F36A852))
-            .clip(shape)
-            .background(backgroundColor)
-            .border(width = if (active) 1.6.dp else 1.dp, color = borderColor, shape = shape),
-        contentAlignment = Alignment.Center,
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.width(if (compact) 21.dp else 24.dp),
     ) {
-        if (filled) {
-            Text(
-                text = char,
-                style = TextStyle(
-                    fontSize = if (compact) 18.sp else 21.sp,
-                    lineHeight = if (compact) 22.sp else 25.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White.copy(alpha = textAlpha),
-                    textAlign = TextAlign.Center,
-                ),
-                maxLines = 1,
+        Box(
+            modifier = Modifier
+                .width(if (compact) 21.dp else 24.dp)
+                .height(if (compact) 46.dp else 52.dp)
+                .scale(scale)
+                .shadow(elevation = elevation, shape = RoundedCornerShape(if (compact) 9.dp else 11.dp), spotColor = Color(0x1F0E4D36)),
+            contentAlignment = Alignment.Center,
+        ) {
+            TicketSlotCanvas(
+                borderColor = borderColor,
+                backgroundColor = backgroundColor,
+                active = active,
             )
-        } else if (active) {
-            Box(
-                modifier = Modifier
-                    .width(2.dp)
-                    .height(if (compact) 19.dp else 22.dp)
-                    .alpha(cursorAlpha)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Color(0xFF36A852)),
-            )
+            if (filled) {
+                Text(
+                    text = char,
+                    style = TextStyle(
+                        fontSize = if (compact) 18.sp else 21.sp,
+                        lineHeight = if (compact) 22.sp else 25.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = Color(0xFF06080D).copy(alpha = textAlpha),
+                        textAlign = TextAlign.Center,
+                    ),
+                    maxLines = 1,
+                )
+            } else if (active) {
+                Box(
+                    modifier = Modifier
+                        .width(1.7.dp)
+                        .height(if (compact) 22.dp else 25.dp)
+                        .alpha(cursorAlpha)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color(0xFF0E4D36)),
+                )
+            }
         }
+        Spacer(Modifier.height(if (compact) 5.dp else 7.dp))
+        Box(
+            modifier = Modifier
+                .width(underlineWidth)
+                .height(if (active) 1.8.dp else 1.35.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(underlineColor),
+        )
+    }
+}
+
+@Composable
+private fun TicketSlotCanvas(
+    borderColor: Color,
+    backgroundColor: Color,
+    active: Boolean,
+) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        val radius = min(w * 0.16f, 8.dp.toPx())
+        val notch = min(w * 0.14f, 5.5.dp.toPx())
+        val cx = w / 2f
+        val strokeWidth = if (active) 1.45.dp.toPx() else 1.dp.toPx()
+        val path = Path().apply {
+            moveTo(radius, 0f)
+            lineTo(w - radius, 0f)
+            quadraticBezierTo(w, 0f, w, radius)
+            lineTo(w, h - radius)
+            quadraticBezierTo(w, h, w - radius, h)
+            lineTo(cx + notch, h)
+            quadraticBezierTo(cx, h - notch * 1.25f, cx - notch, h)
+            lineTo(radius, h)
+            quadraticBezierTo(0f, h, 0f, h - radius)
+            lineTo(0f, radius)
+            quadraticBezierTo(0f, 0f, radius, 0f)
+            close()
+        }
+        drawPath(path = path, color = backgroundColor)
+        drawPath(
+            path = path,
+            color = borderColor,
+            style = Stroke(width = strokeWidth),
+        )
     }
 }
 
