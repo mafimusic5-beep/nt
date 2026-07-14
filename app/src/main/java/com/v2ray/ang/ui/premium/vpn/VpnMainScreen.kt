@@ -28,13 +28,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -71,7 +69,6 @@ fun VpnMainRoute(
         uiState = uiState,
         locations = uiState.locations,
         onLocationSelected = viewModel::onLocationSelected,
-        onRefreshLocations = viewModel::refreshLocations,
         onConnectClick = {
             requestVpnPermission {
                 viewModel.onConnectClick(startVpnService)
@@ -87,7 +84,6 @@ fun VpnMainScreen(
     uiState: VpnMainUiState,
     locations: List<VpnLocationOption>,
     onLocationSelected: (String) -> Unit,
-    onRefreshLocations: () -> Unit = {},
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -105,7 +101,6 @@ fun VpnMainScreen(
             selectedLocation = uiState.selectedLocation,
             loading = uiState.locationsLoading,
             error = uiState.locationsError,
-            onRefresh = onRefreshLocations,
             onSelect = { location ->
                 onLocationSelected(location.id)
                 showRegionPicker = false
@@ -358,7 +353,7 @@ private fun RegionSelectorCard(
             Text(
                 text = when {
                     connectionState != VpnConnectionState.Disconnected -> "Отключите VPN, чтобы сменить регион"
-                    loading -> "Получаем актуальный список серверов"
+                    loading -> "Список обновляется автоматически"
                     onlineCount > 0 -> "$onlineCount ${regionCountWord(onlineCount)} в сети"
                     else -> "Нет доступных регионов"
                 },
@@ -402,7 +397,6 @@ private fun RegionPickerSheet(
     selectedLocation: VpnLocationOption,
     loading: Boolean,
     error: String,
-    onRefresh: () -> Unit,
     onSelect: (VpnLocationOption) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -420,23 +414,18 @@ private fun RegionPickerSheet(
                 .navigationBarsPadding()
                 .padding(start = 20.dp, end = 20.dp, bottom = 18.dp),
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Выберите регион",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = if (loading) "Обновляем список серверов" else "${locations.size} ${regionCountWord(locations.size)} сейчас в сети",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = AppUiColors.TextSecondary,
-                    )
-                }
-                TextButton(onClick = onRefresh, enabled = !loading) {
-                    Text(if (loading) "Загрузка..." else "Обновить")
-                }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Выберите регион",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = if (loading) "Список обновляется автоматически" else "${locations.size} ${regionCountWord(locations.size)} сейчас в сети",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppUiColors.TextSecondary,
+                )
             }
 
             if (loading) {
@@ -826,7 +815,6 @@ fun LocationSelector(
             selectedLocation = selectedLocation,
             loading = false,
             error = "",
-            onRefresh = {},
             onSelect = {
                 onLocationSelected(it.id)
                 showPicker = false
