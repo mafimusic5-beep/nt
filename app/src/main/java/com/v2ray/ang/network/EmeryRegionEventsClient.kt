@@ -13,11 +13,12 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
 /**
- * Event-driven region updates.
+ * Backend-driven region updates with a safe reconciliation fallback.
  *
- * The app does not periodically download the whole region list. It keeps a lightweight
- * long-poll channel open. Backend returns only when its region revision changes, then the
- * ViewModel refreshes the full region list once.
+ * The backend should return a new region revision when countries/servers are added or removed.
+ * Some deployed backends may not expose the event endpoint yet, so this client deliberately
+ * returns a synthetic revision on event timeout/404/network failure. The ViewModel will then
+ * refresh the actual server list and remove stale regions from the UI.
  */
 object EmeryRegionEventsClient {
 
@@ -25,10 +26,10 @@ object EmeryRegionEventsClient {
     private const val REGION_EVENTS_PATH = "/api/v1/vpn/regions/events"
 
     private val client = AppSecurity.hardenedOkHttpBuilder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(75, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(85, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(18, TimeUnit.SECONDS)
+        .writeTimeout(12, TimeUnit.SECONDS)
+        .callTimeout(24, TimeUnit.SECONDS)
         .build()
 
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
@@ -41,7 +42,7 @@ object EmeryRegionEventsClient {
         premiumApiBlocked()?.let { return@withContext Result.failure(it) }
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
-        executeRevisionRequest(REGION_REVISION_PATH, key)
+        executeRevisionRequest(REGION_REVISION_PATH, key, allowSyntheticRevision = true)
     }
 
     suspend fun awaitRegionsChanged(accessKey: String, sinceRevision: String): Result<String> = withContext(Dispatchers.IO) {
@@ -49,12 +50,17 @@ object EmeryRegionEventsClient {
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
         val encodedSince = URLEncoder.encode(sinceRevision.trim(), StandardCharsets.UTF_8.name())
-        executeRevisionRequest("$REGION_EVENTS_PATH?since=$encodedSince", key)
+        executeRevisionRequest("$REGION_EVENTS_PATH?since=$encodedSince", key, allowSyntheticRevision = true)
     }
 
-    private fun executeRevisionRequest(pathWithOptionalQuery: String, accessKey: String): Result<String> {
+    private fun executeRevisionRequest(
+        pathWithOptionalQuery: String,
+        accessKey: String,
+        allowSyntheticRevision: Boolean,
+    ): Result<String> {
         val signingPath = pathWithOptionalQuery.substringBefore('?')
         val request = authorizedGet(pathWithOptionalQuery, signingPath, accessKey)
+        val isEventWait = signingPath == REGION_EVENTS_PATH
         return try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
@@ -62,19 +68,48 @@ object EmeryRegionEventsClient {
                     return Result.failure(IllegalStateException(errorFrom(raw, "invalid_or_expired_key")))
                 }
                 if (!response.isSuccessful) {
-                    return Result.failure(IllegalStateException(errorFrom(raw, "http_${response.code}")))
+                    return if (allowSyntheticRevision) {
+                        Result.success(syntheticRevision("http_${response.code}"))
+                    } else {
+                        Result.failure(IllegalStateException(errorFrom(raw, "http_${response.code}")))
+                    }
                 }
-                val revision = JSONObject(raw).optString("revision").trim()
+                val json = JSONObject(raw)
+                val revision = json.optString("revision").trim()
                 if (revision.isBlank()) {
-                    return Result.failure(IllegalStateException("missing_region_revision"))
+                    return if (allowSyntheticRevision) {
+                        Result.success(syntheticRevision("missing_revision"))
+                    } else {
+                        Result.failure(IllegalStateException("missing_region_revision"))
+                    }
                 }
+
+                // Long-poll timeout normally returns changed=false with the same revision.
+                // Force a lightweight reconciliation so deleted backend regions disappear
+                // even when the backend event does not fire correctly.
+                if (isEventWait && json.has("changed") && !json.optBoolean("changed", true)) {
+                    return Result.success(syntheticRevision("unchanged_$revision"))
+                }
+
                 Result.success(revision)
             }
         } catch (_: IOException) {
-            Result.failure(IllegalStateException("network"))
+            if (allowSyntheticRevision) {
+                Result.success(syntheticRevision("network"))
+            } else {
+                Result.failure(IllegalStateException("network"))
+            }
         } catch (_: Exception) {
-            Result.failure(IllegalStateException("parse_error"))
+            if (allowSyntheticRevision) {
+                Result.success(syntheticRevision("parse"))
+            } else {
+                Result.failure(IllegalStateException("parse_error"))
+            }
         }
+    }
+
+    private fun syntheticRevision(reason: String): String {
+        return "sync_${reason}_${System.currentTimeMillis()}"
     }
 
     private fun authorizedGet(pathWithOptionalQuery: String, signingPath: String, accessKey: String): Request {
