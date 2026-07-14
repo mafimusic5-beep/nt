@@ -6,8 +6,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -42,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -74,6 +84,7 @@ import org.json.JSONObject
 
 private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
 private const val ACTIVATION_CODE_LENGTH = 11
+private val ACTIVATION_CODE_GROUPS = listOf(1, 3, 2, 2, 2, 1)
 
 private enum class EmeryRoute { Splash, Activation, Home }
 
@@ -250,7 +261,7 @@ private fun ActivationScreen(
         val pantherHeight = if (compact) maxHeight * 0.68f else maxHeight * 0.72f
         val pantherTop = if (compact) 92.dp else 112.dp
         val pantherOffsetX = if (compact) 64.dp else 86.dp
-        val cardHeight = if (compact) 306.dp else 368.dp
+        val cardHeight = if (compact) 318.dp else 384.dp
 
         Text(
             text = "Skryon",
@@ -304,10 +315,10 @@ private fun ActivationScreen(
                 )
                 .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
                 .background(Color.White)
-                .padding(horizontal = if (compact) 26.dp else 36.dp),
+                .padding(horizontal = if (compact) 22.dp else 34.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(if (compact) 22.dp else 34.dp))
+            Spacer(Modifier.height(if (compact) 20.dp else 32.dp))
             Text(
                 text = "Активация",
                 style = TextStyle(
@@ -330,7 +341,7 @@ private fun ActivationScreen(
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(if (compact) 24.dp else 34.dp))
+            Spacer(Modifier.height(if (compact) 24.dp else 32.dp))
             ActivationCodeInput(
                 code = code,
                 onCodeChange = {
@@ -416,7 +427,7 @@ private fun ActivationCodeInput(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (compact) 54.dp else 60.dp),
+                    .height(if (compact) 60.dp else 66.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 ActivationCodeSlots(
@@ -440,66 +451,141 @@ private fun ActivationCodeSlots(
     code: String,
     compact: Boolean,
 ) {
-    val groups = listOf(1, 3, 2, 2, 2, 1)
+    val activeIndex = code.length.coerceIn(0, ACTIVATION_CODE_LENGTH - 1)
     var index = 0
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        groups.forEachIndexed { groupIndex, groupSize ->
-            repeat(groupSize) {
-                val char = code.getOrNull(index)?.toString().orEmpty()
-                index += 1
-                CodeCharacterSlot(
-                    char = char,
-                    compact = compact,
-                )
+        ACTIVATION_CODE_GROUPS.forEachIndexed { groupIndex, groupSize ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(groupSize) {
+                    val slotIndex = index
+                    val char = code.getOrNull(slotIndex)?.toString().orEmpty()
+                    CodeCharacterSlot(
+                        char = char,
+                        active = slotIndex == activeIndex && code.length < ACTIVATION_CODE_LENGTH,
+                        compact = compact,
+                    )
+                    index += 1
+                }
             }
-            if (groupIndex != groups.lastIndex) {
-                Text(
-                    text = "-",
-                    style = TextStyle(
-                        fontSize = if (compact) 20.sp else 24.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = Color(0xFF111319),
-                        textAlign = TextAlign.Center,
-                    ),
-                    modifier = Modifier.width(if (compact) 10.dp else 13.dp),
-                )
+            if (groupIndex != ACTIVATION_CODE_GROUPS.lastIndex) {
+                ActivationCodeSeparator(compact = compact)
             }
         }
     }
 }
 
 @Composable
+private fun ActivationCodeSeparator(compact: Boolean) {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = if (compact) 5.dp else 6.dp)
+            .width(if (compact) 8.dp else 10.dp)
+            .height(2.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0xFFD5DAE2)),
+    )
+}
+
+@Composable
 private fun CodeCharacterSlot(
     char: String,
+    active: Boolean,
     compact: Boolean,
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier.width(if (compact) 20.dp else 24.dp),
+    val filled = char.isNotBlank()
+    val shape = RoundedCornerShape(if (compact) 11.dp else 13.dp)
+    val scale by animateFloatAsState(
+        targetValue = when {
+            active -> 1.06f
+            filled -> 1.0f
+            else -> 0.96f
+        },
+        animationSpec = tween(durationMillis = 170),
+        label = "activation-slot-scale",
+    )
+    val elevation by animateDpAsState(
+        targetValue = when {
+            active -> 8.dp
+            filled -> 4.dp
+            else -> 0.dp
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "activation-slot-elevation",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            active -> Color(0xFF36A852)
+            filled -> Color(0xFF151821)
+            else -> Color(0xFFD9DEE7)
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "activation-slot-border",
+    )
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            filled -> Color(0xFF111319)
+            active -> Color(0xFFF3FAEF)
+            else -> Color(0xFFF8FAFC)
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "activation-slot-background",
+    )
+    val textAlpha by animateFloatAsState(
+        targetValue = if (filled) 1f else 0f,
+        animationSpec = tween(durationMillis = 120),
+        label = "activation-slot-text-alpha",
+    )
+    val blink = rememberInfiniteTransition(label = "activation-slot-cursor")
+    val cursorAlpha by blink.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 620),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "activation-slot-cursor-alpha",
+    )
+
+    Box(
+        modifier = Modifier
+            .width(if (compact) 22.dp else 25.dp)
+            .height(if (compact) 46.dp else 52.dp)
+            .scale(scale)
+            .shadow(elevation = elevation, shape = shape, spotColor = Color(0x1F36A852))
+            .clip(shape)
+            .background(backgroundColor)
+            .border(width = if (active) 1.6.dp else 1.dp, color = borderColor, shape = shape),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = char,
-            style = TextStyle(
-                fontSize = if (compact) 20.sp else 24.sp,
-                lineHeight = if (compact) 24.sp else 28.sp,
-                fontWeight = FontWeight.Normal,
-                color = Color(0xFF111319),
-                textAlign = TextAlign.Center,
-            ),
-            modifier = Modifier.height(if (compact) 28.dp else 32.dp),
-            maxLines = 1,
-        )
-        Box(
-            modifier = Modifier
-                .width(if (compact) 19.dp else 23.dp)
-                .height(1.35.dp)
-                .background(Color(0xFFC4C9D0)),
-        )
+        if (filled) {
+            Text(
+                text = char,
+                style = TextStyle(
+                    fontSize = if (compact) 18.sp else 21.sp,
+                    lineHeight = if (compact) 22.sp else 25.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White.copy(alpha = textAlpha),
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = 1,
+            )
+        } else if (active) {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .height(if (compact) 19.dp else 22.dp)
+                    .alpha(cursorAlpha)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color(0xFF36A852)),
+            )
+        }
     }
 }
 
@@ -511,9 +597,8 @@ private fun sanitizeActivationCode(value: String): String {
 }
 
 private fun formatActivationCode(rawCode: String): String {
-    val groups = listOf(1, 3, 2, 2, 2, 1)
     var index = 0
-    return groups.mapNotNull { size ->
+    return ACTIVATION_CODE_GROUPS.mapNotNull { size ->
         val part = rawCode.drop(index).take(size)
         index += size
         part.takeIf { it.isNotBlank() }
