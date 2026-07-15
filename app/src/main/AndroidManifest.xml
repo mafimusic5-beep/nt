@@ -36,14 +36,15 @@
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
         android:minSdkVersion="34" />
-    <!-- <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".AngApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/skryon_data_extraction_rules"
         android:banner="@mipmap/ic_banner"
         android:icon="@mipmap/ic_launcher_skryon_final"
         android:roundIcon="@mipmap/ic_launcher_skryon_final"
@@ -51,7 +52,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/AppThemeDayNight.NoActionBar"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false">
 
         <activity
             android:name=".ui.premium.PremiumActivity"
@@ -138,25 +139,11 @@
             android:process=":RunSoLibV2RayDaemon"
             android:theme="@style/AppThemeDayNight.NoActionBar.Translucent" />
 
+        <!-- External v2rayng:// and SEND imports are disabled for Skryon builds.
+             Import links contain live VPN config material and must not be accepted from other apps. -->
         <activity
             android:name=".ui.UrlSchemeActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.BROWSABLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:scheme="v2rayng" />
-                <data android:host="install-config" />
-                <data android:host="install-sub" />
-            </intent-filter>
-        </activity>
+            android:exported="false" />
         <activity
             android:name=".ui.CheckUpdateActivity"
             android:exported="false" />
@@ -218,10 +205,15 @@
         </receiver>
         <receiver
             android:name=".receiver.BootReceiver"
+            android:directBootAware="true"
             android:exported="true"
             android:label="BootReceiver">
             <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
 
@@ -240,26 +232,18 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="tile" />
         </service>
-        <!-- =====================Tasker===================== -->
+
+        <!-- External Tasker automation is disabled for Skryon builds to avoid third-party start/config injection. -->
         <activity
             android:name=".ui.TaskerActivity"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher_skryon_final">
-            <intent-filter>
-                <action android:name="com.twofortyfouram.locale.intent.action.EDIT_SETTING" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:icon="@mipmap/ic_launcher_skryon_final" />
 
         <receiver
             android:name=".receiver.TaskerReceiver"
-            android:exported="true"
-            android:process=":RunSoLibV2RayDaemon"
-            tools:ignore="ExportedReceiver">
-            <intent-filter>
-                <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
-            </intent-filter>
-        </receiver>
-        <!-- =====================Tasker===================== -->
+            android:exported="false"
+            android:process=":RunSoLibV2RayDaemon" />
+
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
@@ -286,6 +270,3 @@
     </application>
 
 </manifest>
-
-
-

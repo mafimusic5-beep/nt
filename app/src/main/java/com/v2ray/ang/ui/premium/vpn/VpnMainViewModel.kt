@@ -14,17 +14,18 @@ import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
+import com.v2ray.ang.network.EmeryRegionEventsClient
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
-import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -34,14 +35,31 @@ import java.nio.charset.StandardCharsets
 
 private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
 private const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
+private const val SKRYON_SELECTED_REGION_PREF = "SKRYON_SELECTED_REGION"
+private const val SKRYON_LAST_CONNECTED_REGION_ID_PREF = "SKRYON_LAST_CONNECTED_REGION_ID"
+private const val SKRYON_LAST_CONNECTED_REGION_TITLE_PREF = "SKRYON_LAST_CONNECTED_REGION_TITLE"
 
 class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val DEFAULT_ACCESS_KEY = "DEV"
         const val DEFAULT_REGION_TITLE = "Регион"
-        const val SERVICE_STATE_RECHECK_DELAY_MS = 1_500L
+        const val SERVICE_STATE_SYNC_ATTEMPTS = 5
+        const val SERVICE_START_CONFIRMATION_ATTEMPTS = 15
+        const val SERVICE_STATE_SYNC_DELAY_MS = 700L
+        const val SERVICE_START_CONFIRMATION_DELAY_MS = 1_000L
+        const val SERVER_LIST_TIMEOUT_MS = 1_500L
+        const val POOL_LIST_TIMEOUT_MS = 1_500L
+        const val REGION_EVENT_RECONNECT_DELAY_MS = 5_000L
     }
+
+    private data class ConnectAttemptResult(
+        val payload: EmeryVpnSync.ConnectServerResult,
+        val location: VpnLocationOption,
+    )
+
+    private val appContext: Context
+        get() = getApplication<Application>().applicationContext
 
     private val _uiState = MutableStateFlow(
         VpnMainUiState(
@@ -53,20 +71,34 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private var connectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
-    private var serviceStateRecheckJob: Job? = null
-    private var serviceReceiverRegistered = false
+    private var regionEventsJob: Job? = null
+    private var serviceStateSyncJob: Job? = null
+    private var serviceStateReceiverRegistered = false
+    private var waitingForStartConfirmation = false
+    private var lastAppliedLocationsSignature = ""
+    private var lastRegionRevision = ""
 
     private val serviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.getIntExtra("key", 0)) {
                 AppConfig.MSG_STATE_RUNNING,
-                AppConfig.MSG_STATE_START_SUCCESS -> setConnectedFromService()
+                AppConfig.MSG_STATE_START_SUCCESS -> onServiceRunning()
 
-                AppConfig.MSG_STATE_NOT_RUNNING,
-                AppConfig.MSG_STATE_STOP_SUCCESS -> setDisconnectedFromService()
+                AppConfig.MSG_STATE_NOT_RUNNING -> {
+                    if (!waitingForStartConfirmation) {
+                        onServiceStopped()
+                    }
+                }
 
                 AppConfig.MSG_STATE_START_FAILURE -> {
+                    waitingForStartConfirmation = false
+                    serviceStateSyncJob?.cancel()
                     setDisconnectedWithError("Не удалось запустить VPN-сервис")
+                }
+
+                AppConfig.MSG_STATE_STOP_SUCCESS -> {
+                    waitingForStartConfirmation = false
+                    onServiceStopped()
                 }
             }
         }
@@ -74,81 +106,86 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         registerServiceStateReceiver()
-        requestServiceState()
+        refreshConnectionState()
         refreshLocations()
+        startRegionEventListener()
     }
 
     private fun registerServiceStateReceiver() {
-        if (serviceReceiverRegistered) return
+        if (serviceStateReceiverRegistered) return
 
-        val application = getApplication<Application>()
-        runCatching {
+        try {
             ContextCompat.registerReceiver(
-                application,
+                appContext,
                 serviceStateReceiver,
                 IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY),
-                Utils.receiverFlags(),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
             )
-        }.onSuccess {
-            serviceReceiverRegistered = true
-        }.onFailure { error ->
+            serviceStateReceiverRegistered = true
+        } catch (error: Exception) {
             VpnUiDebugLogger.log(
                 hypothesisId = "H10",
                 location = "VpnMainViewModel.kt:registerServiceStateReceiver",
-                message = "premium service-state receiver registration failed",
+                message = "failed to register service state receiver",
                 data = JSONObject().put("error", error.message ?: "unknown"),
             )
         }
     }
 
-    private fun requestServiceState() {
-        MessageUtil.sendMsg2Service(
-            getApplication(),
-            AppConfig.MSG_REGISTER_CLIENT,
-            "",
-        )
-    }
+    fun refreshConnectionState() {
+        registerServiceStateReceiver()
+        if (!serviceStateReceiverRegistered) return
 
-    private fun scheduleServiceStateRecheck() {
-        serviceStateRecheckJob?.cancel()
-        serviceStateRecheckJob = viewModelScope.launch {
-            delay(SERVICE_STATE_RECHECK_DELAY_MS)
-            if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
-                requestServiceState()
+        serviceStateSyncJob?.cancel()
+        serviceStateSyncJob = viewModelScope.launch {
+            repeat(SERVICE_STATE_SYNC_ATTEMPTS) { attempt ->
+                MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_REGISTER_CLIENT, "")
+                if (attempt < SERVICE_STATE_SYNC_ATTEMPTS - 1) {
+                    delay(SERVICE_STATE_SYNC_DELAY_MS)
+                }
             }
         }
     }
 
-    private fun setConnectedFromService() {
-        connectJob?.cancel()
-        serviceStateRecheckJob?.cancel()
+    private fun awaitServiceStartConfirmation() {
+        if (!waitingForStartConfirmation || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+            return
+        }
+
+        serviceStateSyncJob?.cancel()
+        serviceStateSyncJob = viewModelScope.launch {
+            repeat(SERVICE_START_CONFIRMATION_ATTEMPTS) {
+                MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_REGISTER_CLIENT, "")
+                delay(SERVICE_START_CONFIRMATION_DELAY_MS)
+                if (!waitingForStartConfirmation || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+                    return@launch
+                }
+            }
+
+            if (waitingForStartConfirmation && _uiState.value.connectionState == VpnConnectionState.Connecting) {
+                waitingForStartConfirmation = false
+                setDisconnectedWithError("VPN-сервис не подтвердил подключение")
+            }
+        }
+    }
+
+    private fun onServiceRunning() {
+        waitingForStartConfirmation = false
+        serviceStateSyncJob?.cancel()
         _uiState.update { state ->
             state.copy(
-                activationKey = state.activationKey.ifBlank {
-                    savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
-                },
                 connectionState = VpnConnectionState.Connected,
                 locationsError = "",
             )
         }
         startTimer()
-        VpnUiDebugLogger.log(
-            hypothesisId = "H10",
-            location = "VpnMainViewModel.kt:setConnectedFromService",
-            message = "premium UI synchronized with running VPN service",
-            data = JSONObject(),
-        )
     }
 
-    private fun setDisconnectedFromService() {
-        connectJob?.cancel()
+    private fun onServiceStopped() {
+        serviceStateSyncJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
         _uiState.update { state ->
             state.copy(
-                activationKey = state.activationKey.ifBlank {
-                    savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
-                },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
             )
@@ -156,110 +193,287 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun refreshLocations() {
-        serversJob?.cancel()
-        serversJob = viewModelScope.launch {
-            _uiState.update { state ->
-                state.copy(
-                    activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
-                    locationsLoading = true,
-                    locationsError = "",
-                )
-            }
-
-            val activatedLocation = savedSkryonConfigLocation()
-            if (activatedLocation != null) {
-                applyLocations(listOf(activatedLocation), "")
-                VpnUiDebugLogger.log(
-                    hypothesisId = "H9",
-                    location = "VpnMainViewModel.kt:refreshLocations",
-                    message = "using saved activated skryon config",
-                    data = JSONObject().put("title", activatedLocation.title),
-                )
-                return@launch
-            }
-
-            val result = withTimeoutOrNull(4_000L) {
-                EmeryBackendClient.fetchVpnServers()
-            } ?: Result.failure(IllegalStateException("server_list_timeout"))
-            result.fold(
-                onSuccess = { servers ->
-                    val locations = servers
-                        .filter { it.isAvailable }
-                        .map { server ->
-                            VpnLocationOption(
-                                id = server.id.toString(),
-                                title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
-                            )
-                        }
-                        .distinctBy { it.id }
-
-                    if (locations.isNotEmpty()) {
-                        applyLocations(locations, "")
-                    } else {
-                        refreshPoolLocationsFallback("Серверы пока недоступны")
-                    }
-                },
-                onFailure = { error ->
-                    VpnUiDebugLogger.log(
-                        hypothesisId = "H6",
-                        location = "VpnMainViewModel.kt:refreshLocations",
-                        message = "server list fetch failed",
-                        data = JSONObject().put("error", error.message ?: "unknown"),
-                    )
-                    refreshPoolLocationsFallback("Не удалось загрузить серверы")
-                },
-            )
-        }
-    }
-
-    private suspend fun refreshPoolLocationsFallback(fallbackError: String) {
-        val activatedLocation = savedSkryonConfigLocation()
-        if (activatedLocation != null) {
-            applyLocations(listOf(activatedLocation), "")
-            return
-        }
-
-        val key = _uiState.value.activationKey.ifBlank { DEFAULT_ACCESS_KEY }
-        val poolResult = withTimeoutOrNull(8_000L) {
-            EmeryPoolClient.fetchPoolImportText(key)
-        } ?: Result.failure(IllegalStateException("pool_list_timeout"))
-        poolResult.fold(
-            onSuccess = { importText ->
-                val locations = importText
-                    .lineSequence()
-                    .map { it.trim() }
-                    .filter { isImportProfileLink(it) }
-                    .distinct()
-                    .mapIndexed { index, link ->
-                        VpnLocationOption(
-                            id = "pool-${index + 1}",
-                            title = titleFromConfigLink(link, index + 1),
-                            importText = link,
-                        )
-                    }
-                    .toList()
-
-                applyLocations(
-                    locations.ifEmpty { VpnDemoData.unavailableLocations },
-                    if (locations.isEmpty()) fallbackError else "",
-                )
-            },
-            onFailure = { error ->
-                VpnUiDebugLogger.log(
-                    hypothesisId = "H6",
-                    location = "VpnMainViewModel.kt:refreshPoolLocationsFallback",
-                    message = "pool list fetch failed",
-                    data = JSONObject().put("error", error.message ?: "unknown"),
-                )
-                applyLocations(VpnDemoData.unavailableLocations, fallbackError)
-            },
+        refreshLocationsInternal(
+            source = "manual_or_startup",
+            forceApply = true,
+            showLoadingWhenEmpty = true,
         )
     }
 
+    private fun startRegionEventListener() {
+        if (regionEventsJob?.isActive == true) return
+        regionEventsJob = viewModelScope.launch {
+            while (isActive) {
+                val accessKey = _uiState.value.activationKey.ifBlank {
+                    savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
+                }
+
+                if (accessKey.isBlank() || accessKey == DEFAULT_ACCESS_KEY) {
+                    delay(REGION_EVENT_RECONNECT_DELAY_MS)
+                    continue
+                }
+
+                if (lastRegionRevision.isBlank()) {
+                    val revisionResult = EmeryRegionEventsClient.fetchRegionsRevision(accessKey)
+                    if (revisionResult.isSuccess) {
+                        val revision = revisionResult.getOrNull().orEmpty()
+                        lastRegionRevision = revision
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H14",
+                            location = "VpnMainViewModel.kt:startRegionEventListener",
+                            message = "region revision listener initialized",
+                            data = JSONObject().put("revision", revision),
+                        )
+                    } else {
+                        val error = revisionResult.exceptionOrNull()
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H14",
+                            location = "VpnMainViewModel.kt:startRegionEventListener",
+                            message = "region revision init failed",
+                            data = JSONObject().put("error", error?.message ?: "unknown"),
+                        )
+                        delay(REGION_EVENT_RECONNECT_DELAY_MS)
+                        continue
+                    }
+                }
+
+                val knownRevision = lastRegionRevision
+                EmeryRegionEventsClient.awaitRegionsChanged(accessKey, knownRevision)
+                    .onSuccess { revision ->
+                        if (revision.isNotBlank() && revision != lastRegionRevision) {
+                            val previousRevision = lastRegionRevision
+                            lastRegionRevision = revision
+                            VpnUiDebugLogger.log(
+                                hypothesisId = "H14",
+                                location = "VpnMainViewModel.kt:startRegionEventListener",
+                                message = "backend region change event received",
+                                data = JSONObject()
+                                    .put("previousRevision", previousRevision)
+                                    .put("revision", revision),
+                            )
+                            refreshLocationsInternal(
+                                source = "backend_region_event",
+                                forceApply = false,
+                                showLoadingWhenEmpty = false,
+                            )
+                        }
+                    }
+                    .onFailure { error ->
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H14",
+                            location = "VpnMainViewModel.kt:startRegionEventListener",
+                            message = "region event listener disconnected",
+                            data = JSONObject().put("error", error.message ?: "unknown"),
+                        )
+                    }
+
+                delay(REGION_EVENT_RECONNECT_DELAY_MS)
+            }
+        }
+    }
+
+    private fun refreshLocationsInternal(
+        source: String,
+        forceApply: Boolean,
+        showLoadingWhenEmpty: Boolean,
+    ) {
+        if (!forceApply && serversJob?.isActive == true) {
+            return
+        }
+        serversJob?.cancel()
+        serversJob = viewModelScope.launch {
+            val fallbackLocation = savedSkryonConfigLocation()
+            val existingLocations = _uiState.value.locations.filter(::isSelectableLocation)
+            val instantLocations = when {
+                existingLocations.isNotEmpty() -> existingLocations
+                fallbackLocation != null -> listOf(fallbackLocation)
+                else -> emptyList()
+            }
+
+            if (forceApply && instantLocations.isNotEmpty()) {
+                applyLocations(instantLocations, "")
+                _uiState.update { state ->
+                    state.copy(
+                        activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
+                        locationsLoading = false,
+                        locationsError = "",
+                    )
+                }
+            } else if (showLoadingWhenEmpty && instantLocations.isEmpty()) {
+                _uiState.update { state ->
+                    state.copy(
+                        activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
+                        locationsLoading = true,
+                        locationsError = "",
+                    )
+                }
+            }
+
+            val accessKey = _uiState.value.activationKey.ifBlank {
+                savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
+            }
+
+            val backendDeferred = async(Dispatchers.IO) {
+                withTimeoutOrNull(SERVER_LIST_TIMEOUT_MS) {
+                    EmeryBackendClient.fetchVpnServers()
+                } ?: Result.failure(IllegalStateException("server_list_timeout"))
+            }
+            val poolDeferred = async(Dispatchers.IO) {
+                withTimeoutOrNull(POOL_LIST_TIMEOUT_MS) {
+                    EmeryPoolClient.fetchPoolImportText(accessKey)
+                } ?: Result.failure(IllegalStateException("pool_list_timeout"))
+            }
+
+            val backendResult = backendDeferred.await()
+            val poolResult = poolDeferred.await()
+
+            val backendLocations = backendResult.getOrNull()
+                .orEmpty()
+                .asSequence()
+                .filter { it.isAvailable }
+                .map { server ->
+                    VpnLocationOption(
+                        id = server.id.toString(),
+                        title = serverRegionTitle(
+                            raw = server.city.ifBlank { "Server #${server.id}" },
+                            index = server.id.toInt(),
+                        ),
+                    )
+                }
+                .toList()
+
+            val poolLocations = poolResult.getOrNull()
+                ?.let(::locationsFromPoolImportText)
+                .orEmpty()
+
+            val onlineLocations = mergeOnlineLocations(backendLocations, poolLocations)
+            val visibleLocations = if (onlineLocations.isNotEmpty()) {
+                onlineLocations
+            } else {
+                instantLocations.ifEmpty { listOfNotNull(fallbackLocation) }
+            }
+            val visibleSignature = locationsSignature(visibleLocations)
+            val changed = visibleSignature.isNotBlank() && visibleSignature != lastAppliedLocationsSignature
+
+            val error = when {
+                onlineLocations.isNotEmpty() -> ""
+                visibleLocations.isNotEmpty() -> ""
+                backendResult.isFailure && poolResult.isFailure -> "Не удалось загрузить регионы из сети"
+                else -> "Серверы сейчас недоступны"
+            }
+
+            VpnUiDebugLogger.log(
+                hypothesisId = "H14",
+                location = "VpnMainViewModel.kt:refreshLocationsInternal",
+                message = "region list applied from explicit refresh/event",
+                data = JSONObject()
+                    .put("source", source)
+                    .put("backendCount", backendLocations.size)
+                    .put("poolCount", poolLocations.size)
+                    .put("visibleCount", visibleLocations.size)
+                    .put("changed", changed)
+                    .put("forceApply", forceApply)
+                    .put("signature", visibleSignature)
+                    .put("previousSignature", lastAppliedLocationsSignature)
+                    .put("fallbackUsed", fallbackLocation != null)
+                    .put("lastConnectedRegionId", savedLastConnectedRegionId())
+                    .put("backendError", backendResult.exceptionOrNull()?.message.orEmpty())
+                    .put("poolError", poolResult.exceptionOrNull()?.message.orEmpty()),
+            )
+
+            if (forceApply || changed || _uiState.value.locations.none(::isSelectableLocation)) {
+                if (visibleSignature.isNotBlank()) {
+                    lastAppliedLocationsSignature = visibleSignature
+                }
+                applyLocations(visibleLocations, error)
+            } else if (error.isBlank()) {
+                _uiState.update { state -> state.copy(locationsLoading = false, locationsError = "") }
+            } else if (showLoadingWhenEmpty && _uiState.value.locations.none(::isSelectableLocation)) {
+                _uiState.update { state -> state.copy(locationsLoading = false, locationsError = error) }
+            }
+        }
+    }
+
+    private fun locationsSignature(locations: List<VpnLocationOption>): String {
+        return locations
+            .filter(::isSelectableLocation)
+            .map { location ->
+                listOf(
+                    regionIdentity(location),
+                    location.id.trim(),
+                    location.title.trim(),
+                    location.importText.trim().hashCode().toString(),
+                ).joinToString("|")
+            }
+            .sorted()
+            .joinToString(";")
+    }
+
+    private fun locationsFromPoolImportText(importText: String): List<VpnLocationOption> {
+        return importText
+            .lineSequence()
+            .map { it.trim() }
+            .filter { isImportProfileLink(it) }
+            .distinct()
+            .mapIndexed { index, link ->
+                VpnLocationOption(
+                    id = "pool-${link.hashCode().toUInt().toString(16)}",
+                    title = titleFromConfigLink(link, index + 1),
+                    importText = link,
+                )
+            }
+            .toList()
+    }
+
+    private fun mergeOnlineLocations(
+        backendLocations: List<VpnLocationOption>,
+        poolLocations: List<VpnLocationOption>,
+    ): List<VpnLocationOption> {
+        val byRegion = linkedMapOf<String, VpnLocationOption>()
+        (backendLocations + poolLocations).forEach { location ->
+            if (!isSelectableLocation(location)) return@forEach
+            val key = regionIdentity(location)
+            if (key.isNotBlank() && key !in byRegion) {
+                byRegion[key] = location
+            }
+        }
+        return byRegion.values.sortedWith(
+            compareBy<VpnLocationOption> { regionSortOrder(it.title) }
+                .thenBy { it.title.lowercase() }
+        )
+    }
+
+    private fun regionIdentity(location: VpnLocationOption): String {
+        return serverRegionTitleOrBlank(location.title)
+            .ifBlank { location.title.trim().lowercase() }
+    }
+
+    private fun regionSortOrder(title: String): Int {
+        val normalized = serverRegionTitleOrBlank(title)
+        val code = normalized.substringAfterLast(' ', "").uppercase()
+        val order = listOf("FR", "DE", "NL", "PL", "UK", "FI", "SE", "ES", "IT", "TR", "RU", "US", "SG", "EU")
+        val index = order.indexOf(code)
+        return if (index >= 0) index else Int.MAX_VALUE
+    }
+
+    private fun isSelectableLocation(location: VpnLocationOption): Boolean {
+        return location.id.toLongOrNull() != null || location.importText.isNotBlank()
+    }
+
     private fun applyLocations(locations: List<VpnLocationOption>, error: String) {
-        val safeLocations = locations.ifEmpty { VpnDemoData.unavailableLocations }
+        val safeLocations = locations
+            .filter(::isSelectableLocation)
+            .ifEmpty { VpnDemoData.unavailableLocations }
+        val savedLastRegionId = savedLastConnectedRegionId()
+        val savedLastRegionTitle = savedLastConnectedRegionTitle()
+        val savedRegion = savedSelectedRegion()
+
         _uiState.update { state ->
-            val selected = safeLocations.firstOrNull { it.id == state.selectedLocation.id }
+            val currentSelected = state.selectedLocation.takeIf(::isSelectableLocation)
+            val selected = safeLocations.firstOrNull { currentSelected != null && it.id == currentSelected.id }
+                ?: safeLocations.firstOrNull { savedLastRegionId.isNotBlank() && it.id == savedLastRegionId }
+                ?: safeLocations.firstOrNull { savedLastRegionTitle.isNotBlank() && it.title.equals(savedLastRegionTitle, ignoreCase = true) }
+                ?: safeLocations.firstOrNull { savedRegion.isNotBlank() && it.title.equals(savedRegion, ignoreCase = true) }
                 ?: safeLocations.first()
             state.copy(
                 activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
@@ -289,6 +503,30 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         return MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CODE_PREF, "")
             ?.trim()
             .orEmpty()
+    }
+
+    private fun savedSelectedRegion(): String {
+        return MmkvManager.decodeSettingsString(SKRYON_SELECTED_REGION_PREF, "")
+            ?.trim()
+            .orEmpty()
+    }
+
+    private fun savedLastConnectedRegionId(): String {
+        return MmkvManager.decodeSettingsString(SKRYON_LAST_CONNECTED_REGION_ID_PREF, "")
+            ?.trim()
+            .orEmpty()
+    }
+
+    private fun savedLastConnectedRegionTitle(): String {
+        return MmkvManager.decodeSettingsString(SKRYON_LAST_CONNECTED_REGION_TITLE_PREF, "")
+            ?.trim()
+            .orEmpty()
+    }
+
+    private fun saveLastConnectedLocation(location: VpnLocationOption) {
+        MmkvManager.encodeSettings(SKRYON_LAST_CONNECTED_REGION_ID_PREF, location.id)
+        MmkvManager.encodeSettings(SKRYON_LAST_CONNECTED_REGION_TITLE_PREF, location.title)
+        MmkvManager.encodeSettings(SKRYON_SELECTED_REGION_PREF, location.title)
     }
 
     private fun isImportProfileLink(link: String): Boolean {
@@ -370,10 +608,16 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onLocationSelected(location: String) {
+    fun onLocationSelected(locationIdOrTitle: String) {
+        if (_uiState.value.connectionState != VpnConnectionState.Disconnected) {
+            return
+        }
+
         val selected = _uiState.value.locations.firstOrNull {
-            it.id == location || it.title == location
+            it.id == locationIdOrTitle || it.title == locationIdOrTitle
         } ?: return
+
+        MmkvManager.encodeSettings(SKRYON_SELECTED_REGION_PREF, selected.title)
         VpnUiDebugLogger.log(
             hypothesisId = "H5",
             location = "VpnMainViewModel.kt:onLocationSelected",
@@ -383,7 +627,10 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 .put("serverId", selected.id),
         )
         _uiState.update { state ->
-            state.copy(selectedLocation = selected)
+            state.copy(
+                selectedLocation = selected,
+                locationsError = "",
+            )
         }
     }
 
@@ -414,7 +661,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
         connectJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
+        waitingForStartConfirmation = true
 
         _uiState.update { state ->
             state.copy(
@@ -434,7 +681,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob = viewModelScope.launch {
             val result = connectSelectedLocation(currentState)
             result.fold(
-                onSuccess = { payload ->
+                onSuccess = { attempt ->
+                    val payload = attempt.payload
                     val serviceStartRequested = try {
                         startVpnService(payload.selectedGuid)
                     } catch (e: Exception) {
@@ -447,6 +695,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         false
                     }
                     if (!serviceStartRequested) {
+                        waitingForStartConfirmation = false
                         setDisconnectedWithError("Не удалось запустить VPN-сервис")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -459,23 +708,35 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         return@fold
                     }
 
-                    VpnUiDebugLogger.log(
-                        hypothesisId = "H10",
+                    saveLastConnectedLocation(attempt.location)
+                    _uiState.update { state ->
+                        state.copy(
+                            selectedLocation = attempt.location,
+                            locationsError = "",
+                        )
+                    }
+
+                    AgentDebugNdjsonLogger.log(
+                        hypothesisId = "H2",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "VPN service start requested; waiting for runtime confirmation",
+                        message = "premium_waiting_for_service_confirmation",
+                        runId = "service-state-sync",
                         data = JSONObject()
                             .put("serverId", payload.serverId)
                             .put("city", payload.city)
-                            .put("selectedGuid", payload.selectedGuid),
+                            .put("selectedGuid", payload.selectedGuid)
+                            .put("locationId", attempt.location.id)
+                            .put("locationTitle", attempt.location.title),
                     )
-                    scheduleServiceStateRecheck()
+                    awaitServiceStartConfirmation()
                 },
                 onFailure = { error ->
-                    setDisconnectedWithError("Не удалось подключиться к серверу")
+                    waitingForStartConfirmation = false
+                    setDisconnectedWithError("Не удалось подключиться к выбранному региону")
                     VpnUiDebugLogger.log(
                         hypothesisId = "H7",
                         location = "VpnMainViewModel.kt:onConnectClick",
-                        message = "connect failed",
+                        message = "connect failed for selected region",
                         data = JSONObject()
                             .put("serverId", currentState.selectedLocation.id)
                             .put("error", error.message ?: "unknown"),
@@ -486,8 +747,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun setDisconnectedWithError(message: String) {
+        waitingForStartConfirmation = false
+        serviceStateSyncJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
         _uiState.update { state ->
             state.copy(
                 connectionState = VpnConnectionState.Disconnected,
@@ -497,14 +759,36 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
+    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<ConnectAttemptResult> {
         val normalizedState = state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
-        val serverId = normalizedState.selectedLocation.id.toLongOrNull()
+        val selectedLocation = normalizedState.selectedLocation.takeIf(::isSelectableLocation)
+            ?: return Result.failure(IllegalStateException("missing_selected_region"))
+
+        val result = connectLocationCandidate(normalizedState.activationKey, selectedLocation)
+        if (result.isFailure) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H12",
+                location = "VpnMainViewModel.kt:connectSelectedLocation",
+                message = "selected region unavailable",
+                data = JSONObject()
+                    .put("locationId", selectedLocation.id)
+                    .put("locationTitle", selectedLocation.title)
+                    .put("error", result.exceptionOrNull()?.message ?: "unknown"),
+            )
+        }
+        return result
+    }
+
+    private suspend fun connectLocationCandidate(accessKey: String, location: VpnLocationOption): Result<ConnectAttemptResult> {
+        val serverId = location.id.toLongOrNull()
         if (serverId != null) {
-            return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
+            val payload = EmeryVpnSync.connectToServer(accessKey, serverId).getOrElse { error ->
+                return Result.failure(error)
+            }
+            return Result.success(ConnectAttemptResult(payload, location))
         }
 
-        val importText = normalizedState.selectedLocation.importText.orEmpty().trim()
+        val importText = location.importText.trim()
         if (importText.isBlank()) {
             return Result.failure(IllegalStateException("missing_import_text"))
         }
@@ -526,10 +810,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
             MmkvManager.setSelectServer(selectedGuid)
             Result.success(
-                EmeryVpnSync.ConnectServerResult(
-                    serverId = -1L,
-                    city = normalizedState.selectedLocation.title,
-                    selectedGuid = selectedGuid,
+                ConnectAttemptResult(
+                    payload = EmeryVpnSync.ConnectServerResult(
+                        serverId = -1L,
+                        city = location.title,
+                        selectedGuid = selectedGuid,
+                    ),
+                    location = location,
                 )
             )
         }
@@ -537,8 +824,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
     fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
         connectJob?.cancel()
+        serviceStateSyncJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
+        waitingForStartConfirmation = false
         stopVpnService()
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H2",
@@ -582,16 +870,17 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
-        serviceStateRecheckJob?.cancel()
-
-        if (serviceReceiverRegistered) {
-            MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_UNREGISTER_CLIENT, "")
-            runCatching {
-                getApplication<Application>().unregisterReceiver(serviceStateReceiver)
+        regionEventsJob?.cancel()
+        serviceStateSyncJob?.cancel()
+        if (serviceStateReceiverRegistered) {
+            MessageUtil.sendMsg2Service(appContext, AppConfig.MSG_UNREGISTER_CLIENT, "")
+            try {
+                appContext.unregisterReceiver(serviceStateReceiver)
+            } catch (_: IllegalArgumentException) {
+                // Receiver was already unregistered by the framework.
             }
-            serviceReceiverRegistered = false
+            serviceStateReceiverRegistered = false
         }
-
         super.onCleared()
     }
 }

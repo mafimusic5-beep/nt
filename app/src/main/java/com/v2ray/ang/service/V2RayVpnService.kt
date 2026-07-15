@@ -12,8 +12,11 @@ import android.net.NetworkRequest
 import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.StrictMode
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.RequiresApi
 import com.v2ray.ang.AppConfig
@@ -31,10 +34,17 @@ import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.util.MyContextWrapper
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
+import org.json.JSONObject
 import java.lang.ref.SoftReference
 
 @SuppressLint("VpnServicePolicy")
 class V2RayVpnService : VpnService(), ServiceControl {
+
+    private companion object {
+        const val WATCHDOG_INTERVAL_MS = 5_000L
+        const val WATCHDOG_START_GRACE_MS = 12_000L
+    }
+
     private lateinit var mInterface: ParcelFileDescriptor
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
@@ -42,6 +52,19 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private var stopInProgress = false
     @Volatile
     private var vpnInterfaceClosed = false
+    @Volatile
+    private var watchdogEnabled = false
+    @Volatile
+    private var lastWatchdogRestartAtMs = 0L
+    private val watchdogHandler = Handler(Looper.getMainLooper())
+    private val vpnWatchdogRunnable = object : Runnable {
+        override fun run() {
+            runVpnWatchdogTick()
+            if (watchdogEnabled) {
+                watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS)
+            }
+        }
+    }
 
     /**destroy
      * Unfortunately registerDefaultNetworkCallback is going to return our VPN interface: https://android.googlesource.com/platform/frameworks/base/+/dda156ab0c5d66ad82bdcf76cda07cbc0a9c8a2e
@@ -90,6 +113,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     override fun onRevoke() {
         Log.w(AppConfig.TAG, "StartCore-VPN: Permission revoked")
+        stopVpnWatchdog("permission_revoked")
         stopAllService()
     }
 
@@ -99,6 +123,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
 //    }
 
     override fun onDestroy() {
+        stopVpnWatchdog("service_destroyed")
         super.onDestroy()
         Log.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
         NotificationManager.cancelNotification()
@@ -141,9 +166,11 @@ class V2RayVpnService : VpnService(), ServiceControl {
             stopAllService()
             return
         }
+        startVpnWatchdog()
     }
 
     override fun stopService() {
+        stopVpnWatchdog("stop_requested_by_service_control")
         stopAllService(true)
     }
 
@@ -369,7 +396,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
                 hypothesisId = "H1",
                 location = "V2RayVpnService.kt:runTun2socks",
                 message = "tun2socks_start_rejected",
-                data = org.json.JSONObject()
+                data = JSONObject()
                     .put("usingHevTun", SettingsManager.isUsingHevTun()),
             )
             // #endregion
@@ -387,7 +414,102 @@ class V2RayVpnService : VpnService(), ServiceControl {
         return true
     }
 
-    private fun stopAllService(isForced: Boolean = true) {
+    private fun startVpnWatchdog() {
+        lastWatchdogRestartAtMs = SystemClock.elapsedRealtime()
+        if (watchdogEnabled) {
+            return
+        }
+        watchdogEnabled = true
+        watchdogHandler.removeCallbacks(vpnWatchdogRunnable)
+        watchdogHandler.postDelayed(vpnWatchdogRunnable, WATCHDOG_INTERVAL_MS)
+        ManualModeDebugLogger.log(
+            hypothesisId = "H13",
+            location = "V2RayVpnService.kt:startVpnWatchdog",
+            message = "vpn_watchdog_started",
+            data = JSONObject()
+                .put("selectedServer", MmkvManager.getSelectServer().orEmpty())
+                .put("coreRunning", V2RayServiceManager.isRunning()),
+        )
+    }
+
+    private fun stopVpnWatchdog(reason: String) {
+        if (!watchdogEnabled) {
+            return
+        }
+        watchdogEnabled = false
+        watchdogHandler.removeCallbacks(vpnWatchdogRunnable)
+        ManualModeDebugLogger.log(
+            hypothesisId = "H13",
+            location = "V2RayVpnService.kt:stopVpnWatchdog",
+            message = "vpn_watchdog_stopped",
+            data = JSONObject().put("reason", reason),
+        )
+    }
+
+    private fun runVpnWatchdogTick() {
+        if (!watchdogEnabled || stopInProgress || !isRunning) {
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastWatchdogRestartAtMs < WATCHDOG_START_GRACE_MS) {
+            return
+        }
+
+        if (V2RayServiceManager.isRunning()) {
+            return
+        }
+
+        if (!::mInterface.isInitialized || vpnInterfaceClosed) {
+            ManualModeDebugLogger.log(
+                hypothesisId = "H13",
+                location = "V2RayVpnService.kt:runVpnWatchdogTick",
+                message = "vpn_watchdog_core_dead_without_interface",
+                data = JSONObject()
+                    .put("interfaceInitialized", ::mInterface.isInitialized)
+                    .put("vpnInterfaceClosed", vpnInterfaceClosed),
+            )
+            return
+        }
+
+        val guid = MmkvManager.getSelectServer().orEmpty()
+        Log.w(AppConfig.TAG, "StartCore-VPN: Watchdog detected stopped core, restarting selected server=$guid")
+        ManualModeDiagnostics.reportError(
+            code = ManualDiagnosticCodes.CORE_START_FAILED,
+            message = "VPN core stopped unexpectedly; watchdog is restarting it",
+            source = "V2RayVpnService",
+            details = "guid=$guid",
+        )
+        ManualModeDebugLogger.log(
+            hypothesisId = "H13",
+            location = "V2RayVpnService.kt:runVpnWatchdogTick",
+            message = "vpn_watchdog_core_dead_restart_attempt",
+            data = JSONObject()
+                .put("guid", guid)
+                .put("usingHevTun", SettingsManager.isUsingHevTun()),
+        )
+
+        lastWatchdogRestartAtMs = now
+        V2RayServiceManager.stopCoreLoop()
+        val restarted = V2RayServiceManager.startCoreLoop(mInterface)
+        ManualModeDebugLogger.log(
+            hypothesisId = "H13",
+            location = "V2RayVpnService.kt:runVpnWatchdogTick",
+            message = "vpn_watchdog_restart_result",
+            data = JSONObject()
+                .put("guid", guid)
+                .put("restarted", restarted)
+                .put("coreRunning", V2RayServiceManager.isRunning()),
+        )
+        if (restarted) {
+            ManualModeDiagnostics.clearError()
+        }
+    }
+
+    private fun stopAllService(isForced: Boolean = true, disableWatchdog: Boolean = true) {
+        if (disableWatchdog) {
+            stopVpnWatchdog("stop_all_service")
+        }
         if (stopInProgress) {
             return
         }
@@ -442,4 +564,3 @@ class V2RayVpnService : VpnService(), ServiceControl {
         }
     }
 }
-

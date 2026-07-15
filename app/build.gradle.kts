@@ -1,4 +1,4 @@
-﻿import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
+import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
@@ -13,6 +13,21 @@ plugins {
 
 /** Must match [android.defaultConfig.versionCode] (used in [androidComponents] per-ABI overrides). */
 val appVersionCode = 715
+val skryonAllowedSignatureSha256s = (providers.gradleProperty("SKRYON_ALLOWED_SIGNATURE_SHA256S").orNull ?: "")
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+val skryonApiPinSha256s = (providers.gradleProperty("SKRYON_API_PIN_SHA256S").orNull ?: "")
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+val skryonBlockTamperedRuntime = (providers.gradleProperty("SKRYON_BLOCK_TAMPERED_RUNTIME").orNull ?: "true")
+    .lowercase()
+    .let { value -> if (value == "false" || value == "0" || value == "no") "false" else "true" }
+val skryonBlockRootedRuntime = (providers.gradleProperty("SKRYON_BLOCK_ROOTED_RUNTIME").orNull ?: "true")
+    .lowercase()
+    .let { value -> if (value == "false" || value == "0" || value == "no") "false" else "true" }
+val skryonBlockEmulatorRuntime = (providers.gradleProperty("SKRYON_BLOCK_EMULATOR_RUNTIME").orNull ?: "false")
+    .lowercase()
+    .let { value -> if (value == "true" || value == "1" || value == "yes") "true" else "false" }
 
 android {
     namespace = "com.v2ray.ang"
@@ -26,8 +41,16 @@ android {
         versionName = "2.0.15"
         multiDexEnabled = true
 
-        // Emery orchestrator API on deployed VPS backend.
-        buildConfigField("String", "EMERY_API_BASE_URL", "\"http://80.71.159.221:9330\"")
+        // Public Skryon API endpoint. Nginx/Cloudflare proxy requests to the backend VPS.
+        buildConfigField("String", "EMERY_API_BASE_URL", "\"https://skryon.ru\"")
+        // Production release builds should be made with:
+        // -PSKRYON_ALLOWED_SIGNATURE_SHA256S=<SHA256_OF_RELEASE_SIGNING_CERT>
+        buildConfigField("String", "SKRYON_ALLOWED_SIGNATURE_SHA256S", "\"$skryonAllowedSignatureSha256s\"")
+        // Optional OkHttp certificate pins, comma-separated. Values may be full sha256/<base64> pins or raw base64 pins.
+        buildConfigField("String", "SKRYON_API_PIN_SHA256S", "\"$skryonApiPinSha256s\"")
+        buildConfigField("boolean", "SKRYON_BLOCK_TAMPERED_RUNTIME", skryonBlockTamperedRuntime)
+        buildConfigField("boolean", "SKRYON_BLOCK_ROOTED_RUNTIME", skryonBlockRootedRuntime)
+        buildConfigField("boolean", "SKRYON_BLOCK_EMULATOR_RUNTIME", skryonBlockEmulatorRuntime)
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -53,7 +76,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Release APKs should be obfuscated so access checks and API paths are harder to patch out.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -133,7 +158,7 @@ androidComponents {
         variant.outputs.forEach { output ->
             val abi = output.filters.find { it.filterType == ABI }?.identifier ?: "universal"
 
-            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default names.
+            // Per-output APK file names are not exposed on VariantOutput in AGP 8+; Gradle uses default output names.
             if (isFdroid) {
                 val suffix = fdroidAbiSuffix[abi] ?: return@forEach
                 output.versionCode.set((100 * appVersionCode + suffix) + 5_000_000)
@@ -214,7 +239,7 @@ dependencies {
 }
 
 /**
- * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, вЂ¦) ship inside libv2ray.aar.
+ * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, …) ship inside libv2ray.aar.
  * Upstream CI downloads it from 2dust/AndroidLibXrayLite; local clones often omit the binary.
  * Override tag: ./gradlew assembleDebug -Plibv2ray.version=v26.3.9
  */
@@ -232,7 +257,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
             URI(
                 "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
             ).toURL()
-        logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
+        logger.lifecycle("Downloading libv2ray.aar ({}) …", libv2rayVersionProperty)
         url.openStream().use { input: InputStream ->
             libv2rayAar.outputStream().use { output: OutputStream ->
                 input.copyTo(output)

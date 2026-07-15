@@ -7,17 +7,17 @@ import com.v2ray.ang.dto.VpnConfigApiResponseBody
 import com.v2ray.ang.dto.VpnServerItemApiResponseBody
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryApiConfig
+import com.v2ray.ang.security.AppSecurity
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import com.v2ray.ang.util.JsonUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import org.json.JSONObject
 
 /**
  * Authenticated Emery API calls after the access key is known.
@@ -25,13 +25,24 @@ import org.json.JSONObject
  */
 object EmeryBackendClient {
 
-    private val client = OkHttpClient.Builder()
+    private val client = AppSecurity.hardenedOkHttpBuilder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
+
+    private fun premiumApiBlocked(): IllegalStateException? {
+        return AppSecurity.premiumApiBlockReason()?.let(::IllegalStateException)
+    }
+
+    private fun Request.Builder.withSkryonSecurityHeaders(): Request.Builder {
+        AppSecurity.securityHeaders().forEach { (name, value) ->
+            header(name, value)
+        }
+        return this
+    }
 
     private fun authorizedGet(path: String, accessKey: String): Request {
         val credential = accessKey.trim()
@@ -44,6 +55,7 @@ object EmeryBackendClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .withSkryonSecurityHeaders()
             .get()
             .build()
     }
@@ -59,6 +71,7 @@ object EmeryBackendClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .withSkryonSecurityHeaders()
             .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
     }
@@ -77,6 +90,7 @@ object EmeryBackendClient {
     )
 
     suspend fun fetchProfile(accessKey: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
+        premiumApiBlocked()?.let { return@withContext Result.failure(it) }
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
         val request = authorizedGet("/profile", key)
@@ -118,6 +132,7 @@ object EmeryBackendClient {
      * Soft failures: no allocation / no config payload (orchestrator has nothing v2rayNG can import yet).
      */
     suspend fun fetchVpnConfigImportText(accessKey: String): Result<String> = withContext(Dispatchers.IO) {
+        premiumApiBlocked()?.let { return@withContext Result.failure(it) }
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
         val request = authorizedGet("/vpn/config", key)
@@ -149,8 +164,10 @@ object EmeryBackendClient {
     }
 
     suspend fun fetchVpnServers(): Result<List<BackendServer>> = withContext(Dispatchers.IO) {
+        premiumApiBlocked()?.let { return@withContext Result.failure(it) }
         val request = Request.Builder()
             .url("${baseUrl()}/api/v1/vpn/servers")
+            .withSkryonSecurityHeaders()
             .get()
             .build()
         try {
@@ -177,6 +194,7 @@ object EmeryBackendClient {
     }
 
     suspend fun connectServer(accessKey: String, serverId: Long): Result<ConnectPayload> = withContext(Dispatchers.IO) {
+        premiumApiBlocked()?.let { return@withContext Result.failure(it) }
         val key = accessKey.trim()
         if (key.isEmpty() || serverId <= 0L) return@withContext Result.failure(IllegalStateException("bad_request"))
         val bodyJson = JsonUtil.toJson(VpnConnectRequestBody(accessKey = key, serverId = serverId)) ?: "{}"
