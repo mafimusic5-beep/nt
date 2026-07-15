@@ -493,7 +493,7 @@ private fun ActivationCodeGroup(
     val active = activeSlot >= 0
     val characterWidth = if (compact) 20.dp else 21.dp
     val horizontalPadding = if (compact) 5.dp else 6.dp
-    val groupWidth = characterWidth * chars.size + horizontalPadding * 2
+    val groupWidth = (characterWidth.value * chars.size + horizontalPadding.value * 2f).dp
     val shape = RoundedCornerShape(if (compact) 14.dp else 16.dp)
 
     val scale by animateFloatAsState(
