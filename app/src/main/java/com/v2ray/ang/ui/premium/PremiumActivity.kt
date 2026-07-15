@@ -452,133 +452,92 @@ private fun ActivationCodeSlots(
     compact: Boolean,
 ) {
     val activeIndex = code.length.coerceIn(0, ACTIVATION_CODE_LENGTH - 1)
-    var index = 0
+    var groupStart = 0
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ACTIVATION_CODE_GROUPS.forEachIndexed { groupIndex, groupSize ->
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                repeat(groupSize) {
-                    val slotIndex = index
-                    val char = code.getOrNull(slotIndex)?.toString().orEmpty()
-                    CodeCharacterSlot(
-                        char = char,
-                        active = slotIndex == activeIndex && code.length < ACTIVATION_CODE_LENGTH,
-                        compact = compact,
-                    )
-                    index += 1
-                }
+            if (groupIndex > 0) {
+                Spacer(Modifier.width(if (compact) 4.dp else 5.dp))
             }
-            if (groupIndex != ACTIVATION_CODE_GROUPS.lastIndex) {
-                ActivationCodeSeparator(compact = compact)
+
+            val groupChars = List(groupSize) { offset ->
+                code.getOrNull(groupStart + offset)?.toString().orEmpty()
             }
+            val activeSlot = (activeIndex - groupStart)
+                .takeIf { code.length < ACTIVATION_CODE_LENGTH && it in 0 until groupSize }
+                ?: -1
+            val completed = groupChars.all { it.isNotBlank() }
+
+            ActivationCodeGroup(
+                chars = groupChars,
+                activeSlot = activeSlot,
+                completed = completed,
+                compact = compact,
+            )
+            groupStart += groupSize
         }
     }
 }
 
 @Composable
-private fun ActivationCodeSeparator(compact: Boolean) {
-    Spacer(Modifier.width(if (compact) 4.dp else 5.dp))
-}
-
-@Composable
-private fun CodeCharacterSlot(
-    char: String,
-    active: Boolean,
+private fun ActivationCodeGroup(
+    chars: List<String>,
+    activeSlot: Int,
+    completed: Boolean,
     compact: Boolean,
 ) {
-    val filled = char.isNotBlank()
-    val shape = RoundedCornerShape(
-        topStart = if (compact) 9.dp else 10.dp,
-        topEnd = if (compact) 9.dp else 10.dp,
-        bottomStart = if (compact) 5.dp else 6.dp,
-        bottomEnd = if (compact) 5.dp else 6.dp,
-    )
+    val active = activeSlot >= 0
+    val characterWidth = if (compact) 20.dp else 21.dp
+    val horizontalPadding = if (compact) 5.dp else 6.dp
+    val groupWidth = characterWidth * chars.size + horizontalPadding * 2
+    val shape = RoundedCornerShape(if (compact) 14.dp else 16.dp)
+
     val scale by animateFloatAsState(
-        targetValue = when {
-            active -> 1.04f
-            filled -> 1f
-            else -> 0.98f
-        },
-        animationSpec = tween(durationMillis = 170),
-        label = "activation-keycap-scale",
+        targetValue = if (active) 1.025f else 1f,
+        animationSpec = tween(durationMillis = 180),
+        label = "activation-group-scale",
     )
     val elevation by animateDpAsState(
         targetValue = when {
-            active -> 6.dp
-            filled -> 2.dp
-            else -> 0.5.dp
+            active -> 7.dp
+            completed -> 2.dp
+            else -> 1.dp
         },
         animationSpec = tween(durationMillis = 180),
-        label = "activation-keycap-elevation",
+        label = "activation-group-elevation",
     )
     val borderColor by animateColorAsState(
         targetValue = when {
             active -> Color(0xFF176B4A)
-            filled -> Color(0xFFC7CED7)
-            else -> Color(0xFFDFE3E8)
+            completed -> Color(0xFFBFC6CF)
+            else -> Color(0xFFDDE2E8)
         },
         animationSpec = tween(durationMillis = 180),
-        label = "activation-keycap-border",
+        label = "activation-group-border",
     )
     val backgroundColor by animateColorAsState(
         targetValue = when {
-            active -> Color(0xFFF4FAF7)
-            filled -> Color(0xFFF7F8FA)
+            active -> Color(0xFFF3F9F6)
+            completed -> Color(0xFFFAFBFC)
             else -> Color.White
         },
         animationSpec = tween(durationMillis = 180),
-        label = "activation-keycap-background",
-    )
-    val statusColor by animateColorAsState(
-        targetValue = when {
-            active -> Color(0xFF176B4A)
-            filled -> Color(0xFF8A929D)
-            else -> Color(0xFFE7EAEE)
-        },
-        animationSpec = tween(durationMillis = 180),
-        label = "activation-keycap-status",
-    )
-    val statusWidth by animateDpAsState(
-        targetValue = when {
-            active -> 14.dp
-            filled -> 11.dp
-            else -> 8.dp
-        },
-        animationSpec = tween(durationMillis = 180),
-        label = "activation-keycap-status-width",
-    )
-    val textAlpha by animateFloatAsState(
-        targetValue = if (filled) 1f else 0f,
-        animationSpec = tween(durationMillis = 120),
-        label = "activation-keycap-text-alpha",
-    )
-    val blink = rememberInfiniteTransition(label = "activation-keycap-cursor")
-    val cursorAlpha by blink.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 620),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "activation-keycap-cursor-alpha",
+        label = "activation-group-background",
     )
 
-    Box(
+    Row(
         modifier = Modifier
-            .width(if (compact) 25.dp else 27.dp)
-            .height(if (compact) 48.dp else 52.dp)
-            .offset(y = if (active) (-2).dp else 0.dp)
+            .width(groupWidth)
+            .height(if (compact) 50.dp else 54.dp)
             .scale(scale)
             .shadow(
                 elevation = elevation,
                 shape = shape,
-                spotColor = Color(0x1A176B4A),
+                spotColor = Color(0x17176B4A),
             )
             .clip(shape)
             .background(backgroundColor)
@@ -586,17 +545,77 @@ private fun CodeCharacterSlot(
                 width = if (active) 1.5.dp else 1.dp,
                 color = borderColor,
                 shape = shape,
-            ),
+            )
+            .padding(horizontal = horizontalPadding),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        chars.forEachIndexed { index, char ->
+            ActivationGroupCharacter(
+                char = char,
+                active = index == activeSlot,
+                compact = compact,
+                modifier = Modifier.width(characterWidth),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivationGroupCharacter(
+    char: String,
+    active: Boolean,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val filled = char.isNotBlank()
+    val textScale by animateFloatAsState(
+        targetValue = if (filled) 1f else 0.88f,
+        animationSpec = tween(durationMillis = 140),
+        label = "activation-character-scale",
+    )
+    val markerColor by animateColorAsState(
+        targetValue = when {
+            active -> Color(0xFF176B4A)
+            filled -> Color(0xFF838B96)
+            else -> Color(0xFFE5E8EC)
+        },
+        animationSpec = tween(durationMillis = 160),
+        label = "activation-character-marker",
+    )
+    val markerWidth by animateDpAsState(
+        targetValue = when {
+            active -> 13.dp
+            filled -> 9.dp
+            else -> 5.dp
+        },
+        animationSpec = tween(durationMillis = 160),
+        label = "activation-character-marker-width",
+    )
+    val blink = rememberInfiniteTransition(label = "activation-group-cursor")
+    val cursorAlpha by blink.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 620),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "activation-group-cursor-alpha",
+    )
+
+    Box(
+        modifier = modifier.height(if (compact) 42.dp else 46.dp),
         contentAlignment = Alignment.Center,
     ) {
         if (filled) {
             Text(
                 text = char,
+                modifier = Modifier.scale(textScale),
                 style = TextStyle(
                     fontSize = if (compact) 18.sp else 20.sp,
                     lineHeight = if (compact) 22.sp else 24.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF111319).copy(alpha = textAlpha),
+                    color = Color(0xFF111319),
                     textAlign = TextAlign.Center,
                 ),
                 maxLines = 1,
@@ -605,7 +624,7 @@ private fun CodeCharacterSlot(
             Box(
                 modifier = Modifier
                     .width(1.8.dp)
-                    .height(if (compact) 22.dp else 24.dp)
+                    .height(if (compact) 21.dp else 23.dp)
                     .alpha(cursorAlpha)
                     .clip(RoundedCornerShape(999.dp))
                     .background(Color(0xFF176B4A)),
@@ -616,10 +635,10 @@ private fun CodeCharacterSlot(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = if (compact) 5.dp else 6.dp)
-                .width(statusWidth)
+                .width(markerWidth)
                 .height(2.dp)
                 .clip(RoundedCornerShape(999.dp))
-                .background(statusColor),
+                .background(markerColor),
         )
     }
 }
