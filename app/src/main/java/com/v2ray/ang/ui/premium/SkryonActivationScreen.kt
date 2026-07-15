@@ -231,21 +231,21 @@ private fun ActivationCodeInput(
     compact: Boolean,
 ) {
     val context = LocalContext.current
-    val shape = RoundedCornerShape(if (compact) 20.dp else 24.dp)
+    val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (compact) 94.dp else 106.dp)
+            .height(if (compact) 76.dp else 88.dp)
             .shadow(
-                elevation = 1.dp,
+                elevation = 2.dp,
                 shape = shape,
                 spotColor = Color(0x10000000),
             )
             .clip(shape)
-            .background(Color(0xFFFEFEFE))
-            .border(1.dp, Color(0xFFE0E2E5), shape)
-            .padding(start = if (compact) 16.dp else 20.dp, end = if (compact) 7.dp else 10.dp),
+            .background(Color.White)
+            .border(1.dp, Color(0xFFE1E4E8), shape)
+            .padding(start = if (compact) 18.dp else 22.dp, end = if (compact) 7.dp else 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicTextField(
@@ -281,8 +281,8 @@ private fun ActivationCodeInput(
         Box(
             modifier = Modifier
                 .width(1.dp)
-                .height(if (compact) 52.dp else 60.dp)
-                .background(Color(0xFFE1E3E6)),
+                .height(if (compact) 42.dp else 50.dp)
+                .background(Color(0xFFE4E6EA)),
         )
 
         TextButton(
@@ -300,14 +300,14 @@ private fun ActivationCodeInput(
                 }
             },
             modifier = Modifier
-                .width(if (compact) 86.dp else 104.dp)
-                .height(if (compact) 64.dp else 72.dp),
+                .width(if (compact) 75.dp else 88.dp)
+                .height(if (compact) 56.dp else 64.dp),
         ) {
             Text(
                 text = "Вставить",
                 style = TextStyle(
-                    fontSize = if (compact) 16.sp else 18.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = if (compact) 14.sp else 16.sp,
+                    fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF0B6A43),
                 ),
                 maxLines = 1,
@@ -324,12 +324,11 @@ private fun ActivationCodeSlots(
     val activeIndex = code.length.coerceIn(0, SKRYON_ACTIVATION_CODE_LENGTH - 1)
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val groupGap = if (compact) 7.dp else 9.dp
-        val slotGap = if (compact) 3.dp else 4.dp
-        val availableWidth = maxWidth.value - groupGap.value * 5f - slotGap.value * 5f
+        val groupGap = if (compact) 9.dp else 12.dp
+        val availableWidth = maxWidth.value - groupGap.value * (SKRYON_ACTIVATION_CODE_GROUPS.size - 1)
         val slotWidth = (availableWidth / SKRYON_ACTIVATION_CODE_LENGTH)
             .dp
-            .coerceIn(if (compact) 12.dp else 14.dp, if (compact) 19.dp else 22.dp)
+            .coerceIn(if (compact) 13.dp else 15.dp, if (compact) 18.dp else 22.dp)
 
         var index = 0
         Row(
@@ -341,54 +340,55 @@ private fun ActivationCodeSlots(
                 if (groupIndex > 0) {
                     Spacer(Modifier.width(groupGap))
                 }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(slotGap),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    repeat(groupSize) {
-                        val slotIndex = index
-                        ActivationCodeCharacter(
-                            char = code.getOrNull(slotIndex)?.toString().orEmpty(),
-                            active = slotIndex == activeIndex && code.length < SKRYON_ACTIVATION_CODE_LENGTH,
-                            compact = compact,
-                            modifier = Modifier.width(slotWidth),
-                        )
-                        index += 1
-                    }
+                val groupStart = index
+                val groupChars = List(groupSize) { offset ->
+                    code.getOrNull(groupStart + offset)?.toString().orEmpty()
                 }
+                val activeSlot = (activeIndex - groupStart)
+                    .takeIf { code.length < SKRYON_ACTIVATION_CODE_LENGTH && it in 0 until groupSize }
+                    ?: -1
+                CodeGroupUnderline(
+                    chars = groupChars,
+                    activeSlot = activeSlot,
+                    compact = compact,
+                    slotWidth = slotWidth,
+                )
+                index += groupSize
             }
         }
     }
 }
 
 @Composable
-private fun ActivationCodeCharacter(
-    char: String,
-    active: Boolean,
+private fun CodeGroupUnderline(
+    chars: List<String>,
+    activeSlot: Int,
     compact: Boolean,
-    modifier: Modifier = Modifier,
+    slotWidth: androidx.compose.ui.unit.Dp,
 ) {
-    val filled = char.isNotBlank()
-    val textScale by animateFloatAsState(
-        targetValue = if (filled) 1f else 0.88f,
-        animationSpec = tween(durationMillis = 140),
-        label = "activation-line-character-scale",
+    val active = activeSlot >= 0
+    val filled = chars.all { it.isNotBlank() }
+    val groupWidth = (slotWidth.value * chars.size).dp
+    val groupScale by animateFloatAsState(
+        targetValue = if (active) 1.025f else 1f,
+        animationSpec = tween(durationMillis = 160),
+        label = "activation-clean-group-scale",
     )
     val underlineColor by animateColorAsState(
         targetValue = when {
             active -> Color(0xFF0B6A43)
-            filled -> Color(0xFF747B84)
-            else -> Color(0xFFC8CDD3)
+            filled -> Color(0xFF7C838D)
+            else -> Color(0xFFC5CAD1)
         },
         animationSpec = tween(durationMillis = 160),
-        label = "activation-line-color",
+        label = "activation-clean-group-color",
     )
     val underlineHeight by animateDpAsState(
-        targetValue = if (active) 2.dp else 1.5.dp,
+        targetValue = if (active) 2.2.dp else 1.6.dp,
         animationSpec = tween(durationMillis = 160),
-        label = "activation-line-height",
+        label = "activation-clean-group-height",
     )
-    val blink = rememberInfiniteTransition(label = "activation-line-cursor")
+    val blink = rememberInfiniteTransition(label = "activation-clean-cursor")
     val cursorAlpha by blink.animateFloat(
         initialValue = 0.22f,
         targetValue = 1f,
@@ -396,45 +396,61 @@ private fun ActivationCodeCharacter(
             animation = tween(durationMillis = 620),
             repeatMode = RepeatMode.Reverse,
         ),
-        label = "activation-line-cursor-alpha",
+        label = "activation-clean-cursor-alpha",
     )
 
     Column(
-        modifier = modifier.height(if (compact) 52.dp else 60.dp),
+        modifier = Modifier
+            .width(groupWidth)
+            .height(if (compact) 50.dp else 58.dp)
+            .scale(groupScale),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Bottom,
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (compact) 35.dp else 41.dp),
-            contentAlignment = Alignment.Center,
+                .height(if (compact) 34.dp else 40.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (filled) {
-                Text(
-                    text = char,
-                    modifier = Modifier.scale(textScale),
-                    style = TextStyle(
-                        fontSize = if (compact) 19.sp else 22.sp,
-                        lineHeight = if (compact) 23.sp else 26.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF111319),
-                        textAlign = TextAlign.Center,
-                    ),
-                    maxLines = 1,
+            chars.forEachIndexed { index, char ->
+                val textScale by animateFloatAsState(
+                    targetValue = if (char.isNotBlank()) 1f else 0.92f,
+                    animationSpec = tween(durationMillis = 120),
+                    label = "activation-clean-char-scale-$index",
                 )
-            } else if (active) {
                 Box(
-                    modifier = Modifier
-                        .width(1.8.dp)
-                        .height(if (compact) 29.dp else 34.dp)
-                        .alpha(cursorAlpha)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color(0xFF0B6A43)),
-                )
+                    modifier = Modifier.width(slotWidth),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (char.isNotBlank()) {
+                        Text(
+                            text = char,
+                            modifier = Modifier.scale(textScale),
+                            style = TextStyle(
+                                fontSize = if (compact) 17.sp else 20.sp,
+                                lineHeight = if (compact) 22.sp else 25.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF111319),
+                                textAlign = TextAlign.Center,
+                            ),
+                            maxLines = 1,
+                        )
+                    } else if (index == activeSlot) {
+                        Box(
+                            modifier = Modifier
+                                .width(1.8.dp)
+                                .height(if (compact) 25.dp else 31.dp)
+                                .alpha(cursorAlpha)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Color(0xFF0B6A43)),
+                        )
+                    }
+                }
             }
         }
-        Spacer(Modifier.height(if (compact) 6.dp else 7.dp))
+        Spacer(Modifier.height(if (compact) 5.dp else 6.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
