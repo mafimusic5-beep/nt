@@ -274,17 +274,8 @@ private fun ActivationScreen(
             maxLines = 1,
         )
 
-        Image(
-            painter = painterResource(id = R.drawable.skryon_panther_activation),
-            contentDescription = null,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.62f)
-                .height(pantherHeight),
-            contentScale = ContentScale.Fit,
-        )
-
+        // Keep the soft white transition behind the panther. The lower card is drawn
+        // after the image and masks its transparent tail, so the paws meet its top edge.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -297,6 +288,17 @@ private fun ActivationScreen(
                         1f to Color.White,
                     ),
                 ),
+        )
+
+        Image(
+            painter = painterResource(id = R.drawable.skryon_panther_activation),
+            contentDescription = null,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(x = pantherOffsetX, y = pantherTop)
+                .fillMaxWidth(1.62f)
+                .height(pantherHeight),
+            contentScale = ContentScale.Fit,
         )
 
         Column(
