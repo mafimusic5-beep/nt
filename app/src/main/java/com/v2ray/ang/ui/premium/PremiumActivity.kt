@@ -301,15 +301,32 @@ private fun ActivationScreen(
             contentScale = ContentScale.Fit,
         )
 
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .offset(y = -cardHeight)
+                .fillMaxWidth()
+                .height(if (compact) 44.dp else 56.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0f),
+                        0.32f to Color.White.copy(alpha = 0.06f),
+                        0.7f to Color.White.copy(alpha = 0.28f),
+                        1f to Color.White.copy(alpha = 0.68f),
+                    ),
+                ),
+        )
+
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(cardHeight)
                 .shadow(
-                    elevation = 8.dp,
+                    elevation = 14.dp,
                     shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
-                    spotColor = Color(0x14000000),
+                    ambientColor = Color(0x38000000),
+                    spotColor = Color(0x70000000),
                 )
                 .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
                 .background(Color.White)
