@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,12 +44,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -61,6 +67,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
@@ -245,121 +252,153 @@ private fun ActivationScreen(
             .background(Color.White)
             .navigationBarsPadding(),
     ) {
-        // The reference was drawn on a 393 dp-wide canvas. Width-based scaling keeps
-        // the type and controls faithful while the vertical anchors adapt to any screen.
+        val compact = maxHeight < 850.dp
+        val pantherHeight = if (compact) maxHeight * 0.68f else maxHeight * 0.72f
+        val pantherTop = if (compact) 92.dp else 112.dp
+        val pantherOffsetX = if (compact) 64.dp else 86.dp
+        val cardHeight = if (compact) 306.dp else 368.dp
         val uiScale = (maxWidth.value / 393f).coerceIn(0.82f, 1.45f)
-        val inputMargin = 30.dp * uiScale
-        val buttonMargin = 19.dp * uiScale
-        val inputHeight = 49.dp * uiScale
-        val buttonHeight = 53.dp * uiScale
 
         Text(
-            text = "Активация",
+            text = "Skryon",
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = maxHeight * 0.07f),
+                .align(Alignment.TopStart)
+                .padding(start = 30.dp, top = 0.dp)
+                .offset(y = if (compact) 4.dp else 6.dp),
             style = TextStyle(
-                fontSize = (28f * uiScale).sp,
-                lineHeight = (33f * uiScale).sp,
+                fontSize = if (compact) 45.sp else 52.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.sp,
-                color = Color.Black,
-                textAlign = TextAlign.Center,
+                color = Color(0xFF07080A),
             ),
             maxLines = 1,
         )
 
-        Text(
-            text = "Введите код для доступа",
+        Image(
+            painter = painterResource(id = R.drawable.skryon_panther_activation),
+            contentDescription = null,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = maxHeight * 0.215f),
-            style = TextStyle(
-                fontSize = (15.5f * uiScale).sp,
-                lineHeight = (20f * uiScale).sp,
-                fontWeight = FontWeight.Normal,
-                color = Color(0xFF7D828D),
-                textAlign = TextAlign.Center,
-            ),
-            maxLines = 1,
+                .offset(x = pantherOffsetX, y = pantherTop)
+                .fillMaxWidth(1.62f)
+                .height(pantherHeight),
+            contentScale = ContentScale.Fit,
         )
 
-        ActivationCodeInput(
-            code = code,
-            onCodeChange = {
-                code = it
-                error = ""
-            },
-            uiScale = uiScale,
+        Box(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = maxHeight * 0.366f)
-                .padding(horizontal = inputMargin)
+                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(inputHeight),
-        )
-
-        if (error.isNotBlank()) {
-            Text(
-                text = error,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(y = maxHeight * 0.585f)
-                    .padding(horizontal = buttonMargin),
-                style = TextStyle(
-                    fontSize = (12.5f * uiScale).sp,
-                    lineHeight = (16f * uiScale).sp,
-                    color = Color(0xFFE54848),
-                    textAlign = TextAlign.Center,
+                .height(cardHeight + 118.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0f),
+                        0.26f to Color.White.copy(alpha = 0.92f),
+                        1f to Color.White,
+                    ),
                 ),
-                maxLines = 2,
-            )
-        }
+        )
 
-        Button(
-            onClick = {
-                if (isLoading) {
-                    return@Button
-                }
-                if (code.length < ACTIVATION_CODE_LENGTH) {
-                    error = "Введите код полностью"
-                } else {
-                    scope.launch {
-                        isLoading = true
-                        error = ""
-                        val result = onActivated(code)
-                        if (!result.ok) {
-                            error = result.error.ifBlank { "Ошибка активации" }
-                        }
-                        isLoading = false
-                    }
-                }
-            },
-            enabled = !isLoading,
+        Column(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = maxHeight * 0.662f)
-                .padding(horizontal = buttonMargin)
+                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(buttonHeight),
-            shape = RoundedCornerShape(17.dp * uiScale),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Black,
-                contentColor = Color.White,
-                disabledContainerColor = Color.Black,
-                disabledContentColor = Color.White,
-            ),
+                .height(cardHeight)
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+                    spotColor = Color(0x14000000),
+                )
+                .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
+                .background(Color.White)
+                .padding(horizontal = if (compact) 26.dp else 36.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Spacer(Modifier.height(if (compact) 22.dp else 34.dp))
             Text(
-                text = if (isLoading) "Проверка..." else "Войти",
+                text = "Активация",
                 style = TextStyle(
-                    fontSize = (18f * uiScale).sp,
-                    lineHeight = (22f * uiScale).sp,
+                    fontSize = if (compact) 29.sp else 34.sp,
+                    lineHeight = if (compact) 34.sp else 39.sp,
                     fontWeight = FontWeight.Bold,
+                    color = Color(0xFF111319),
                     textAlign = TextAlign.Center,
                 ),
                 maxLines = 1,
             )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Введите код для доступа",
+                style = TextStyle(
+                    fontSize = if (compact) 17.sp else 20.sp,
+                    lineHeight = if (compact) 23.sp else 26.sp,
+                    color = Color(0xFF7D828D),
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(if (compact) 24.dp else 34.dp))
+            ActivationCodeInput(
+                code = code,
+                onCodeChange = {
+                    code = it
+                    error = ""
+                },
+                uiScale = uiScale,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 54.dp else 60.dp),
+            )
+            if (error.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = error,
+                    style = TextStyle(fontSize = 14.sp, color = Color(0xFFE54848)),
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(6.dp))
+            } else {
+                Spacer(Modifier.height(if (compact) 13.dp else 20.dp))
+            }
+            Button(
+                onClick = {
+                    if (isLoading) {
+                        return@Button
+                    }
+                    if (code.length < ACTIVATION_CODE_LENGTH) {
+                        error = "Введите код полностью"
+                    } else {
+                        scope.launch {
+                            isLoading = true
+                            error = ""
+                            val result = onActivated(code)
+                            if (!result.ok) {
+                                error = result.error.ifBlank { "Ошибка активации" }
+                            }
+                            isLoading = false
+                        }
+                    }
+                },
+                enabled = !isLoading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 56.dp else 64.dp),
+                shape = RoundedCornerShape(18.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Black,
+                    contentColor = Color.White,
+                    disabledContainerColor = Color.Black,
+                    disabledContentColor = Color.White,
+                ),
+            ) {
+                Text(
+                    text = if (isLoading) "Проверка..." else "Войти",
+                    style = TextStyle(
+                        fontSize = if (compact) 22.sp else 25.sp,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+            }
         }
     }
 }
