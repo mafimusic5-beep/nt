@@ -156,7 +156,7 @@ fun VpnMainScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -196,7 +196,7 @@ fun VpnMainScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }

@@ -1,5 +1,6 @@
 package com.v2ray.ang.network
 
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryApiConfig
@@ -65,6 +66,7 @@ object EmeryAuthClient {
             .put("signature_algorithm", proof.signatureAlgorithm)
             .put("client_platform", "android")
             .put("app_version", BuildConfig.VERSION_NAME)
+            .put("app_version_code", BuildConfig.SKRYON_VERSION_CODE)
             .toString()
 
         val request = Request.Builder()
@@ -74,6 +76,7 @@ object EmeryAuthClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .post(bodyJson.toRequestBody(jsonMedia))
             .build()
 

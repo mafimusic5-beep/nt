@@ -13,6 +13,13 @@ from sqlalchemy.orm import Session
 from src.backend.deps.db import get_db
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.services.subscription_service import SubscriptionService
+from src.backend.utils.app_version import (
+    APP_VERSION_HEADER,
+    app_update_metadata,
+    app_update_required,
+    app_update_server_placeholder,
+)
+from src.common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -69,32 +76,48 @@ def _region_revision_snapshot(db: Session) -> tuple[str, int]:
 
 
 @compat_router.post("/auth/key")
-def auth_key(payload: AuthKeyRequestBody, db: Session = Depends(get_db)):
+def auth_key(
+    payload: AuthKeyRequestBody,
+    x_skryon_app_version_code: int = Header(default=0, alias=APP_VERSION_HEADER),
+    db: Session = Depends(get_db),
+):
     code, sub = _resolve_subscription_by_key(db, payload.key)
     if not code or not sub:
         return {"valid": False, "error": "invalid_or_expired_key"}
-    return {
+    update_required = app_update_required(x_skryon_app_version_code)
+    result = {
         "valid": True,
-        "vpn_enabled": True,
+        "vpn_enabled": not update_required,
         "router_enabled": False,
         "expires_at": sub.ends_at,
-        "plan_name": sub.plan_code,
+        "plan_name": settings.app_update_message if update_required else sub.plan_code,
         "order_id": str(sub.id),
     }
+    if update_required:
+        result.update(app_update_metadata())
+    return result
 
 
 @compat_router.get("/profile")
-def profile(access_key: str = Depends(_bearer_key), db: Session = Depends(get_db)):
+def profile(
+    access_key: str = Depends(_bearer_key),
+    x_skryon_app_version_code: int = Header(default=0, alias=APP_VERSION_HEADER),
+    db: Session = Depends(get_db),
+):
     code, sub = _resolve_subscription_by_key(db, access_key)
     if not code or not sub:
         return {"error": "invalid_or_expired_key"}
-    return {
+    update_required = app_update_required(x_skryon_app_version_code)
+    result = {
         "user_id": code.user_id,
-        "vpn_enabled": True,
+        "vpn_enabled": not update_required,
         "router_enabled": False,
         "expires_at": sub.ends_at,
-        "plan_name": sub.plan_code,
+        "plan_name": settings.app_update_message if update_required else sub.plan_code,
     }
+    if update_required:
+        result.update(app_update_metadata())
+    return result
 
 
 @compat_router.get("/vpn/config")
@@ -113,7 +136,12 @@ def vpn_config(access_key: str = Depends(_bearer_key), db: Session = Depends(get
 
 
 @compat_router.get("/vpn/servers")
-def vpn_servers(db: Session = Depends(get_db)):
+def vpn_servers(
+    x_skryon_app_version_code: int = Header(default=0, alias=APP_VERSION_HEADER),
+    db: Session = Depends(get_db),
+):
+    if app_update_required(x_skryon_app_version_code):
+        return [app_update_server_placeholder()]
     return SubscriptionService(db).list_vpn_servers()
 
 

@@ -3,6 +3,7 @@ package com.v2ray.ang.ui.premium
 import android.content.Context
 import android.provider.Settings
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.fmt.VlessFmt
 import com.v2ray.ang.handler.MmkvManager
 import java.util.concurrent.TimeUnit
@@ -64,11 +65,13 @@ internal suspend fun activateSkryonCode(
         val requestJson = JSONObject()
             .put("code", formattedCode)
             .put("deviceId", stableDeviceId(context))
+            .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
             .toString()
         val request = Request.Builder()
             .url(SKRYON_WEBSITE_API_BASE_URL + "/api/activate")
             .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .header("Accept", "application/json")
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .build()
 
         client.newCall(request).execute().use { response ->
@@ -81,7 +84,10 @@ internal suspend fun activateSkryonCode(
             }
             val json = JSONObject(text)
             if (!json.optBoolean("ok", false)) {
-                return@withContext SkryonActivationResult(ok = false, error = activationReasonText(json.optString("reason")))
+                return@withContext SkryonActivationResult(
+                    ok = false,
+                    error = json.optString("message").ifBlank { activationReasonText(json.optString("reason")) },
+                )
             }
             val config = json.optString("config").trim()
             if (!config.startsWith("vless://")) {
@@ -110,11 +116,13 @@ internal suspend fun syncSkryonConfig(
             .put("code", code)
             .put("deviceId", stableDeviceId(context))
             .put("revision", revision)
+            .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
             .toString()
         val request = Request.Builder()
             .url(SKRYON_WEBSITE_API_BASE_URL + "/api/config/sync")
             .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .header("Accept", "application/json")
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .build()
 
         configSyncClient.newCall(request).execute().use { response ->
@@ -132,7 +140,7 @@ internal suspend fun syncSkryonConfig(
                 return@withContext SkryonConfigSyncResult(
                     ok = false,
                     reason = reason,
-                    error = activationReasonText(reason),
+                    error = json.optString("message").ifBlank { activationReasonText(reason) },
                 )
             }
 
@@ -197,6 +205,7 @@ private fun activationReasonText(reason: String): String {
         "device_limit" -> "Лимит устройств для этого кода исчерпан"
         "no_server" -> "Сервер ещё не добавлен"
         "too_many_attempts" -> "Слишком много попыток. Попробуйте позже"
+        "upgrade_required" -> "Версия приложения устарела. Обновите приложение."
         else -> "Ошибка активации"
     }
 }

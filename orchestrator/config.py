@@ -29,6 +29,11 @@ SERVER_POOL_SYNC_ADMIN_KEY = os.getenv(
     'SERVER_POOL_SYNC_ADMIN_KEY',
     os.getenv('ADMIN_API_KEY', ''),
 )
+MIN_SUPPORTED_APP_VERSION_CODE = int(os.getenv('MIN_SUPPORTED_APP_VERSION_CODE', '716'))
+APP_UPDATE_MESSAGE = os.getenv(
+    'APP_UPDATE_MESSAGE',
+    'Версия приложения устарела. Обновите приложение.',
+).strip()
 
 
 def is_admin(user_id: int) -> bool:
