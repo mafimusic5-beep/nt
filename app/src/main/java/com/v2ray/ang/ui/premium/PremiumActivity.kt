@@ -306,13 +306,13 @@ private fun ActivationScreen(
                 .align(Alignment.BottomCenter)
                 .offset(y = -cardHeight)
                 .fillMaxWidth()
-                .height(if (compact) 44.dp else 56.dp)
+                .height(if (compact) 32.dp else 40.dp)
                 .background(
                     Brush.verticalGradient(
                         0f to Color.White.copy(alpha = 0f),
-                        0.32f to Color.White.copy(alpha = 0.06f),
-                        0.7f to Color.White.copy(alpha = 0.28f),
-                        1f to Color.White.copy(alpha = 0.68f),
+                        0.42f to Color.White.copy(alpha = 0.04f),
+                        0.76f to Color.White.copy(alpha = 0.24f),
+                        1f to Color.White.copy(alpha = 0.62f),
                     ),
                 ),
         )
