@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,11 @@ from src.backend.services.admin_service import AdminService
 from src.backend.services.capacity_service import CapacityService
 from src.backend.services.order_service import OrderService
 from src.backend.services.subscription_service import SubscriptionService
+from src.backend.utils.app_version import (
+    APP_VERSION_HEADER,
+    app_update_required,
+    app_update_server_placeholder,
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -93,7 +98,12 @@ def get_vpn_config(telegram_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/vpn/servers", response_model=list[VpnServerItemResponse])
-def get_vpn_servers(db: Session = Depends(get_db)):
+def get_vpn_servers(
+    x_skryon_app_version_code: int = Header(default=0, alias=APP_VERSION_HEADER),
+    db: Session = Depends(get_db),
+):
+    if app_update_required(x_skryon_app_version_code):
+        return [app_update_server_placeholder()]
     return SubscriptionService(db).list_vpn_servers()
 
 

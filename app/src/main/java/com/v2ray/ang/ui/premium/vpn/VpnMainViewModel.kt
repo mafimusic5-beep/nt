@@ -187,7 +187,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 if (!isActive) return@launch
 
                 if (!result.ok) {
-                    if (result.reason in setOf("not_found", "expired", "banned", "not_bound")) {
+                    if (result.reason in setOf("not_found", "expired", "banned", "not_bound", "upgrade_required")) {
                         removeSyncedSkryonConfig(result.error.ifBlank { "Доступ к серверу отключён" })
                         delay(CONFIG_SYNC_ACCESS_RETRY_DELAY_MS)
                     } else {
@@ -247,10 +247,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun removeSyncedSkryonConfig(message: String) {
-        val savedConfig = MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CONFIG_PREF, "")
-            ?.trim()
-            .orEmpty()
-        if (savedConfig.isNotBlank() && V2RayServiceManager.isRunning()) {
+        if (V2RayServiceManager.isRunning()) {
             V2RayServiceManager.stopVService(getApplication())
         }
         clearActivatedSkryonConfig()
@@ -297,20 +294,29 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             } ?: Result.failure(IllegalStateException("server_list_timeout"))
             result.fold(
                 onSuccess = { servers ->
-                    val locations = servers
-                        .filter { it.isAvailable }
-                        .map { server ->
-                            VpnLocationOption(
-                                id = server.id.toString(),
-                                title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
-                            )
-                        }
-                        .distinctBy { it.id }
-
-                    if (locations.isNotEmpty()) {
-                        applyLocations(locations, "")
+                    val updateMessage = servers
+                        .firstOrNull { it.healthStatus == "upgrade_required" }
+                        ?.city
+                        ?.trim()
+                        .orEmpty()
+                    if (updateMessage.isNotBlank()) {
+                        removeSyncedSkryonConfig(updateMessage)
                     } else {
-                        refreshPoolLocationsFallback("Серверы пока недоступны")
+                        val locations = servers
+                            .filter { it.isAvailable }
+                            .map { server ->
+                                VpnLocationOption(
+                                    id = server.id.toString(),
+                                    title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
+                                )
+                            }
+                            .distinctBy { it.id }
+
+                        if (locations.isNotEmpty()) {
+                            applyLocations(locations, "")
+                        } else {
+                            refreshPoolLocationsFallback("Серверы пока недоступны")
+                        }
                     }
                 },
                 onFailure = { error ->

@@ -33,6 +33,10 @@ Copy `.env.example` to `.env` and set required values:
 - `ADMIN_API_KEY`
 - `ADMIN_IDS`
 - `BACKEND_BASE_URL`
+- `MIN_SUPPORTED_APP_VERSION_CODE=716`
+- `APP_UPDATE_MESSAGE=Версия приложения устарела. Обновите приложение.`
+
+Клиенты передают `X-Skryon-App-Version-Code`. Старым версиям, которые ещё запрашивают профиль или список серверов, backend возвращает сообщение об обновлении. APK, который после активации вообще не выходит в сеть, удалённо показать сообщение не сможет.
 
 ## Run commands
 

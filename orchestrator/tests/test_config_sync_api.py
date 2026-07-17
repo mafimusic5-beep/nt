@@ -13,12 +13,17 @@ import api  # noqa: E402
 import storage  # noqa: E402
 
 
+UPDATE_MESSAGE = 'Версия приложения устарела. Обновите приложение.'
+
+
 class ConfigSyncApiTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = storage.DATABASE_PATH
         self.original_wait_seconds = api.CONFIG_SYNC_WAIT_SECONDS
         self.original_poll_interval_seconds = api.CONFIG_SYNC_POLL_INTERVAL_SECONDS
+        self.original_min_supported_version = api.MIN_SUPPORTED_APP_VERSION_CODE
+        self.original_update_message = api.APP_UPDATE_MESSAGE
         storage.DATABASE_PATH = str(Path(self.temp_dir.name) / 'skryon-api-test.db')
         api.CONFIG_SYNC_WAIT_SECONDS = 0
         storage.init_storage()
@@ -27,7 +32,34 @@ class ConfigSyncApiTest(unittest.IsolatedAsyncioTestCase):
         storage.DATABASE_PATH = self.original_database_path
         api.CONFIG_SYNC_WAIT_SECONDS = self.original_wait_seconds
         api.CONFIG_SYNC_POLL_INTERVAL_SECONDS = self.original_poll_interval_seconds
+        api.MIN_SUPPORTED_APP_VERSION_CODE = self.original_min_supported_version
+        api.APP_UPDATE_MESSAGE = self.original_update_message
         self.temp_dir.cleanup()
+
+    async def test_outdated_client_receives_update_message(self) -> None:
+        api.MIN_SUPPORTED_APP_VERSION_CODE = 716
+        api.APP_UPDATE_MESSAGE = UPDATE_MESSAGE
+        code = storage.create_activation_code()
+        storage.validate_activation_code(code, 'device-1')
+
+        result = await api.sync_config(
+            api.ConfigSyncRequest(
+                code=code,
+                deviceId='device-1',
+                revision=-1,
+                appVersionCode=715,
+            ),
+        )
+
+        self.assertEqual(
+            result,
+            {
+                'ok': False,
+                'reason': 'upgrade_required',
+                'message': UPDATE_MESSAGE,
+                'minVersionCode': 716,
+            },
+        )
 
     async def test_deleted_server_is_returned_to_the_bound_device(self) -> None:
         code = storage.create_activation_code()
