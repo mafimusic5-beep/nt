@@ -14,11 +14,11 @@ VALID_CONFIG = (
 UPDATE_MESSAGE = "Версия приложения устарела. Обновите приложение."
 
 
-def test_old_or_unversioned_client_requires_update(monkeypatch):
+def test_only_versioned_unsupported_client_requires_update(monkeypatch):
     monkeypatch.setattr(settings, "min_supported_app_version_code", 716)
 
-    assert app_update_required(None) is True
-    assert app_update_required(0) is True
+    assert app_update_required(None) is False
+    assert app_update_required(0) is False
     assert app_update_required(715) is True
     assert app_update_required(716) is False
 
@@ -38,7 +38,8 @@ def test_old_server_list_contract_shows_update_message(db_session, monkeypatch):
         )
     )
 
-    old_rows = get_vpn_servers(x_skryon_app_version_code=0, db=db_session)
+    old_rows = get_vpn_servers(x_skryon_app_version_code=715, db=db_session)
+    unversioned_rows = get_vpn_servers(x_skryon_app_version_code=0, db=db_session)
     current_rows = get_vpn_servers(x_skryon_app_version_code=716, db=db_session)
 
     assert old_rows == [
@@ -49,6 +50,7 @@ def test_old_server_list_contract_shows_update_message(db_session, monkeypatch):
             "is_available": True,
         }
     ]
+    assert unversioned_rows[0]["city"] == "Germany"
     assert current_rows[0]["city"] == "Germany"
 
 
@@ -63,7 +65,7 @@ def test_old_profile_contract_shows_update_message(db_session, monkeypatch):
 
     activated = auth_key(
         AuthKeyRequestBody(key=access_key),
-        x_skryon_app_version_code=0,
+        x_skryon_app_version_code=715,
         db=db_session,
     )
     refreshed = profile(
@@ -76,6 +78,11 @@ def test_old_profile_contract_shows_update_message(db_session, monkeypatch):
         x_skryon_app_version_code=716,
         db=db_session,
     )
+    unversioned = profile(
+        access_key=access_key,
+        x_skryon_app_version_code=0,
+        db=db_session,
+    )
 
     assert activated["valid"] is True
     assert activated["vpn_enabled"] is False
@@ -85,3 +92,5 @@ def test_old_profile_contract_shows_update_message(db_session, monkeypatch):
     assert refreshed["message"] == UPDATE_MESSAGE
     assert current["vpn_enabled"] is True
     assert "update_required" not in current
+    assert unversioned["vpn_enabled"] is True
+    assert "update_required" not in unversioned

@@ -10,7 +10,7 @@ def app_update_required(app_version_code: int | None) -> bool:
     minimum = max(settings.min_supported_app_version_code, 0)
     if minimum == 0:
         return False
-    return not app_version_code or app_version_code < minimum
+    return bool(app_version_code and app_version_code < minimum)
 
 
 def app_update_metadata() -> dict[str, object]:
