@@ -52,6 +52,17 @@ class ConfigSyncStorageTest(unittest.TestCase):
         self.assertFalse(storage.delete_server(999_999))
         self.assertEqual(storage.get_server_snapshot()['revision'], before)
 
+    def test_pool_node_mapping_is_persisted_without_changing_revision(self) -> None:
+        server_id = storage.save_server('DE-1', 'DE', 'vless://first')
+        revision = storage.get_server_snapshot()['revision']
+
+        self.assertTrue(storage.set_server_pool_node_id(server_id, 42))
+        record = storage.get_server(server_id)
+
+        self.assertIsNotNone(record)
+        self.assertEqual(record['pool_node_id'], 42)
+        self.assertEqual(storage.get_server_snapshot()['revision'], revision)
+
     def test_config_sync_requires_the_activated_device(self) -> None:
         code = storage.create_activation_code()
         self.assertTrue(storage.validate_activation_code(code, 'device-1')['ok'])

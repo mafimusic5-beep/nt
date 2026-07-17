@@ -100,6 +100,8 @@ pytest -q tests/test_redeem_flow.py
 - `GET /api/v1/admin/nodes/best-moscow`
 - `POST /api/v1/admin/nodes/{node_id}/provision`
 - `POST /api/v1/admin/nodes/{node_id}/deprovision`
+- `POST /api/v1/admin/nodes/{node_id}/disable`
+- `POST /api/v1/admin/nodes/{node_id}/enable`
 - `POST /api/v1/admin/nodes/healthcheck/run`
 - `POST /api/v1/admin/codes/generate`
 - `GET /api/v1/admin/activations/problems`
@@ -114,6 +116,7 @@ pytest -q tests/test_redeem_flow.py
 - Idempotent payment confirmation (`idempotency_key`)
 - Audit logging for critical actions
 - Node selection in `moscow` by `health_status -> load_score -> priority`
+- Backward-compatible region change feed: `GET /api/v1/vpn/regions/revision` and long-poll `GET /api/v1/vpn/regions/events?since=...`
 
 ## FirstVDS integration notes
 

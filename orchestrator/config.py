@@ -21,6 +21,14 @@ DATABASE_PATH = os.getenv('DATABASE_PATH', 'skryon.db')
 DEFAULT_SERVER_NAME = os.getenv('DEFAULT_SERVER_NAME', 'Secure-DE')
 DEFAULT_SERVER_REGION = os.getenv('DEFAULT_SERVER_REGION', 'DE')
 DEFAULT_SERVER_CONFIG = os.getenv('DEFAULT_SERVER_CONFIG', '')
+SERVER_POOL_SYNC_URL = os.getenv(
+    'SERVER_POOL_SYNC_URL',
+    os.getenv('BACKEND_BASE_URL', 'http://127.0.0.1:9330'),
+).rstrip('/')
+SERVER_POOL_SYNC_ADMIN_KEY = os.getenv(
+    'SERVER_POOL_SYNC_ADMIN_KEY',
+    os.getenv('ADMIN_API_KEY', ''),
+)
 
 
 def is_admin(user_id: int) -> bool:
