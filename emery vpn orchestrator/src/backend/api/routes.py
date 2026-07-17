@@ -211,6 +211,24 @@ def admin_deprovision_node(node_id: int, db: Session = Depends(get_db)):
 
 
 @router.post(
+    "/admin/nodes/{node_id}/disable",
+    response_model=NodeActionResponse,
+    dependencies=[Depends(require_admin_api_key)],
+)
+def admin_disable_node(node_id: int, db: Session = Depends(get_db)):
+    return AdminService(db).set_node_enabled(node_id, False)
+
+
+@router.post(
+    "/admin/nodes/{node_id}/enable",
+    response_model=NodeActionResponse,
+    dependencies=[Depends(require_admin_api_key)],
+)
+def admin_enable_node(node_id: int, db: Session = Depends(get_db)):
+    return AdminService(db).set_node_enabled(node_id, True)
+
+
+@router.post(
     "/admin/nodes/healthcheck/run",
     response_model=HealthcheckRunResponse,
     dependencies=[Depends(require_admin_api_key)],

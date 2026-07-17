@@ -6,7 +6,21 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import BOT_TOKEN, is_admin
-from storage import create_activation_code, delete_server, get_codes, init_storage, list_events, list_servers, revoke_activation_code, save_server, set_active_server
+from server_pool_sync import ServerPoolSyncError, is_enabled as pool_sync_enabled, publish_server, unpublish_server
+from storage import (
+    create_activation_code,
+    delete_server,
+    get_codes,
+    get_server,
+    init_storage,
+    list_events,
+    list_server_records,
+    list_servers,
+    revoke_activation_code,
+    save_server,
+    set_active_server,
+    set_server_pool_node_id,
+)
 
 
 def server_name_from_config(config_text: str) -> str:
@@ -27,7 +41,8 @@ async def ignore_non_admin(message: Message) -> None:
 
 def server_line(row: dict) -> str:
     marker = '[active]' if row.get('is_active') else '[saved]'
-    return marker + ' ' + str(row['id']) + ' | ' + row['name'] + ' | ' + row['region']
+    pool = ' | pool #' + str(row['pool_node_id']) if row.get('pool_node_id') else ''
+    return marker + ' ' + str(row['id']) + ' | ' + row['name'] + ' | ' + row['region'] + pool
 
 
 def event_line(row: dict) -> str:
@@ -39,7 +54,7 @@ def event_line(row: dict) -> str:
 async def start_cmd(message: Message) -> None:
     if not is_admin_message(message):
         return
-    await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID\n/events')
+    await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID\n/syncconfigs\n/events')
 
 
 async def newcode_cmd(message: Message) -> None:
@@ -84,9 +99,34 @@ async def addconfig_cmd(message: Message) -> None:
     if not config_text.startswith('vless://'):
         await message.answer('Нужна полная ссылка vless://')
         return
+    if not pool_sync_enabled():
+        await message.answer(
+            'Конфиг не добавлен: синхронизация старого пула не настроена. '
+            'Задай SERVER_POOL_SYNC_ADMIN_KEY.'
+        )
+        return
     name = server_name_from_config(config_text)
     server_id = save_server(name, 'AUTO', config_text)
-    await message.answer('Конфиг сохранён и выбран активным:\n' + str(server_id) + ' | ' + name)
+    server = get_server(server_id)
+    try:
+        pool_node_id = await publish_server(server or {})
+        set_server_pool_node_id(server_id, pool_node_id)
+    except ServerPoolSyncError as exc:
+        delete_server(server_id)
+        await message.answer(
+            'Конфиг не добавлен: старый пул не синхронизировался ('
+            + str(exc)
+            + '). Локальное изменение отменено.'
+        )
+        return
+    await message.answer(
+        'Конфиг сохранён во всех пулах и выбран активным:\n'
+        + str(server_id)
+        + ' | '
+        + name
+        + ' | pool #'
+        + str(pool_node_id)
+    )
 
 
 async def configs_cmd(message: Message) -> None:
@@ -117,8 +157,56 @@ async def delconfig_cmd(message: Message) -> None:
     if len(parts) < 2 or not parts[1].isdigit():
         await message.answer('Формат: /delconfig ID')
         return
-    ok = delete_server(int(parts[1]))
-    await message.answer('Конфиг удалён' if ok else 'Конфиг не найден')
+    server_id = int(parts[1])
+    server = get_server(server_id)
+    if not server:
+        await message.answer('Конфиг не найден')
+        return
+
+    if not pool_sync_enabled():
+        await message.answer(
+            'Удаление отменено: синхронизация старого пула не настроена. '
+            'Конфиг оставлен, чтобы версии приложения не разошлись.'
+        )
+        return
+    try:
+        await unpublish_server(server)
+    except ServerPoolSyncError as exc:
+        await message.answer(
+            'Удаление отменено: старый пул не ответил ('
+            + str(exc)
+            + '). Конфиг оставлен, чтобы версии приложения не разошлись.'
+        )
+        return
+
+    ok = delete_server(server_id)
+    if not ok:
+        await message.answer('Конфиг не найден')
+        return
+    await message.answer('Конфиг удалён из синхронизированных приложений')
+
+
+async def syncconfigs_cmd(message: Message) -> None:
+    if not is_admin_message(message):
+        return
+    if not pool_sync_enabled():
+        await message.answer('Синхронизация не настроена: задай SERVER_POOL_SYNC_ADMIN_KEY.')
+        return
+
+    synced = 0
+    errors: list[str] = []
+    for server in list_server_records():
+        try:
+            pool_node_id = await publish_server(server)
+            set_server_pool_node_id(int(server['id']), pool_node_id)
+            synced += 1
+        except ServerPoolSyncError as exc:
+            errors.append('#' + str(server['id']) + ': ' + str(exc))
+
+    text = 'Старый пул синхронизирован: ' + str(synced) + ' конфиг(ов).'
+    if errors:
+        text += '\nОшибки:\n' + '\n'.join(errors[:10])
+    await message.answer(text)
 
 
 async def events_cmd(message: Message) -> None:
@@ -147,6 +235,7 @@ async def main() -> None:
     dp.message.register(configs_cmd, admin_filter, Command('configs'))
     dp.message.register(useconfig_cmd, admin_filter, Command('useconfig'))
     dp.message.register(delconfig_cmd, admin_filter, Command('delconfig'))
+    dp.message.register(syncconfigs_cmd, admin_filter, Command('syncconfigs'))
     dp.message.register(events_cmd, admin_filter, Command('events'))
     dp.message.register(ignore_non_admin)
 

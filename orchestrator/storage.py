@@ -66,6 +66,7 @@ def init_storage() -> None:
         con.execute('INSERT OR IGNORE INTO app_state(key, value) VALUES (?, 0)', (SERVER_REVISION_KEY,))
         _add_column_if_missing(con, 'activation_codes', 'max_devices', 'INTEGER NOT NULL DEFAULT 1')
         _add_column_if_missing(con, 'activation_codes', 'plan', 'TEXT NOT NULL DEFAULT "manual"')
+        _add_column_if_missing(con, 'servers', 'pool_node_id', 'INTEGER')
 
 
 def _bump_server_revision(con: sqlite3.Connection) -> None:
@@ -238,8 +239,38 @@ def save_server(name: str, region: str, config_text: str) -> int:
 
 def list_servers(limit: int = 20) -> List[Dict[str, Any]]:
     with connect() as con:
-        rows = con.execute('SELECT id, name, region, is_active, created_at FROM servers ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+        rows = con.execute(
+            'SELECT id, name, region, is_active, pool_node_id, created_at FROM servers ORDER BY id DESC LIMIT ?',
+            (limit,),
+        ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_server_records(limit: int = 500) -> List[Dict[str, Any]]:
+    with connect() as con:
+        rows = con.execute(
+            'SELECT id, name, region, config, is_active, pool_node_id, created_at FROM servers ORDER BY id ASC LIMIT ?',
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_server(server_id: int) -> Optional[Dict[str, Any]]:
+    with connect() as con:
+        row = con.execute(
+            'SELECT id, name, region, config, is_active, pool_node_id, created_at FROM servers WHERE id = ?',
+            (server_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_server_pool_node_id(server_id: int, pool_node_id: int) -> bool:
+    with connect() as con:
+        cursor = con.execute(
+            'UPDATE servers SET pool_node_id = ? WHERE id = ?',
+            (pool_node_id, server_id),
+        )
+    return cursor.rowcount > 0
 
 
 def set_active_server(server_id: int) -> bool:
