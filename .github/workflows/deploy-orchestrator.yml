@@ -28,18 +28,56 @@ jobs:
         env:
           # skryon.ru is proxied by Cloudflare; SSH must use the public origin directly.
           DEPLOY_HOST: 80.71.159.221
-          DEPLOY_PORT: 22
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
+
+          deploy_host=""
+          deploy_port=""
+          seen_candidates=" "
+          candidate_hosts=("$DEPLOY_HOST" "${VPS_HOST:-}" "82.146.49.10")
+          candidate_ports=("${VPS_PORT:-}" 22 2022 2222 2200 22222 8022)
+          for candidate_host in "${candidate_hosts[@]}"; do
+            [[ -n "$candidate_host" ]] || continue
+            candidate_host="${candidate_host#http://}"
+            candidate_host="${candidate_host#https://}"
+            candidate_host="${candidate_host%%/*}"
+            candidate_host="${candidate_host%%:*}"
+            for candidate_port in "${candidate_ports[@]}"; do
+              [[ "$candidate_port" =~ ^[0-9]+$ ]] || continue
+              candidate_key=" $candidate_host:$candidate_port "
+              [[ "$seen_candidates" != *"$candidate_key"* ]] || continue
+              seen_candidates+="$candidate_key"
+              if ssh \
+                -4 \
+                -p "$candidate_port" \
+                -i ~/.ssh/id_ed25519 \
+                -o BatchMode=yes \
+                -o ConnectTimeout=5 \
+                -o StrictHostKeyChecking=accept-new \
+                "${VPS_USER:-root}@${candidate_host}" true >/dev/null 2>&1; then
+                deploy_host="$candidate_host"
+                deploy_port="$candidate_port"
+                break 2
+              fi
+            done
+          done
+
+          if [[ -z "$deploy_host" ]]; then
+            echo '::error::No configured VPS SSH endpoint accepted the deploy key.'
+            exit 1
+          fi
+
           ssh \
             -4 \
-            -p "$DEPLOY_PORT" \
+            -p "$deploy_port" \
             -i ~/.ssh/id_ed25519 \
             -o ConnectTimeout=20 \
             -o ServerAliveInterval=15 \
             -o StrictHostKeyChecking=accept-new \
-            "${VPS_USER:-root}@${DEPLOY_HOST}" <<'EOF'
+            "${VPS_USER:-root}@${deploy_host}" <<'EOF'
           set -euo pipefail
           cd /opt/emery
           GIT_SSH_COMMAND="ssh -i /root/.ssh/emery_deploy_key -o IdentitiesOnly=yes" git fetch origin main
