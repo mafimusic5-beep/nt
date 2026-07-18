@@ -95,6 +95,13 @@ class BackendClient:
             headers={"X-Admin-Api-Key": self.admin_api_key},
         )
 
+    async def admin_disable_node(self, node_id: int) -> dict:
+        return await self._request(
+            "POST",
+            f"/api/v1/admin/nodes/{node_id}/disable",
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
     async def admin_capacity(self) -> dict:
         return await self._request("GET", "/api/v1/admin/capacity", headers={"X-Admin-Api-Key": self.admin_api_key})
 

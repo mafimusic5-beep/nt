@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'emery vpn orchestrator/**'
+      - 'orchestrator/**'
       - '.github/workflows/deploy-orchestrator.yml'
   workflow_dispatch:
 
@@ -42,7 +43,35 @@ jobs:
           source .venv/bin/activate
           pip install -r requirements.txt
           alembic upgrade head
+
+          legacy_dir=/opt/emery/orchestrator
+          if [[ -x "$legacy_dir/.venv/bin/python" ]]; then
+            "$legacy_dir/.venv/bin/python" -m pip install -r "$legacy_dir/requirements.txt"
+          fi
+
           systemctl restart emery-backend emery-bot
           systemctl is-active --quiet emery-backend
           systemctl is-active --quiet emery-bot
+
+          legacy_units=()
+          while IFS= read -r unit; do
+            systemctl is-active --quiet "$unit" || continue
+            working_dir="$(systemctl show "$unit" --property=WorkingDirectory --value 2>/dev/null || true)"
+            exec_start="$(systemctl show "$unit" --property=ExecStart --value 2>/dev/null || true)"
+            case "$unit|$working_dir|$exec_start" in
+              *skryon*|*"/opt/emery/orchestrator"*|*"tg_admin.py"*|*"uvicorn api:app"*)
+                legacy_units+=("$unit")
+                ;;
+            esac
+          done < <(systemctl list-unit-files --type=service --no-legend --no-pager | awk '{print $1}')
+
+          if ((${#legacy_units[@]})); then
+            printf 'Restarting legacy Skryon services: %s\n' "${legacy_units[*]}"
+            systemctl restart "${legacy_units[@]}"
+            for unit in "${legacy_units[@]}"; do
+              systemctl is-active --quiet "$unit"
+            done
+          else
+            printf 'No legacy Skryon systemd service was found; emery-bot remains available.\n'
+          fi
           EOF

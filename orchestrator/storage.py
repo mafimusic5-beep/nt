@@ -7,6 +7,9 @@ from typing import Any, Dict, Iterator, List, Optional
 from config import DATABASE_PATH
 
 
+SERVER_REVISION_KEY = 'servers_revision'
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -59,8 +62,23 @@ def init_storage() -> None:
         con.execute('CREATE TABLE IF NOT EXISTS code_devices (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, device_id TEXT NOT NULL, activated_at TEXT NOT NULL, UNIQUE(code, device_id))')
         con.execute('CREATE TABLE IF NOT EXISTS checkout_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, external_id TEXT UNIQUE, plan TEXT NOT NULL, customer TEXT, code TEXT NOT NULL, status TEXT NOT NULL DEFAULT "paid", created_at TEXT NOT NULL)')
         con.execute('CREATE TABLE IF NOT EXISTS system_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, code TEXT, plan TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL)')
+        con.execute('CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value INTEGER NOT NULL)')
+        con.execute('INSERT OR IGNORE INTO app_state(key, value) VALUES (?, 0)', (SERVER_REVISION_KEY,))
         _add_column_if_missing(con, 'activation_codes', 'max_devices', 'INTEGER NOT NULL DEFAULT 1')
         _add_column_if_missing(con, 'activation_codes', 'plan', 'TEXT NOT NULL DEFAULT "manual"')
+        _add_column_if_missing(con, 'servers', 'pool_node_id', 'INTEGER')
+
+
+def _bump_server_revision(con: sqlite3.Connection) -> None:
+    cursor = con.execute(
+        'UPDATE app_state SET value = value + 1 WHERE key = ?',
+        (SERVER_REVISION_KEY,),
+    )
+    if cursor.rowcount == 0:
+        con.execute(
+            'INSERT INTO app_state(key, value) VALUES (?, 1)',
+            (SERVER_REVISION_KEY,),
+        )
 
 
 def add_event(event_type: str, message: str, code: str = '', plan: str = '') -> None:
@@ -214,14 +232,45 @@ def save_server(name: str, region: str, config_text: str) -> int:
     with connect() as con:
         con.execute('UPDATE servers SET is_active = 0')
         cursor = con.execute('INSERT INTO servers(name, region, config, is_active, created_at) VALUES (?, ?, ?, 1, ?)', (name, region, config_text, now_iso()))
+        _bump_server_revision(con)
     add_event('config_added', f'Config {name} saved and activated', '', region)
     return int(cursor.lastrowid)
 
 
 def list_servers(limit: int = 20) -> List[Dict[str, Any]]:
     with connect() as con:
-        rows = con.execute('SELECT id, name, region, is_active, created_at FROM servers ORDER BY id DESC LIMIT ?', (limit,)).fetchall()
+        rows = con.execute(
+            'SELECT id, name, region, is_active, pool_node_id, created_at FROM servers ORDER BY id DESC LIMIT ?',
+            (limit,),
+        ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_server_records(limit: int = 500) -> List[Dict[str, Any]]:
+    with connect() as con:
+        rows = con.execute(
+            'SELECT id, name, region, config, is_active, pool_node_id, created_at FROM servers ORDER BY id ASC LIMIT ?',
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_server(server_id: int) -> Optional[Dict[str, Any]]:
+    with connect() as con:
+        row = con.execute(
+            'SELECT id, name, region, config, is_active, pool_node_id, created_at FROM servers WHERE id = ?',
+            (server_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_server_pool_node_id(server_id: int, pool_node_id: int) -> bool:
+    with connect() as con:
+        cursor = con.execute(
+            'UPDATE servers SET pool_node_id = ? WHERE id = ?',
+            (pool_node_id, server_id),
+        )
+    return cursor.rowcount > 0
 
 
 def set_active_server(server_id: int) -> bool:
@@ -231,6 +280,7 @@ def set_active_server(server_id: int) -> bool:
             return False
         con.execute('UPDATE servers SET is_active = 0')
         con.execute('UPDATE servers SET is_active = 1 WHERE id = ?', (server_id,))
+        _bump_server_revision(con)
     add_event('config_activated', f'Config {server_id} activated', '', '')
     return True
 
@@ -247,6 +297,7 @@ def delete_server(server_id: int) -> bool:
             replacement = con.execute('SELECT id FROM servers ORDER BY id DESC LIMIT 1').fetchone()
             if replacement:
                 con.execute('UPDATE servers SET is_active = 1 WHERE id = ?', (replacement['id'],))
+        _bump_server_revision(con)
     add_event('config_deleted', f'Config {server_id} {name} deleted', '', '')
     return True
 
@@ -255,6 +306,80 @@ def get_active_server() -> Optional[Dict[str, Any]]:
     with connect() as con:
         row = con.execute('SELECT id, name, region, config FROM servers WHERE is_active = 1 ORDER BY id DESC LIMIT 1').fetchone()
     return dict(row) if row else None
+
+
+def get_server_snapshot() -> Dict[str, Any]:
+    with connect() as con:
+        row = con.execute(
+            '''
+            SELECT
+                COALESCE((SELECT value FROM app_state WHERE key = ?), 0) AS revision,
+                active.id,
+                active.name,
+                active.region,
+                active.config
+            FROM (SELECT 1) AS singleton
+            LEFT JOIN servers AS active
+                ON active.id = (
+                    SELECT id
+                    FROM servers
+                    WHERE is_active = 1
+                    ORDER BY id DESC
+                    LIMIT 1
+                )
+            ''',
+            (SERVER_REVISION_KEY,),
+        ).fetchone()
+
+    server = None
+    if row and row['id'] is not None:
+        server = {
+            'id': row['id'],
+            'name': row['name'],
+            'region': row['region'],
+            'config': row['config'],
+        }
+    return {
+        'revision': int(row['revision'] if row else 0),
+        'server': server,
+    }
+
+
+def check_activation_access(code: str, device_id: str) -> Dict[str, Any]:
+    formatted = format_code(code)
+    safe_device_id = device_id.strip()[:128]
+    if not safe_device_id:
+        return {'ok': False, 'reason': 'not_bound'}
+
+    with connect() as con:
+        row = con.execute(
+            'SELECT code, status, device_id, expires_at, max_devices, plan FROM activation_codes WHERE code = ?',
+            (formatted,),
+        ).fetchone()
+        if not row:
+            return {'ok': False, 'reason': 'not_found'}
+        if row['status'] != 'active':
+            return {'ok': False, 'reason': row['status']}
+
+        expires_at = parse_iso(row['expires_at'])
+        if expires_at and expires_at <= datetime.now(timezone.utc):
+            con.execute('UPDATE activation_codes SET status = ? WHERE code = ?', ('expired', formatted))
+            return {'ok': False, 'reason': 'expired'}
+
+        existing_device = con.execute(
+            'SELECT id FROM code_devices WHERE code = ? AND device_id = ?',
+            (formatted, safe_device_id),
+        ).fetchone()
+        legacy_device_matches = row['device_id'] == safe_device_id
+        if not existing_device and not legacy_device_matches:
+            return {'ok': False, 'reason': 'not_bound'}
+
+    return {
+        'ok': True,
+        'code': formatted,
+        'maxDevices': int(row['max_devices'] or 1),
+        'plan': row['plan'],
+    }
 
 
 def validate_activation_code(code: str, device_id: str) -> Dict[str, Any]:

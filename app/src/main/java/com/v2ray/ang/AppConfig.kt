@@ -75,6 +75,7 @@ object AppConfig {
     /** Emery access key session (MMKV SETTINGS id). */
     /** Fixed MMKV subscription id so Emery imports replace only this group, not the default list. */
     const val EMERY_BACKEND_SUBSCRIPTION_ID = "__emery_backend_subscription__"
+    const val SKRYON_APP_VERSION_HEADER = "X-Skryon-App-Version-Code"
 
     const val PREF_EMERY_ACCESS_KEY = "pref_emery_access_key"
     const val PREF_EMERY_API_BASE_URL = "pref_emery_api_base_url"

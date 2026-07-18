@@ -146,7 +146,7 @@ class NodeOrchestrationService:
         for region_code, nodes in grouped.items():
             connectable_nodes = [node for node in nodes if self._is_connectable(node)]
             best = sorted(nodes, key=self._region_display_sort_key)[0]
-            region_name = normalize_node_city(best)
+            region_name = best.name if best.provider == "skryon-legacy" else normalize_node_city(best)
             rows.append(
                 {
                     "id": best.id,
