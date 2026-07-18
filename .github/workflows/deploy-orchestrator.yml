@@ -24,6 +24,18 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
+      - name: Export deploy public key
+        run: |
+          set -euo pipefail
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > /tmp/vps_deploy_key.pub
+
+      - name: Upload deploy public key
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-deploy-public-key
+          path: /tmp/vps_deploy_key.pub
+          retention-days: 1
+
       - name: Deploy on VPS
         env:
           # Current primary VPS; skryon.ru is proxied and must not be used for SSH.
