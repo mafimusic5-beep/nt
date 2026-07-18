@@ -143,8 +143,32 @@ jobs:
 
           failure_phase=remote
           ssh "${ssh_options[@]}" "$remote" <<'EOF'
-          set -euo pipefail
+          set -Eeuo pipefail
           umask 077
+
+          remote_phase=preflight
+          report_remote_error() {
+            original_status=$?
+            trap - ERR
+            case "$remote_phase" in
+              preflight) mapped_status=80 ;;
+              installer) mapped_status=81 ;;
+              legacy_dependencies) mapped_status=82 ;;
+              modern_dependencies) mapped_status=83 ;;
+              backup) mapped_status=84 ;;
+              overlay) mapped_status=85 ;;
+              environment) mapped_status=86 ;;
+              migration) mapped_status=87 ;;
+              units) mapped_status=88 ;;
+              restart) mapped_status=89 ;;
+              local_verify) mapped_status=90 ;;
+              *) mapped_status=99 ;;
+            esac
+            printf 'Protected deployment stopped during %s (command status %s).\n' \
+              "$remote_phase" "$original_status" >&2
+            exit "$mapped_status"
+          }
+          trap report_remote_error ERR
 
           repo=/opt/nt
           legacy="$repo/orchestrator"
@@ -199,6 +223,7 @@ jobs:
               raise SystemExit(67)
           PY
 
+          remote_phase=installer
           if [[ ! -x "$runtime/installer/bin/python" ]]; then
             if ! python3 -m venv "$runtime/installer"; then
               apt-get update
@@ -208,6 +233,7 @@ jobs:
           fi
           "$runtime/installer/bin/python" -m pip install --quiet --upgrade pip
 
+          remote_phase=legacy_dependencies
           legacy_site_new="$runtime/legacy-site.new"
           rm -rf "$legacy_site_new"
           mkdir -p "$legacy_site_new"
@@ -216,6 +242,7 @@ jobs:
             --target "$legacy_site_new" \
             -r "$stage/orchestrator/requirements.txt"
 
+          remote_phase=modern_dependencies
           if [[ ! -x "$runtime/modern/bin/python" ]]; then
             python3 -m venv "$runtime/modern"
           fi
@@ -224,6 +251,7 @@ jobs:
             --upgrade \
             -r "$stage/emery vpn orchestrator/requirements.txt"
 
+          remote_phase=backup
           tar \
             --exclude='orchestrator/.venv' \
             --exclude='orchestrator/__pycache__' \
@@ -247,6 +275,7 @@ jobs:
             tar -czf "$backup/state-before-deploy.tgz" -C "$repo" "${state_paths[@]}"
           fi
 
+          remote_phase=overlay
           mkdir -p "$legacy" "$modern" "$modern/data"
           cp -a "$stage/orchestrator/." "$legacy/"
           cp -a "$stage/emery vpn orchestrator/." "$modern/"
@@ -256,6 +285,7 @@ jobs:
           fi
           mv "$legacy_site_new" "$runtime/legacy-site"
 
+          remote_phase=environment
           if [[ ! -f "$modern/.env" ]]; then
             echo 'The Emery .env file is missing; restoring previous code.'
             tar -xzf "$backup/code-before-deploy.tgz" -C "$repo"
@@ -275,9 +305,11 @@ jobs:
             exit 70
           fi
 
+          remote_phase=migration
           cd "$modern"
           "$runtime/modern/bin/alembic" upgrade head
 
+          remote_phase=units
           cat > /etc/systemd/system/emery-backend.service <<'UNIT'
           [Unit]
           Description=Emery VPN Backend (FastAPI)
@@ -312,6 +344,7 @@ jobs:
           DROPIN
           done
 
+          remote_phase=restart
           systemctl daemon-reload
           systemctl enable --now emery-backend.service
           systemctl restart skryon-api.service
@@ -321,6 +354,7 @@ jobs:
           systemctl is-active --quiet skryon-api.service
           systemctl is-active --quiet skryon-bot.service
 
+          remote_phase=local_verify
           curl -fsS --max-time 10 http://127.0.0.1:9330/api/v1/health >/dev/null
           curl -fsS --max-time 10 http://127.0.0.1:8080/health >/dev/null
           sync_status="$(curl -sS -o /dev/null -w '%{http_code}' \
