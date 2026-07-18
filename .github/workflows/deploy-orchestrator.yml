@@ -26,8 +26,8 @@ jobs:
 
       - name: Deploy on VPS
         env:
-          # skryon.ru is proxied by Cloudflare; SSH must use the public origin directly.
-          DEPLOY_HOST: 80.71.159.221
+          # Current primary VPS; skryon.ru is proxied and must not be used for SSH.
+          DEPLOY_HOST: 31.70.76.155
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
