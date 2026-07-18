@@ -36,9 +36,8 @@ jobs:
           path: /tmp/vps_deploy_key.pub
           retention-days: 1
 
-      - name: Deploy on VPS
+      - name: Inspect live VPS runtime
         env:
-          # Current primary VPS; skryon.ru is proxied and must not be used for SSH.
           DEPLOY_HOST: 31.70.76.155
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
@@ -82,6 +81,7 @@ jobs:
             exit 1
           fi
 
+          printf 'Connected to %s:%s\n' "$deploy_host" "$deploy_port"
           ssh \
             -4 \
             -p "$deploy_port" \
@@ -91,52 +91,73 @@ jobs:
             -o StrictHostKeyChecking=accept-new \
             "${VPS_USER:-root}@${deploy_host}" <<'EOF'
           set -euo pipefail
-          if [[ ! -d /opt/emery/.git ]]; then
-            printf 'Fresh VPS detected; collecting non-secret bootstrap diagnostics.\n'
-            printf '%s\n' '--- listening sockets ---'
-            ss -lntup || true
-            printf '%s\n' '--- active services ---'
-            systemctl list-units --type=service --state=running --no-pager --no-legend || true
-            printf '%s\n' '--- /opt layout ---'
+
+          if [[ ! -d /opt/nt/.git ]]; then
+            printf 'Expected repository /opt/nt was not found.\n'
             find /opt -maxdepth 2 -mindepth 1 -printf '%y %p\n' 2>/dev/null | sort || true
             exit 64
           fi
-          cd /opt/emery
-          GIT_SSH_COMMAND="ssh -i /root/.ssh/emery_deploy_key -o IdentitiesOnly=yes" git fetch origin main
-          GIT_SSH_COMMAND="ssh -i /root/.ssh/emery_deploy_key -o IdentitiesOnly=yes" git reset --hard origin/main
-          cd /opt/emery-orchestrator
-          source .venv/bin/activate
-          pip install -r requirements.txt
-          alembic upgrade head
 
-          legacy_dir=/opt/emery/orchestrator
-          if [[ -x "$legacy_dir/.venv/bin/python" ]]; then
-            "$legacy_dir/.venv/bin/python" -m pip install -r "$legacy_dir/requirements.txt"
-          fi
+          printf '%s\n' '--- repository ---'
+          git -C /opt/nt rev-parse --abbrev-ref HEAD || true
+          git -C /opt/nt rev-parse HEAD || true
+          git -C /opt/nt status --short || true
 
-          systemctl restart emery-backend emery-bot
-          systemctl is-active --quiet emery-backend
-          systemctl is-active --quiet emery-bot
+          printf '%s\n' '--- service runtime (no environment values) ---'
+          for unit in skryon-api.service skryon-bot.service; do
+            printf '[%s]\n' "$unit"
+            systemctl show "$unit" --no-pager \
+              --property=LoadState \
+              --property=ActiveState \
+              --property=SubState \
+              --property=User \
+              --property=Group \
+              --property=WorkingDirectory \
+              --property=FragmentPath \
+              --property=MainPID || true
+            pid="$(systemctl show "$unit" --property=MainPID --value 2>/dev/null || true)"
+            if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [[ -d "/proc/$pid" ]]; then
+              printf 'Executable=%s\n' "$(readlink -f "/proc/$pid/exe" || true)"
+              printf 'ProcessWorkingDirectory=%s\n' "$(readlink -f "/proc/$pid/cwd" || true)"
+            fi
+          done
 
-          legacy_units=()
-          while IFS= read -r unit; do
-            systemctl is-active --quiet "$unit" || continue
-            working_dir="$(systemctl show "$unit" --property=WorkingDirectory --value 2>/dev/null || true)"
-            exec_start="$(systemctl show "$unit" --property=ExecStart --value 2>/dev/null || true)"
-            case "$unit|$working_dir|$exec_start" in
-              *skryon*|*"/opt/emery/orchestrator"*|*"tg_admin.py"*|*"uvicorn api:app"*)
-                legacy_units+=("$unit")
-                ;;
-            esac
-          done < <(systemctl list-unit-files --type=service --no-legend --no-pager | awk '{print $1}')
+          printf '%s\n' '--- related unit files ---'
+          systemctl list-unit-files --type=service --no-legend --no-pager |
+            awk 'tolower($1) ~ /(skryon|emery|xray|nginx|caddy|cloudflared|tunnel)/ {print $1, $2}' || true
 
-          if ((${#legacy_units[@]})); then
-            printf 'Restarting legacy Skryon services: %s\n' "${legacy_units[*]}"
-            systemctl restart "${legacy_units[@]}"
-            for unit in "${legacy_units[@]}"; do
-              systemctl is-active --quiet "$unit"
-            done
-          else
-            printf 'No legacy Skryon systemd service was found; emery-bot remains available.\n'
-          fi
+          printf '%s\n' '--- runtime paths ---'
+          for path in \
+            /opt/nt/orchestrator/requirements.txt \
+            /opt/nt/orchestrator/.env \
+            /opt/nt/orchestrator/skryon.db \
+            '/opt/nt/emery vpn orchestrator/requirements.txt' \
+            '/opt/nt/emery vpn orchestrator/.env' \
+            '/opt/nt/emery vpn orchestrator/alembic.ini' \
+            '/opt/nt/emery vpn orchestrator/data/app.db'; do
+            if [[ -e "$path" ]]; then
+              stat -c '%F %a %U:%G %s %n' "$path"
+            else
+              printf 'missing %s\n' "$path"
+            fi
+          done
+
+          printf '%s\n' '--- Python runtimes ---'
+          find /opt/nt -maxdepth 6 \( -type f -o -type l \) \
+            -path '*/bin/python*' -printf '%p -> %l\n' 2>/dev/null | sort | head -n 40 || true
+
+          printf '%s\n' '--- local HTTP probes ---'
+          for url in \
+            http://127.0.0.1:8080/health \
+            http://127.0.0.1:8080/api/config/sync \
+            http://127.0.0.1:9330/api/v1/health; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" || true)"
+            printf '%s %s\n' "$code" "$url"
+          done
+
+          printf '%s\n' '--- listening sockets ---'
+          ss -lntp || true
+
+          # Intentional diagnostic stop. The next revision performs the in-place update.
+          exit 65
           EOF
