@@ -91,6 +91,16 @@ jobs:
             -o StrictHostKeyChecking=accept-new \
             "${VPS_USER:-root}@${deploy_host}" <<'EOF'
           set -euo pipefail
+          if [[ ! -d /opt/emery/.git ]]; then
+            printf 'Fresh VPS detected; collecting non-secret bootstrap diagnostics.\n'
+            printf '%s\n' '--- listening sockets ---'
+            ss -lntup || true
+            printf '%s\n' '--- active services ---'
+            systemctl list-units --type=service --state=running --no-pager --no-legend || true
+            printf '%s\n' '--- /opt layout ---'
+            find /opt -maxdepth 2 -mindepth 1 -printf '%y %p\n' 2>/dev/null | sort || true
+            exit 64
+          fi
           cd /opt/emery
           GIT_SSH_COMMAND="ssh -i /root/.ssh/emery_deploy_key -o IdentitiesOnly=yes" git fetch origin main
           GIT_SSH_COMMAND="ssh -i /root/.ssh/emery_deploy_key -o IdentitiesOnly=yes" git reset --hard origin/main
