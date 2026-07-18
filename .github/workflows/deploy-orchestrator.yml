@@ -28,13 +28,13 @@ jobs:
         env:
           # skryon.ru is proxied by Cloudflare; SSH must use the public origin directly.
           DEPLOY_HOST: 80.71.159.221
-          VPS_PORT: ${{ secrets.VPS_PORT }}
+          DEPLOY_PORT: 22
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
           ssh \
             -4 \
-            -p "${VPS_PORT:-22}" \
+            -p "$DEPLOY_PORT" \
             -i ~/.ssh/id_ed25519 \
             -o ConnectTimeout=20 \
             -o ServerAliveInterval=15 \
