@@ -50,7 +50,7 @@ jobs:
           deploy_port=""
           seen_candidates=" "
           candidate_hosts=("$DEPLOY_HOST" "${VPS_HOST:-}" "82.146.49.10")
-          candidate_ports=("${VPS_PORT:-}" 22 2022 2222 2200 22222 8022)
+          candidate_ports=("${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022)
           for candidate_host in "${candidate_hosts[@]}"; do
             [[ -n "$candidate_host" ]] || continue
             candidate_host="${candidate_host#http://}"
