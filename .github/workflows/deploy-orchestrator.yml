@@ -160,8 +160,14 @@ jobs:
               environment) mapped_status=86 ;;
               migration) mapped_status=87 ;;
               units) mapped_status=88 ;;
-              restart) mapped_status=89 ;;
-              local_verify) mapped_status=90 ;;
+              daemon_reload) mapped_status=89 ;;
+              backend_start) mapped_status=91 ;;
+              api_restart) mapped_status=92 ;;
+              bot_restart) mapped_status=93 ;;
+              backend_verify) mapped_status=94 ;;
+              api_verify) mapped_status=95 ;;
+              bot_verify) mapped_status=96 ;;
+              local_verify) mapped_status=97 ;;
               *) mapped_status=99 ;;
             esac
             printf 'Protected deployment stopped during %s (command status %s).\n' \
@@ -344,14 +350,20 @@ jobs:
           DROPIN
           done
 
-          remote_phase=restart
+          remote_phase=daemon_reload
           systemctl daemon-reload
+          remote_phase=backend_start
           systemctl enable --now emery-backend.service
+          remote_phase=api_restart
           systemctl restart skryon-api.service
+          remote_phase=bot_restart
           systemctl restart skryon-bot.service
 
+          remote_phase=backend_verify
           systemctl is-active --quiet emery-backend.service
+          remote_phase=api_verify
           systemctl is-active --quiet skryon-api.service
+          remote_phase=bot_verify
           systemctl is-active --quiet skryon-bot.service
 
           remote_phase=local_verify
