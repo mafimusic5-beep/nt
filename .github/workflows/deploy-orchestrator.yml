@@ -413,6 +413,45 @@ jobs:
           echo '::error::Public config-sync endpoint is not reachable after deployment.'
           exit 1
 
+      - name: Restore protected SSH boundary
+        id: cleanup
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER:-root}@31.70.76.155"
+          ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=accept-new \
+            "$remote" <<'EOF'
+          set -euo pipefail
+          cleanup_unit="nt-close-temp-ssh-$(date -u +%s)"
+          systemd-run \
+            --quiet \
+            --unit="$cleanup_unit" \
+            --on-active=10s \
+            /usr/bin/bash -c \
+            'ufw --force delete allow 8443/tcp >/dev/null 2>&1 || true; systemctl stop temp-ssh.service >/dev/null 2>&1 || true'
+          EOF
+
+          sleep 20
+          if ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes \
+            -o ConnectTimeout=8 \
+            -o StrictHostKeyChecking=accept-new \
+            "$remote" true >/dev/null 2>&1; then
+            echo '::error::Temporary SSH endpoint is still reachable.'
+            exit 1
+          fi
+          printf 'Temporary SSH endpoint is closed.\n'
+
       - name: Record protected deployment status
         if: always()
         env:
@@ -425,6 +464,7 @@ jobs:
           DEPLOY_PHASE: ${{ steps.deploy.outputs.phase }}
           DEPLOY_EXIT_CODE: ${{ steps.deploy.outputs.exit_code }}
           PUBLIC_OUTCOME: ${{ steps.public.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: |
           set -euo pipefail
           state=success
@@ -455,6 +495,10 @@ jobs:
             state=failure
             description='Server updated but public compatibility check failed'
             status_context='deploy/protected-runtime/public'
+          elif [[ "$CLEANUP_OUTCOME" == failure ]]; then
+            state=failure
+            description='Deployment passed but temporary SSH cleanup failed'
+            status_context='deploy/protected-runtime/ssh-cleanup'
           fi
 
           gh api \
