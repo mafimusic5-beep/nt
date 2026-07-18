@@ -160,15 +160,16 @@ jobs:
               environment) mapped_status=86 ;;
               migration) mapped_status=87 ;;
               units) mapped_status=88 ;;
-              daemon_reload) mapped_status=89 ;;
-              backend_start) mapped_status=91 ;;
-              api_restart) mapped_status=92 ;;
-              bot_restart) mapped_status=93 ;;
-              backend_verify) mapped_status=94 ;;
-              api_verify) mapped_status=95 ;;
-              bot_verify) mapped_status=96 ;;
-              local_verify) mapped_status=97 ;;
-              *) mapped_status=99 ;;
+              backend_import) mapped_status=91 ;;
+              daemon_reload) mapped_status=92 ;;
+              backend_start) mapped_status=93 ;;
+              api_restart) mapped_status=94 ;;
+              bot_restart) mapped_status=95 ;;
+              backend_verify) mapped_status=96 ;;
+              api_verify) mapped_status=97 ;;
+              bot_verify) mapped_status=98 ;;
+              local_verify) mapped_status=99 ;;
+              *) mapped_status=100 ;;
             esac
             printf 'Protected deployment stopped during %s (command status %s).\n' \
               "$remote_phase" "$original_status" >&2
@@ -316,6 +317,13 @@ jobs:
           "$runtime/modern/bin/alembic" upgrade head
 
           remote_phase=units
+          backend_runtime_link=/opt/nt-emery-runtime
+          if [[ -e "$backend_runtime_link" && ! -L "$backend_runtime_link" ]]; then
+            echo 'Protected backend runtime link is occupied by a non-link path.'
+            exit 72
+          fi
+          ln -sfn "$modern" "$backend_runtime_link"
+
           cat > /etc/systemd/system/emery-backend.service <<'UNIT'
           [Unit]
           Description=Emery VPN Backend (FastAPI)
@@ -326,8 +334,7 @@ jobs:
           Type=simple
           User=root
           Group=root
-          WorkingDirectory=/opt/nt/emery\x20vpn\x20orchestrator
-          EnvironmentFile=/opt/nt/emery\x20vpn\x20orchestrator/.env
+          WorkingDirectory=/opt/nt-emery-runtime
           ExecStart=/opt/nt/.runtime/modern/bin/uvicorn src.backend.main:app --host 127.0.0.1 --port 9330
           Restart=always
           RestartSec=3
@@ -349,6 +356,10 @@ jobs:
           Environment="EMERY_ENV_FILE=/opt/nt/emery vpn orchestrator/.env"
           DROPIN
           done
+
+          remote_phase=backend_import
+          cd "$backend_runtime_link"
+          "$runtime/modern/bin/python" -c 'from src.backend.main import app'
 
           remote_phase=daemon_reload
           systemctl daemon-reload
