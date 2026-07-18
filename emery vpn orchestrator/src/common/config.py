@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     default_region_name: str = "Moscow"
     max_devices_per_subscription: int = 5
     rate_limit_per_minute: int = 60
+    min_supported_app_version_code: int = 716
+    app_update_message: str = (
+        "Версия приложения устарела. Обновите приложение."
+    )
     healthcheck_interval_seconds: int = 30
     node_provision_script: str = ""
     node_deprovision_script: str = ""

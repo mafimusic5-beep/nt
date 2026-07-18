@@ -72,7 +72,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
 private const val ACTIVATION_CODE_LENGTH = 11
 
 private enum class EmeryRoute { Splash, Activation, Home }
@@ -166,6 +165,8 @@ private fun EmeryApp(
                             MmkvManager.encodeSettings(SKRYON_ACTIVATION_CODE_PREF, result.code.ifBlank { formattedCode })
                             MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, result.config)
                             MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
+                            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, result.serverId)
+                            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, result.revision)
                             navController.navigate(EmeryRoute.Home.name) {
                                 popUpTo(EmeryRoute.Activation.name) { inclusive = true }
                             }

@@ -32,6 +32,7 @@ async def _show_admin_panel(message: Message) -> None:
         "/capacity — какого региона не хватает\n"
         "/add_config <VLESS Reality ссылка> — определить локацию и добавить сервер в общий пул\n"
         "/add_config region=nl name=\"Netherlands 1\" capacity=50 config=<VLESS Reality ссылка>\n"
+        "/delconfig ID — убрать сервер из синхронизированных приложений\n"
         "/servers — список узлов",
         reply_markup=admin_menu_keyboard(),
     )
@@ -71,13 +72,13 @@ async def capacity_command_handler(message: Message) -> None:
     await message.answer(payload.get("text") or "Нет данных по ёмкости.")
 
 
-@router.message(Command("add_config"))
+@router.message(Command("add_config", "addconfig"))
 async def add_config_command_handler(message: Message) -> None:
     if not is_admin(message.from_user.id):
         await message.answer("Доступ запрещен.")
         return
 
-    raw_args = _command_args(message.text or "", "/add_config")
+    raw_args = _command_args(message.text or "")
     args = parse_key_values(raw_args)
     link = args.get("config") or args.get("link") or extract_first_proxy_link(raw_args)
     endpoint = (args.get("endpoint") or args.get("ip") or endpoint_from_proxy_link(link)).strip()
@@ -155,6 +156,33 @@ async def add_config_command_handler(message: Message) -> None:
         f"Endpoint: {node.get('endpoint')}\n"
         f"Статус: {node.get('status')} / {node.get('health_status')}\n"
         f"Ёмкость: {node.get('current_clients')}/{node.get('capacity_clients')}"
+    )
+
+
+@router.message(Command("delconfig", "del_config"))
+async def delconfig_command_handler(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        await message.answer("Доступ запрещен.")
+        return
+
+    raw_args = _command_args(message.text or "").removeprefix("#")
+    if not raw_args.isdigit() or int(raw_args) < 1:
+        await message.answer("Формат: /delconfig ID\nID сервера можно посмотреть через /servers")
+        return
+
+    node_id = int(raw_args)
+    try:
+        await client.admin_disable_node(node_id)
+    except BackendClientError as exc:
+        if exc.status_code == 404:
+            await message.answer("Конфиг не найден.")
+        else:
+            await message.answer(f"Не удалил конфиг. Ошибка backend: {exc.detail}")
+        return
+
+    await message.answer(
+        f"✅ Сервер #{node_id} отключён и удалён из списка синхронизированных приложений.\n"
+        "Изменение будет получено автоматически."
     )
 
 
@@ -237,9 +265,7 @@ async def admin_callbacks_handler(callback: CallbackQuery) -> None:
         await callback.answer()
 
 
-def _command_args(text: str, command: str) -> str:
-    if text.startswith(command):
-        return text[len(command):].strip()
+def _command_args(text: str) -> str:
     parts = text.split(maxsplit=1)
     return parts[1].strip() if len(parts) > 1 else ""
 

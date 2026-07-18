@@ -1,5 +1,7 @@
 package com.v2ray.ang.network
 
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.handler.EmeryApiConfig
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +41,7 @@ object EmeryPoolClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .get()
             .build()
     }

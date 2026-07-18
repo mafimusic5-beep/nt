@@ -12,8 +12,17 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
+import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
+import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CONFIG_PREF
+import com.v2ray.ang.ui.premium.SKRYON_CONFIG_REVISION_PREF
+import com.v2ray.ang.ui.premium.SKRYON_SERVER_GUID_PREF
+import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
+import com.v2ray.ang.ui.premium.clearActivatedSkryonConfig
+import com.v2ray.ang.ui.premium.saveActivatedSkryonConfig
+import com.v2ray.ang.ui.premium.syncSkryonConfig
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
@@ -32,15 +41,14 @@ import org.json.JSONObject
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
-private const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
-private const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
-
 class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val DEFAULT_ACCESS_KEY = "DEV"
         const val DEFAULT_REGION_TITLE = "Регион"
         const val SERVICE_STATE_RECHECK_DELAY_MS = 1_500L
+        const val CONFIG_SYNC_RETRY_DELAY_MS = 3_000L
+        const val CONFIG_SYNC_ACCESS_RETRY_DELAY_MS = 30_000L
     }
 
     private val _uiState = MutableStateFlow(
@@ -53,6 +61,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private var connectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
+    private var configSyncJob: Job? = null
     private var serviceStateRecheckJob: Job? = null
     private var serviceReceiverRegistered = false
 
@@ -76,6 +85,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         registerServiceStateReceiver()
         requestServiceState()
         refreshLocations()
+        startSkryonConfigSync()
     }
 
     private fun registerServiceStateReceiver() {
@@ -155,6 +165,107 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun startSkryonConfigSync() {
+        configSyncJob?.cancel()
+        configSyncJob = viewModelScope.launch {
+            while (isActive) {
+                val code = savedActivationCode()
+                if (code.isBlank()) {
+                    delay(CONFIG_SYNC_RETRY_DELAY_MS)
+                    continue
+                }
+
+                val knownRevision = MmkvManager.decodeSettingsLong(
+                    SKRYON_CONFIG_REVISION_PREF,
+                    -1L,
+                )
+                val result = syncSkryonConfig(
+                    context = getApplication(),
+                    code = code,
+                    revision = knownRevision,
+                )
+                if (!isActive) return@launch
+
+                if (!result.ok) {
+                    if (result.reason in setOf("not_found", "expired", "banned", "not_bound", "upgrade_required")) {
+                        removeSyncedSkryonConfig(result.error.ifBlank { "Доступ к серверу отключён" })
+                        delay(CONFIG_SYNC_ACCESS_RETRY_DELAY_MS)
+                    } else {
+                        delay(CONFIG_SYNC_RETRY_DELAY_MS)
+                    }
+                    continue
+                }
+
+                MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, result.revision)
+                if (result.config.isBlank()) {
+                    removeSyncedSkryonConfig("Сервер удалён администратором")
+                } else {
+                    applySyncedSkryonConfig(result.config, result.serverId)
+                }
+            }
+        }
+    }
+
+    private fun applySyncedSkryonConfig(config: String, serverId: Long) {
+        val savedConfig = MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CONFIG_PREF, "")
+            ?.trim()
+            .orEmpty()
+        if (savedConfig == config) {
+            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, serverId)
+            val location = savedSkryonConfigLocation()
+            if (location != null && _uiState.value.selectedLocation.id == "unavailable") {
+                applyLocations(listOf(location), "")
+            }
+            return
+        }
+
+        if (savedConfig.isNotBlank() && V2RayServiceManager.isRunning()) {
+            V2RayServiceManager.stopVService(getApplication())
+        }
+        MmkvManager.removeServerViaSubid(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)
+
+        val guid = runCatching { saveActivatedSkryonConfig(config) }
+            .getOrElse {
+                setDisconnectedWithError("Не удалось обновить сервер")
+                return
+            }
+        MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, config)
+        MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
+        MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, serverId)
+
+        savedSkryonConfigLocation()?.let { location ->
+            applyLocations(listOf(location), "")
+        }
+        timerJob?.cancel()
+        _uiState.update { state ->
+            state.copy(
+                connectionState = VpnConnectionState.Disconnected,
+                elapsedSeconds = 0L,
+                locationsError = "",
+            )
+        }
+    }
+
+    private fun removeSyncedSkryonConfig(message: String) {
+        if (V2RayServiceManager.isRunning()) {
+            V2RayServiceManager.stopVService(getApplication())
+        }
+        clearActivatedSkryonConfig()
+        timerJob?.cancel()
+
+        val unavailable = VpnDemoData.unavailableLocations
+        _uiState.update { state ->
+            state.copy(
+                locations = unavailable,
+                selectedLocation = unavailable.first(),
+                connectionState = VpnConnectionState.Disconnected,
+                elapsedSeconds = 0L,
+                locationsLoading = false,
+                locationsError = message,
+            )
+        }
+    }
+
     fun refreshLocations() {
         serversJob?.cancel()
         serversJob = viewModelScope.launch {
@@ -183,20 +294,29 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             } ?: Result.failure(IllegalStateException("server_list_timeout"))
             result.fold(
                 onSuccess = { servers ->
-                    val locations = servers
-                        .filter { it.isAvailable }
-                        .map { server ->
-                            VpnLocationOption(
-                                id = server.id.toString(),
-                                title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
-                            )
-                        }
-                        .distinctBy { it.id }
-
-                    if (locations.isNotEmpty()) {
-                        applyLocations(locations, "")
+                    val updateMessage = servers
+                        .firstOrNull { it.healthStatus == "upgrade_required" }
+                        ?.city
+                        ?.trim()
+                        .orEmpty()
+                    if (updateMessage.isNotBlank()) {
+                        removeSyncedSkryonConfig(updateMessage)
                     } else {
-                        refreshPoolLocationsFallback("Серверы пока недоступны")
+                        val locations = servers
+                            .filter { it.isAvailable }
+                            .map { server ->
+                                VpnLocationOption(
+                                    id = server.id.toString(),
+                                    title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
+                                )
+                            }
+                            .distinctBy { it.id }
+
+                        if (locations.isNotEmpty()) {
+                            applyLocations(locations, "")
+                        } else {
+                            refreshPoolLocationsFallback("Серверы пока недоступны")
+                        }
                     }
                 },
                 onFailure = { error ->
@@ -582,6 +702,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
+        configSyncJob?.cancel()
         serviceStateRecheckJob?.cancel()
 
         if (serviceReceiverRegistered) {
