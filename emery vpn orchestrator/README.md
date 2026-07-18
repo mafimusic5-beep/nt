@@ -44,9 +44,9 @@ Copy `.env.example` to `.env` and set required values:
 - `/delconfig ID` — отключить сервер и убрать его из синхронизированных приложений;
 - `/servers` — посмотреть ID серверов.
 
-Для связи старого Skryon-бота с этим backend отдельный секрет создавать не нужно: если
-`SERVER_POOL_SYNC_ADMIN_KEY` не задан, используется существующий `ADMIN_API_KEY`, а вместо
-`SERVER_POOL_SYNC_URL` — `BACKEND_BASE_URL`.
+Для связи старого Skryon-бота с этим backend отдельный секрет создавать не нужно: бот
+использует существующие `ADMIN_API_KEY` и `BACKEND_BASE_URL` из окружения или Emery `.env`.
+Нестандартный путь к файлу можно передать через `EMERY_ENV_FILE`.
 
 ## Run commands
 

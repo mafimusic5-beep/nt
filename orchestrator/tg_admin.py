@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from urllib.parse import unquote, urlparse
 
 from aiogram import Bot, Dispatcher, F
@@ -21,6 +22,8 @@ from storage import (
     set_active_server,
     set_server_pool_node_id,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def server_name_from_config(config_text: str) -> str:
@@ -102,7 +105,7 @@ async def addconfig_cmd(message: Message) -> None:
     if not pool_sync_enabled():
         await message.answer(
             'Конфиг не добавлен: синхронизация старого пула не настроена. '
-            'Задай SERVER_POOL_SYNC_ADMIN_KEY.'
+            'Проверь доступ к Emery backend.'
         )
         return
     name = server_name_from_config(config_text)
@@ -166,7 +169,8 @@ async def delconfig_cmd(message: Message) -> None:
     if not pool_sync_enabled():
         await message.answer(
             'Удаление отменено: синхронизация старого пула не настроена. '
-            'Конфиг оставлен, чтобы версии приложения не разошлись.'
+            'Конфиг оставлен, чтобы версии приложения не разошлись. '
+            'Проверь доступ к Emery backend.'
         )
         return
     try:
@@ -190,9 +194,18 @@ async def syncconfigs_cmd(message: Message) -> None:
     if not is_admin_message(message):
         return
     if not pool_sync_enabled():
-        await message.answer('Синхронизация не настроена: задай SERVER_POOL_SYNC_ADMIN_KEY.')
+        await message.answer('Синхронизация не настроена: проверь доступ к Emery backend.')
         return
 
+    synced, errors = await sync_pool_configs()
+
+    text = 'Старый пул синхронизирован: ' + str(synced) + ' конфиг(ов).'
+    if errors:
+        text += '\nОшибки:\n' + '\n'.join(errors[:10])
+    await message.answer(text)
+
+
+async def sync_pool_configs() -> tuple[int, list[str]]:
     synced = 0
     errors: list[str] = []
     for server in list_server_records():
@@ -202,11 +215,7 @@ async def syncconfigs_cmd(message: Message) -> None:
             synced += 1
         except ServerPoolSyncError as exc:
             errors.append('#' + str(server['id']) + ': ' + str(exc))
-
-    text = 'Старый пул синхронизирован: ' + str(synced) + ' конфиг(ов).'
-    if errors:
-        text += '\nОшибки:\n' + '\n'.join(errors[:10])
-    await message.answer(text)
+    return synced, errors
 
 
 async def events_cmd(message: Message) -> None:
@@ -223,6 +232,13 @@ async def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError('BOT_TOKEN is empty')
     init_storage()
+    if pool_sync_enabled():
+        synced, errors = await sync_pool_configs()
+        logger.info('Initial server-pool sync completed: synced=%s errors=%s', synced, len(errors))
+        for error in errors[:10]:
+            logger.warning('Initial server-pool sync failed: %s', error)
+    else:
+        logger.warning('Server-pool sync is disabled because the Emery admin key is unavailable')
     bot = Bot(BOT_TOKEN)
     dp = Dispatcher()
 

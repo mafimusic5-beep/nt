@@ -80,6 +80,16 @@ class TelegramConfigSyncTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(storage.list_server_records(), [])
 
+    async def test_startup_sync_publishes_existing_configs(self) -> None:
+        server_id = storage.save_server('DE-1', 'DE', 'vless://first@1.2.3.4:443')
+
+        with patch.object(tg_admin, 'publish_server', AsyncMock(return_value=77)):
+            synced, errors = await tg_admin.sync_pool_configs()
+
+        self.assertEqual(synced, 1)
+        self.assertEqual(errors, [])
+        self.assertEqual(storage.get_server(server_id)['pool_node_id'], 77)
+
 
 if __name__ == '__main__':
     unittest.main()
