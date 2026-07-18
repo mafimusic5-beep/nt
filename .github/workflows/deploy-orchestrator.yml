@@ -372,25 +372,32 @@ jobs:
           set -euo pipefail
           state=success
           description='Protected deployment completed'
+          status_context='deploy/protected-runtime/success'
 
           if [[ "$CHECKOUT_OUTCOME" == failure ]]; then
             state=failure
             description='Failed while checking out trusted source'
+            status_context='deploy/protected-runtime/checkout'
           elif [[ "$VALIDATE_OUTCOME" == failure ]]; then
             state=failure
             description='Failed while validating Python source'
+            status_context='deploy/protected-runtime/validate'
           elif [[ "$PACKAGE_OUTCOME" == failure ]]; then
             state=failure
             description='Failed while packaging protected deployment'
+            status_context='deploy/protected-runtime/package'
           elif [[ "$KEY_OUTCOME" == failure ]]; then
             state=failure
             description='Failed while validating the deploy key'
+            status_context='deploy/protected-runtime/key'
           elif [[ "$DEPLOY_OUTCOME" == failure ]]; then
             state=failure
             description="Deploy failed at ${DEPLOY_PHASE:-unknown}, code ${DEPLOY_EXIT_CODE:-unknown}"
+            status_context="deploy/protected-runtime/${DEPLOY_PHASE:-unknown}-${DEPLOY_EXIT_CODE:-unknown}"
           elif [[ "$PUBLIC_OUTCOME" == failure ]]; then
             state=failure
             description='Server updated but public compatibility check failed'
+            status_context='deploy/protected-runtime/public'
           fi
 
           gh api \
@@ -398,7 +405,7 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             "/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state="$state" \
-            -f context='deploy/protected-runtime' \
+            -f context="$status_context" \
             -f description="$description" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions"
 
