@@ -10,10 +10,42 @@ on:
       - '.github/workflows/deploy-orchestrator.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Check out deployment source
+        uses: actions/checkout@v4
+
+      - name: Validate Python sources
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q orchestrator 'emery vpn orchestrator/src'
+
+      - name: Build deployment archive
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='orchestrator/.env' \
+            --exclude='orchestrator/.env.*' \
+            --exclude='orchestrator/.venv' \
+            --exclude='orchestrator/__pycache__' \
+            --exclude='orchestrator/*.db' \
+            --exclude='orchestrator/*.sqlite' \
+            --exclude='orchestrator/*.sqlite3' \
+            --exclude='emery vpn orchestrator/.env' \
+            --exclude='emery vpn orchestrator/.env.*' \
+            --exclude='emery vpn orchestrator/.venv' \
+            --exclude='emery vpn orchestrator/data' \
+            --exclude='emery vpn orchestrator/**/__pycache__' \
+            --exclude='emery vpn orchestrator/debug-*.log' \
+            -czf /tmp/nt-orchestrator-deploy.tgz \
+            orchestrator \
+            'emery vpn orchestrator'
+
       - name: Configure SSH
         env:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
@@ -24,19 +56,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Export deploy public key
-        run: |
-          set -euo pipefail
-          ssh-keygen -y -f ~/.ssh/id_ed25519 > /tmp/vps_deploy_key.pub
-
-      - name: Upload deploy public key
-        uses: actions/upload-artifact@v4
-        with:
-          name: vps-deploy-public-key
-          path: /tmp/vps_deploy_key.pub
-          retention-days: 1
-
-      - name: Inspect live VPS runtime
+      - name: Deploy in place
         env:
           DEPLOY_HOST: 31.70.76.155
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -81,83 +101,236 @@ jobs:
             exit 1
           fi
 
-          printf 'Connected to %s:%s\n' "$deploy_host" "$deploy_port"
-          ssh \
-            -4 \
-            -p "$deploy_port" \
-            -i ~/.ssh/id_ed25519 \
-            -o ConnectTimeout=20 \
-            -o ServerAliveInterval=15 \
-            -o StrictHostKeyChecking=accept-new \
-            "${VPS_USER:-root}@${deploy_host}" <<'EOF'
-          set -euo pipefail
+          remote="${VPS_USER:-root}@${deploy_host}"
+          ssh_options=(
+            -4
+            -p "$deploy_port"
+            -i ~/.ssh/id_ed25519
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o StrictHostKeyChecking=accept-new
+          )
+          scp_options=(
+            -4
+            -P "$deploy_port"
+            -i ~/.ssh/id_ed25519
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o StrictHostKeyChecking=accept-new
+          )
 
-          if [[ ! -d /opt/nt/.git ]]; then
-            printf 'Expected repository /opt/nt was not found.\n'
-            find /opt -maxdepth 2 -mindepth 1 -printf '%y %p\n' 2>/dev/null | sort || true
+          scp "${scp_options[@]}" \
+            /tmp/nt-orchestrator-deploy.tgz \
+            "$remote:/tmp/nt-orchestrator-deploy.tgz"
+
+          ssh "${ssh_options[@]}" "$remote" <<'EOF'
+          set -euo pipefail
+          umask 077
+
+          repo=/opt/nt
+          legacy="$repo/orchestrator"
+          modern="$repo/emery vpn orchestrator"
+          runtime="$repo/.runtime"
+          stage="$(mktemp -d /opt/nt-deploy-stage.XXXXXX)"
+          backup_root=/opt/nt-deploy-backups
+          backup="$backup_root/$(date -u +%Y%m%dT%H%M%SZ)"
+
+          cleanup() {
+            rm -f /tmp/nt-orchestrator-deploy.tgz
+            rm -rf "$stage"
+          }
+          trap cleanup EXIT
+
+          [[ -d "$repo/.git" ]] || {
+            echo 'Expected live repository /opt/nt was not found.'
             exit 64
+          }
+          systemctl cat skryon-api.service >/dev/null
+          systemctl cat skryon-bot.service >/dev/null
+
+          mkdir -p "$stage" "$runtime" "$backup"
+          tar -xzf /tmp/nt-orchestrator-deploy.tgz -C "$stage"
+
+          for required in \
+            "$stage/orchestrator/requirements.txt" \
+            "$stage/orchestrator/api.py" \
+            "$stage/orchestrator/tg_admin.py" \
+            "$stage/emery vpn orchestrator/requirements.txt" \
+            "$stage/emery vpn orchestrator/alembic.ini"; do
+            [[ -f "$required" ]] || {
+              echo 'Deployment archive is incomplete.'
+              exit 65
+            }
+          done
+
+          bot_pid="$(systemctl show skryon-bot.service --property=MainPID --value)"
+          if [[ ! "$bot_pid" =~ ^[1-9][0-9]*$ ]] || [[ ! -r "/proc/$bot_pid/environ" ]]; then
+            echo 'The running Skryon bot could not be inspected; no files were changed.'
+            exit 66
+          fi
+          python3 - "$bot_pid" <<'PY'
+          from pathlib import Path
+          import sys
+
+          entries = Path('/proc', sys.argv[1], 'environ').read_bytes().split(b'\0')
+          names = {entry.split(b'=', 1)[0] for entry in entries if b'=' in entry}
+          missing = [name for name in (b'BOT_TOKEN', b'ADMIN_IDS') if name not in names]
+          if missing:
+              print('The running bot is missing required systemd environment settings; no files were changed.')
+              raise SystemExit(67)
+          PY
+
+          if [[ ! -x "$runtime/installer/bin/python" ]]; then
+            if ! python3 -m venv "$runtime/installer"; then
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
+              python3 -m venv "$runtime/installer"
+            fi
+          fi
+          "$runtime/installer/bin/python" -m pip install --quiet --upgrade pip
+
+          legacy_site_new="$runtime/legacy-site.new"
+          rm -rf "$legacy_site_new"
+          mkdir -p "$legacy_site_new"
+          "$runtime/installer/bin/python" -m pip install \
+            --quiet \
+            --target "$legacy_site_new" \
+            -r "$stage/orchestrator/requirements.txt"
+
+          if [[ ! -x "$runtime/modern/bin/python" ]]; then
+            python3 -m venv "$runtime/modern"
+          fi
+          "$runtime/modern/bin/python" -m pip install \
+            --quiet \
+            --upgrade \
+            -r "$stage/emery vpn orchestrator/requirements.txt"
+
+          tar \
+            --exclude='orchestrator/.venv' \
+            --exclude='orchestrator/__pycache__' \
+            --exclude='emery vpn orchestrator/.venv' \
+            --exclude='emery vpn orchestrator/data' \
+            --exclude='emery vpn orchestrator/**/__pycache__' \
+            -czf "$backup/code-before-deploy.tgz" \
+            -C "$repo" \
+            orchestrator \
+            'emery vpn orchestrator'
+
+          state_paths=()
+          for relative in \
+            orchestrator/.env \
+            orchestrator/skryon.db \
+            'emery vpn orchestrator/.env' \
+            'emery vpn orchestrator/data'; do
+            [[ -e "$repo/$relative" ]] && state_paths+=("$relative")
+          done
+          if ((${#state_paths[@]})); then
+            tar -czf "$backup/state-before-deploy.tgz" -C "$repo" "${state_paths[@]}"
           fi
 
-          printf '%s\n' '--- repository ---'
-          git -C /opt/nt rev-parse --abbrev-ref HEAD || true
-          git -C /opt/nt rev-parse HEAD || true
-          git -C /opt/nt status --short || true
+          mkdir -p "$legacy" "$modern" "$modern/data"
+          cp -a "$stage/orchestrator/." "$legacy/"
+          cp -a "$stage/emery vpn orchestrator/." "$modern/"
 
-          printf '%s\n' '--- service runtime (no environment values) ---'
+          if [[ -d "$runtime/legacy-site" ]]; then
+            mv "$runtime/legacy-site" "$backup/legacy-site"
+          fi
+          mv "$legacy_site_new" "$runtime/legacy-site"
+
+          if [[ ! -f "$modern/.env" ]]; then
+            echo 'The Emery .env file is missing; restoring previous code.'
+            tar -xzf "$backup/code-before-deploy.tgz" -C "$repo"
+            exit 69
+          fi
+          if ! "$runtime/modern/bin/python" - <<'PY'
+          from pathlib import Path
+          from dotenv import dotenv_values
+
+          values = dotenv_values(Path('/opt/nt/emery vpn orchestrator/.env'))
+          if not values.get('ADMIN_API_KEY'):
+              raise SystemExit(1)
+          PY
+          then
+            echo 'ADMIN_API_KEY is missing from the Emery environment; restoring previous code.'
+            tar -xzf "$backup/code-before-deploy.tgz" -C "$repo"
+            exit 70
+          fi
+
+          cd "$modern"
+          "$runtime/modern/bin/alembic" upgrade head
+
+          cat > /etc/systemd/system/emery-backend.service <<'UNIT'
+          [Unit]
+          Description=Emery VPN Backend (FastAPI)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          WorkingDirectory=/opt/nt/emery\x20vpn\x20orchestrator
+          EnvironmentFile=/opt/nt/emery\x20vpn\x20orchestrator/.env
+          ExecStart=/opt/nt/.runtime/modern/bin/uvicorn src.backend.main:app --host 127.0.0.1 --port 9330
+          Restart=always
+          RestartSec=3
+          TimeoutStopSec=15
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
           for unit in skryon-api.service skryon-bot.service; do
-            printf '[%s]\n' "$unit"
-            systemctl show "$unit" --no-pager \
-              --property=LoadState \
-              --property=ActiveState \
-              --property=SubState \
-              --property=User \
-              --property=Group \
-              --property=WorkingDirectory \
-              --property=FragmentPath \
-              --property=MainPID || true
-            pid="$(systemctl show "$unit" --property=MainPID --value 2>/dev/null || true)"
-            if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [[ -d "/proc/$pid" ]]; then
-              printf 'Executable=%s\n' "$(readlink -f "/proc/$pid/exe" || true)"
-              printf 'ProcessWorkingDirectory=%s\n' "$(readlink -f "/proc/$pid/cwd" || true)"
-            fi
+            dropin="/etc/systemd/system/$unit.d"
+            mkdir -p "$dropin"
+            cat > "$dropin/20-realtime-sync.conf" <<'DROPIN'
+          [Service]
+          Environment="PYTHONPATH=/opt/nt/.runtime/legacy-site"
+          Environment="SERVER_POOL_SYNC_URL=http://127.0.0.1:9330"
+          Environment="EMERY_ENV_FILE=/opt/nt/emery vpn orchestrator/.env"
+          DROPIN
           done
 
-          printf '%s\n' '--- related unit files ---'
-          systemctl list-unit-files --type=service --no-legend --no-pager |
-            awk 'tolower($1) ~ /(skryon|emery|xray|nginx|caddy|cloudflared|tunnel)/ {print $1, $2}' || true
+          systemctl daemon-reload
+          systemctl enable --now emery-backend.service
+          systemctl restart skryon-api.service
+          systemctl restart skryon-bot.service
 
-          printf '%s\n' '--- runtime paths ---'
-          for path in \
-            /opt/nt/orchestrator/requirements.txt \
-            /opt/nt/orchestrator/.env \
-            /opt/nt/orchestrator/skryon.db \
-            '/opt/nt/emery vpn orchestrator/requirements.txt' \
-            '/opt/nt/emery vpn orchestrator/.env' \
-            '/opt/nt/emery vpn orchestrator/alembic.ini' \
-            '/opt/nt/emery vpn orchestrator/data/app.db'; do
-            if [[ -e "$path" ]]; then
-              stat -c '%F %a %U:%G %s %n' "$path"
-            else
-              printf 'missing %s\n' "$path"
-            fi
-          done
+          systemctl is-active --quiet emery-backend.service
+          systemctl is-active --quiet skryon-api.service
+          systemctl is-active --quiet skryon-bot.service
 
-          printf '%s\n' '--- Python runtimes ---'
-          find /opt/nt -maxdepth 6 \( -type f -o -type l \) \
-            -path '*/bin/python*' -printf '%p -> %l\n' 2>/dev/null | sort | head -n 40 || true
+          curl -fsS --max-time 10 http://127.0.0.1:9330/api/v1/health >/dev/null
+          curl -fsS --max-time 10 http://127.0.0.1:8080/health >/dev/null
+          sync_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            --max-time 10 \
+            -H 'Content-Type: application/json' \
+            -d '{}' \
+            http://127.0.0.1:8080/api/config/sync)"
+          if [[ "$sync_status" == 000 || "$sync_status" == 404 || "$sync_status" -ge 500 ]]; then
+            echo 'Legacy config-sync endpoint failed its local probe.'
+            exit 71
+          fi
 
-          printf '%s\n' '--- local HTTP probes ---'
-          for url in \
-            http://127.0.0.1:8080/health \
-            http://127.0.0.1:8080/api/config/sync \
-            http://127.0.0.1:9330/api/v1/health; do
-            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" || true)"
-            printf '%s %s\n' "$code" "$url"
-          done
-
-          printf '%s\n' '--- listening sockets ---'
-          ss -lntp || true
-
-          # Intentional diagnostic stop. The next revision performs the in-place update.
-          exit 65
+          printf 'Deployment completed: backend, legacy API, and bot are active.\n'
           EOF
+
+      - name: Verify public compatibility endpoint
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' \
+              --max-time 15 \
+              -H 'Content-Type: application/json' \
+              -d '{}' \
+              https://skryon.ru/api/config/sync || true)"
+            if [[ "$status" != 000 && "$status" != 404 && "$status" -lt 500 ]]; then
+              printf 'Public config-sync endpoint responded with HTTP %s.\n' "$status"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo '::error::Public config-sync endpoint is not reachable after deployment.'
+          exit 1
