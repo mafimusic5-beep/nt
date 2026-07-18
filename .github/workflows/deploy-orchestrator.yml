@@ -12,20 +12,24 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Check out deployment source
+        id: checkout
         uses: actions/checkout@v4
 
       - name: Validate Python sources
+        id: validate
         run: |
           set -euo pipefail
           python3 -m compileall -q orchestrator 'emery vpn orchestrator/src'
 
       - name: Build deployment archive
+        id: package
         run: |
           set -euo pipefail
           tar \
@@ -47,6 +51,7 @@ jobs:
             'emery vpn orchestrator'
 
       - name: Configure SSH
+        id: key
         env:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
@@ -57,6 +62,7 @@ jobs:
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
       - name: Deploy in place
+        id: deploy
         env:
           DEPLOY_HOST: 31.70.76.155
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -64,6 +70,17 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
+          failure_phase=discover
+          record_deploy_result() {
+            status=$?
+            {
+              printf 'phase=%s\n' "$failure_phase"
+              printf 'exit_code=%s\n' "$status"
+            } >> "$GITHUB_OUTPUT"
+            trap - EXIT
+            exit "$status"
+          }
+          trap record_deploy_result EXIT
 
           deploy_host=""
           deploy_port=""
@@ -119,10 +136,12 @@ jobs:
             -o StrictHostKeyChecking=accept-new
           )
 
+          failure_phase=transfer
           scp "${scp_options[@]}" \
             /tmp/nt-orchestrator-deploy.tgz \
             "$remote:/tmp/nt-orchestrator-deploy.tgz"
 
+          failure_phase=remote
           ssh "${ssh_options[@]}" "$remote" <<'EOF'
           set -euo pipefail
           umask 077
@@ -316,8 +335,10 @@ jobs:
 
           printf 'Deployment completed: backend, legacy API, and bot are active.\n'
           EOF
+          failure_phase=complete
 
       - name: Verify public compatibility endpoint
+        id: public
         run: |
           set -euo pipefail
           for attempt in {1..12}; do
@@ -334,3 +355,51 @@ jobs:
           done
           echo '::error::Public config-sync endpoint is not reachable after deployment.'
           exit 1
+
+      - name: Record protected deployment status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          KEY_OUTCOME: ${{ steps.key.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          DEPLOY_PHASE: ${{ steps.deploy.outputs.phase }}
+          DEPLOY_EXIT_CODE: ${{ steps.deploy.outputs.exit_code }}
+          PUBLIC_OUTCOME: ${{ steps.public.outcome }}
+        run: |
+          set -euo pipefail
+          state=success
+          description='Protected deployment completed'
+
+          if [[ "$CHECKOUT_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while checking out trusted source'
+          elif [[ "$VALIDATE_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while validating Python source'
+          elif [[ "$PACKAGE_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while packaging protected deployment'
+          elif [[ "$KEY_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while validating the deploy key'
+          elif [[ "$DEPLOY_OUTCOME" == failure ]]; then
+            state=failure
+            description="Deploy failed at ${DEPLOY_PHASE:-unknown}, code ${DEPLOY_EXIT_CODE:-unknown}"
+          elif [[ "$PUBLIC_OUTCOME" == failure ]]; then
+            state=failure
+            description='Server updated but public compatibility check failed'
+          fi
+
+          gh api \
+            --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" \
+            -f context='deploy/protected-runtime' \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions"
+
+          [[ "$state" == success ]]
