@@ -70,8 +70,7 @@ object AppConfig {
     const val PREF_AUTO_START_VPN = "pref_auto_start_vpn"
     const val PREF_AUTO_RECONNECT = "pref_auto_reconnect"
     const val PREF_PREFERRED_REGION = "pref_preferred_region"
-    const val PREF_REGIONAL_POLICY_RUSSIA_MODE = "pref_regional_policy_russia_mode_v2"
-    const val PREF_REGIONAL_POLICY_CHOICE_INITIALIZED = "pref_regional_policy_choice_initialized_v2"
+    const val PREF_REGIONAL_POLICY_MODE = "pref_regional_policy_mode_v3"
     const val PREF_EMERY_DEVICES_USED = "pref_emery_devices_used"
 
     /** Emery access key session (MMKV SETTINGS id). */
