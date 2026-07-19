@@ -6,43 +6,508 @@ on:
       - main
     paths:
       - 'emery vpn orchestrator/**'
+      - 'orchestrator/**'
       - '.github/workflows/deploy-orchestrator.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Check out deployment source
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Python sources
+        id: validate
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q orchestrator 'emery vpn orchestrator/src'
+
+      - name: Build deployment archive
+        id: package
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='orchestrator/.env' \
+            --exclude='orchestrator/.env.*' \
+            --exclude='orchestrator/.venv' \
+            --exclude='orchestrator/__pycache__' \
+            --exclude='orchestrator/*.db' \
+            --exclude='orchestrator/*.sqlite' \
+            --exclude='orchestrator/*.sqlite3' \
+            --exclude='emery vpn orchestrator/.env' \
+            --exclude='emery vpn orchestrator/.env.*' \
+            --exclude='emery vpn orchestrator/.venv' \
+            --exclude='emery vpn orchestrator/data' \
+            --exclude='emery vpn orchestrator/**/__pycache__' \
+            --exclude='emery vpn orchestrator/debug-*.log' \
+            -czf /tmp/nt-orchestrator-deploy.tgz \
+            orchestrator \
+            'emery vpn orchestrator'
+
       - name: Configure SSH
+        id: key
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
-          VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${VPS_PORT:-22}" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Deploy on VPS
+      - name: Deploy in place
+        id: deploy
         env:
+          DEPLOY_HOST: 31.70.76.155
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
-          ssh -p "${VPS_PORT:-22}" -i ~/.ssh/id_ed25519 "${VPS_USER:-root}@${VPS_HOST}" <<'EOF'
-          set -euo pipefail
-          cd /opt/emery
-          GIT_SSH_COMMAND="ssh -i /root/.ssh/emery_deploy_key -o IdentitiesOnly=yes" git fetch origin main
-          GIT_SSH_COMMAND="ssh -i /root/.ssh/emery_deploy_key -o IdentitiesOnly=yes" git reset --hard origin/main
-          cd /opt/emery-orchestrator
-          source .venv/bin/activate
-          pip install -r requirements.txt
-          alembic upgrade head
-          systemctl restart emery-backend emery-bot
-          systemctl is-active --quiet emery-backend
-          systemctl is-active --quiet emery-bot
+          failure_phase=discover
+          record_deploy_result() {
+            status=$?
+            {
+              printf 'phase=%s\n' "$failure_phase"
+              printf 'exit_code=%s\n' "$status"
+            } >> "$GITHUB_OUTPUT"
+            trap - EXIT
+            exit "$status"
+          }
+          trap record_deploy_result EXIT
+
+          deploy_host=""
+          deploy_port=""
+          seen_candidates=" "
+          candidate_hosts=("$DEPLOY_HOST" "${VPS_HOST:-}" "82.146.49.10")
+          candidate_ports=("${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022)
+          for candidate_host in "${candidate_hosts[@]}"; do
+            [[ -n "$candidate_host" ]] || continue
+            candidate_host="${candidate_host#http://}"
+            candidate_host="${candidate_host#https://}"
+            candidate_host="${candidate_host%%/*}"
+            candidate_host="${candidate_host%%:*}"
+            for candidate_port in "${candidate_ports[@]}"; do
+              [[ "$candidate_port" =~ ^[0-9]+$ ]] || continue
+              candidate_key=" $candidate_host:$candidate_port "
+              [[ "$seen_candidates" != *"$candidate_key"* ]] || continue
+              seen_candidates+="$candidate_key"
+              if ssh \
+                -4 \
+                -p "$candidate_port" \
+                -i ~/.ssh/id_ed25519 \
+                -o BatchMode=yes \
+                -o ConnectTimeout=5 \
+                -o StrictHostKeyChecking=accept-new \
+                "${VPS_USER:-root}@${candidate_host}" true >/dev/null 2>&1; then
+                deploy_host="$candidate_host"
+                deploy_port="$candidate_port"
+                break 2
+              fi
+            done
+          done
+
+          if [[ -z "$deploy_host" ]]; then
+            echo '::error::No configured VPS SSH endpoint accepted the deploy key.'
+            exit 1
+          fi
+
+          remote="${VPS_USER:-root}@${deploy_host}"
+          ssh_options=(
+            -4
+            -p "$deploy_port"
+            -i ~/.ssh/id_ed25519
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o StrictHostKeyChecking=accept-new
+          )
+          scp_options=(
+            -4
+            -P "$deploy_port"
+            -i ~/.ssh/id_ed25519
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o StrictHostKeyChecking=accept-new
+          )
+
+          failure_phase=transfer
+          scp "${scp_options[@]}" \
+            /tmp/nt-orchestrator-deploy.tgz \
+            "$remote:/tmp/nt-orchestrator-deploy.tgz"
+
+          failure_phase=remote
+          ssh "${ssh_options[@]}" "$remote" <<'EOF'
+          set -Eeuo pipefail
+          umask 077
+
+          remote_phase=preflight
+          report_remote_error() {
+            original_status=$?
+            trap - ERR
+            case "$remote_phase" in
+              preflight) mapped_status=80 ;;
+              installer) mapped_status=81 ;;
+              legacy_dependencies) mapped_status=82 ;;
+              modern_dependencies) mapped_status=83 ;;
+              backup) mapped_status=84 ;;
+              overlay) mapped_status=85 ;;
+              environment) mapped_status=86 ;;
+              migration) mapped_status=87 ;;
+              units) mapped_status=88 ;;
+              backend_import) mapped_status=91 ;;
+              daemon_reload) mapped_status=92 ;;
+              backend_start) mapped_status=93 ;;
+              api_restart) mapped_status=94 ;;
+              bot_restart) mapped_status=95 ;;
+              backend_verify) mapped_status=96 ;;
+              api_verify) mapped_status=97 ;;
+              bot_verify) mapped_status=98 ;;
+              local_verify) mapped_status=99 ;;
+              *) mapped_status=100 ;;
+            esac
+            printf 'Protected deployment stopped during %s (command status %s).\n' \
+              "$remote_phase" "$original_status" >&2
+            exit "$mapped_status"
+          }
+          trap report_remote_error ERR
+
+          repo=/opt/nt
+          legacy="$repo/orchestrator"
+          modern="$repo/emery vpn orchestrator"
+          runtime="$repo/.runtime"
+          stage="$(mktemp -d /opt/nt-deploy-stage.XXXXXX)"
+          backup_root=/opt/nt-deploy-backups
+          backup="$backup_root/$(date -u +%Y%m%dT%H%M%SZ)"
+
+          cleanup() {
+            rm -f /tmp/nt-orchestrator-deploy.tgz
+            rm -rf "$stage"
+          }
+          trap cleanup EXIT
+
+          [[ -d "$repo/.git" ]] || {
+            echo 'Expected live repository /opt/nt was not found.'
+            exit 64
+          }
+          systemctl cat skryon-api.service >/dev/null
+          systemctl cat skryon-bot.service >/dev/null
+
+          mkdir -p "$stage" "$runtime" "$backup"
+          tar -xzf /tmp/nt-orchestrator-deploy.tgz -C "$stage"
+
+          for required in \
+            "$stage/orchestrator/requirements.txt" \
+            "$stage/orchestrator/api.py" \
+            "$stage/orchestrator/tg_admin.py" \
+            "$stage/emery vpn orchestrator/requirements.txt" \
+            "$stage/emery vpn orchestrator/alembic.ini"; do
+            [[ -f "$required" ]] || {
+              echo 'Deployment archive is incomplete.'
+              exit 65
+            }
+          done
+
+          bot_pid="$(systemctl show skryon-bot.service --property=MainPID --value)"
+          if [[ ! "$bot_pid" =~ ^[1-9][0-9]*$ ]] || [[ ! -r "/proc/$bot_pid/environ" ]]; then
+            echo 'The running Skryon bot could not be inspected; no files were changed.'
+            exit 66
+          fi
+          python3 - "$bot_pid" <<'PY'
+          from pathlib import Path
+          import sys
+
+          entries = Path('/proc', sys.argv[1], 'environ').read_bytes().split(b'\0')
+          names = {entry.split(b'=', 1)[0] for entry in entries if b'=' in entry}
+          missing = [name for name in (b'BOT_TOKEN', b'ADMIN_IDS') if name not in names]
+          if missing:
+              print('The running bot is missing required systemd environment settings; no files were changed.')
+              raise SystemExit(67)
+          PY
+
+          remote_phase=installer
+          if [[ ! -x "$runtime/installer/bin/python" ]]; then
+            if ! python3 -m venv "$runtime/installer"; then
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
+              python3 -m venv "$runtime/installer"
+            fi
+          fi
+          "$runtime/installer/bin/python" -m pip install --quiet --upgrade pip
+
+          remote_phase=legacy_dependencies
+          legacy_site_new="$runtime/legacy-site.new"
+          rm -rf "$legacy_site_new"
+          mkdir -p "$legacy_site_new"
+          "$runtime/installer/bin/python" -m pip install \
+            --quiet \
+            --target "$legacy_site_new" \
+            -r "$stage/orchestrator/requirements.txt"
+
+          remote_phase=modern_dependencies
+          if [[ ! -x "$runtime/modern/bin/python" ]]; then
+            python3 -m venv "$runtime/modern"
+          fi
+          "$runtime/modern/bin/python" -m pip install \
+            --quiet \
+            --upgrade \
+            -r "$stage/emery vpn orchestrator/requirements.txt"
+
+          remote_phase=backup
+          tar \
+            --exclude='orchestrator/.venv' \
+            --exclude='orchestrator/__pycache__' \
+            --exclude='emery vpn orchestrator/.venv' \
+            --exclude='emery vpn orchestrator/data' \
+            --exclude='emery vpn orchestrator/**/__pycache__' \
+            -czf "$backup/code-before-deploy.tgz" \
+            -C "$repo" \
+            orchestrator \
+            'emery vpn orchestrator'
+
+          state_paths=()
+          for relative in \
+            orchestrator/.env \
+            orchestrator/skryon.db \
+            'emery vpn orchestrator/.env' \
+            'emery vpn orchestrator/data'; do
+            [[ -e "$repo/$relative" ]] && state_paths+=("$relative")
+          done
+          if ((${#state_paths[@]})); then
+            tar -czf "$backup/state-before-deploy.tgz" -C "$repo" "${state_paths[@]}"
+          fi
+
+          remote_phase=overlay
+          mkdir -p "$legacy" "$modern" "$modern/data"
+          cp -a "$stage/orchestrator/." "$legacy/"
+          cp -a "$stage/emery vpn orchestrator/." "$modern/"
+
+          if [[ -d "$runtime/legacy-site" ]]; then
+            mv "$runtime/legacy-site" "$backup/legacy-site"
+          fi
+          mv "$legacy_site_new" "$runtime/legacy-site"
+
+          remote_phase=environment
+          if [[ ! -f "$modern/.env" ]]; then
+            echo 'The Emery .env file is missing; restoring previous code.'
+            tar -xzf "$backup/code-before-deploy.tgz" -C "$repo"
+            exit 69
+          fi
+          if ! "$runtime/modern/bin/python" - <<'PY'
+          from pathlib import Path
+          from dotenv import dotenv_values
+
+          values = dotenv_values(Path('/opt/nt/emery vpn orchestrator/.env'))
+          if not values.get('ADMIN_API_KEY'):
+              raise SystemExit(1)
+          PY
+          then
+            echo 'ADMIN_API_KEY is missing from the Emery environment; restoring previous code.'
+            tar -xzf "$backup/code-before-deploy.tgz" -C "$repo"
+            exit 70
+          fi
+
+          remote_phase=migration
+          cd "$modern"
+          "$runtime/modern/bin/alembic" upgrade head
+
+          remote_phase=units
+          backend_runtime_link=/opt/nt-emery-runtime
+          if [[ -e "$backend_runtime_link" && ! -L "$backend_runtime_link" ]]; then
+            echo 'Protected backend runtime link is occupied by a non-link path.'
+            exit 72
+          fi
+          ln -sfn "$modern" "$backend_runtime_link"
+
+          cat > /etc/systemd/system/emery-backend.service <<'UNIT'
+          [Unit]
+          Description=Emery VPN Backend (FastAPI)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          WorkingDirectory=/opt/nt-emery-runtime
+          ExecStart=/opt/nt/.runtime/modern/bin/uvicorn src.backend.main:app --host 127.0.0.1 --port 9330
+          Restart=always
+          RestartSec=3
+          TimeoutStopSec=15
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          for unit in skryon-api.service skryon-bot.service; do
+            dropin="/etc/systemd/system/$unit.d"
+            mkdir -p "$dropin"
+            cat > "$dropin/20-realtime-sync.conf" <<'DROPIN'
+          [Service]
+          Environment="PYTHONPATH=/opt/nt/.runtime/legacy-site"
+          Environment="SERVER_POOL_SYNC_URL=http://127.0.0.1:9330"
+          Environment="EMERY_ENV_FILE=/opt/nt/emery vpn orchestrator/.env"
+          DROPIN
+          done
+
+          remote_phase=backend_import
+          cd "$backend_runtime_link"
+          "$runtime/modern/bin/python" -c 'from src.backend.main import app'
+
+          remote_phase=daemon_reload
+          systemctl daemon-reload
+          remote_phase=backend_start
+          systemctl enable --now emery-backend.service
+          remote_phase=api_restart
+          systemctl restart skryon-api.service
+          remote_phase=bot_restart
+          systemctl restart skryon-bot.service
+
+          remote_phase=backend_verify
+          systemctl is-active --quiet emery-backend.service
+          remote_phase=api_verify
+          systemctl is-active --quiet skryon-api.service
+          remote_phase=bot_verify
+          systemctl is-active --quiet skryon-bot.service
+
+          remote_phase=local_verify
+          curl -fsS --max-time 10 http://127.0.0.1:9330/api/v1/health >/dev/null
+          curl -fsS --max-time 10 http://127.0.0.1:8080/health >/dev/null
+          sync_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            --max-time 10 \
+            -H 'Content-Type: application/json' \
+            -d '{}' \
+            http://127.0.0.1:8080/api/config/sync)"
+          if [[ "$sync_status" == 000 || "$sync_status" == 404 || "$sync_status" -ge 500 ]]; then
+            echo 'Legacy config-sync endpoint failed its local probe.'
+            exit 71
+          fi
+
+          printf 'Deployment completed: backend, legacy API, and bot are active.\n'
           EOF
+          failure_phase=complete
+
+      - name: Verify public compatibility endpoint
+        id: public
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' \
+              --max-time 15 \
+              -H 'Content-Type: application/json' \
+              -d '{}' \
+              https://skryon.ru/api/config/sync || true)"
+            if [[ "$status" != 000 && "$status" != 404 && "$status" -lt 500 ]]; then
+              printf 'Public config-sync endpoint responded with HTTP %s.\n' "$status"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo '::error::Public config-sync endpoint is not reachable after deployment.'
+          exit 1
+
+      - name: Restore protected SSH boundary
+        id: cleanup
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER:-root}@31.70.76.155"
+          ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=accept-new \
+            "$remote" <<'EOF'
+          set -euo pipefail
+          cleanup_unit="nt-close-temp-ssh-$(date -u +%s)"
+          systemd-run \
+            --quiet \
+            --unit="$cleanup_unit" \
+            --on-active=10s \
+            /usr/bin/bash -c \
+            'ufw --force delete allow 8443/tcp >/dev/null 2>&1 || true; systemctl stop temp-ssh.service >/dev/null 2>&1 || true'
+          EOF
+
+          sleep 20
+          if ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes \
+            -o ConnectTimeout=8 \
+            -o StrictHostKeyChecking=accept-new \
+            "$remote" true >/dev/null 2>&1; then
+            echo '::error::Temporary SSH endpoint is still reachable.'
+            exit 1
+          fi
+          printf 'Temporary SSH endpoint is closed.\n'
+
+      - name: Record protected deployment status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          KEY_OUTCOME: ${{ steps.key.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          DEPLOY_PHASE: ${{ steps.deploy.outputs.phase }}
+          DEPLOY_EXIT_CODE: ${{ steps.deploy.outputs.exit_code }}
+          PUBLIC_OUTCOME: ${{ steps.public.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+        run: |
+          set -euo pipefail
+          state=success
+          description='Protected deployment completed'
+          status_context='deploy/protected-runtime/success'
+
+          if [[ "$CHECKOUT_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while checking out trusted source'
+            status_context='deploy/protected-runtime/checkout'
+          elif [[ "$VALIDATE_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while validating Python source'
+            status_context='deploy/protected-runtime/validate'
+          elif [[ "$PACKAGE_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while packaging protected deployment'
+            status_context='deploy/protected-runtime/package'
+          elif [[ "$KEY_OUTCOME" == failure ]]; then
+            state=failure
+            description='Failed while validating the deploy key'
+            status_context='deploy/protected-runtime/key'
+          elif [[ "$DEPLOY_OUTCOME" == failure ]]; then
+            state=failure
+            description="Deploy failed at ${DEPLOY_PHASE:-unknown}, code ${DEPLOY_EXIT_CODE:-unknown}"
+            status_context="deploy/protected-runtime/${DEPLOY_PHASE:-unknown}-${DEPLOY_EXIT_CODE:-unknown}"
+          elif [[ "$PUBLIC_OUTCOME" == failure ]]; then
+            state=failure
+            description='Server updated but public compatibility check failed'
+            status_context='deploy/protected-runtime/public'
+          elif [[ "$CLEANUP_OUTCOME" == failure ]]; then
+            state=failure
+            description='Deployment passed but temporary SSH cleanup failed'
+            status_context='deploy/protected-runtime/ssh-cleanup'
+          fi
+
+          gh api \
+            --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" \
+            -f context="$status_context" \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions"
+
+          [[ "$state" == success ]]

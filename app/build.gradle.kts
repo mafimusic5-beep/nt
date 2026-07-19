@@ -12,7 +12,7 @@ plugins {
 }
 
 /** Must match [android.defaultConfig.versionCode] (used in [androidComponents] per-ABI overrides). */
-val appVersionCode = 715
+val appVersionCode = 716
 
 android {
     namespace = "com.v2ray.ang"
@@ -23,8 +23,9 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = appVersionCode
-        versionName = "2.0.15"
+        versionName = "2.0.16"
         multiDexEnabled = true
+        buildConfigField("int", "SKRYON_VERSION_CODE", appVersionCode.toString())
 
         // Emery orchestrator API on deployed VPS backend.
         buildConfigField("String", "EMERY_API_BASE_URL", "\"http://80.71.159.221:9330\"")

@@ -1,5 +1,28 @@
 import os
+from pathlib import Path
 from typing import List
+
+from dotenv import dotenv_values
+
+
+def _emery_env_paths() -> tuple[Path, ...]:
+    configured = os.getenv('EMERY_ENV_FILE', '').strip()
+    repository_env = Path(__file__).resolve().parent.parent / 'emery vpn orchestrator' / '.env'
+    paths = [Path(configured)] if configured else []
+    paths.extend((repository_env, Path('/opt/emery-orchestrator/.env')))
+    return tuple(paths)
+
+
+def _shared_emery_value(name: str, paths: tuple[Path, ...] | None = None) -> str:
+    candidates = _emery_env_paths() if paths is None else paths
+    for path in candidates:
+        try:
+            value = dotenv_values(path).get(name) if path.is_file() else None
+        except OSError:
+            continue
+        if value:
+            return str(value).strip()
+    return ''
 
 
 def _split_admin_ids(raw: str) -> List[int]:
@@ -21,6 +44,22 @@ DATABASE_PATH = os.getenv('DATABASE_PATH', 'skryon.db')
 DEFAULT_SERVER_NAME = os.getenv('DEFAULT_SERVER_NAME', 'Secure-DE')
 DEFAULT_SERVER_REGION = os.getenv('DEFAULT_SERVER_REGION', 'DE')
 DEFAULT_SERVER_CONFIG = os.getenv('DEFAULT_SERVER_CONFIG', '')
+SERVER_POOL_SYNC_URL = (
+    os.getenv('SERVER_POOL_SYNC_URL', '').strip()
+    or os.getenv('BACKEND_BASE_URL', '').strip()
+    or _shared_emery_value('BACKEND_BASE_URL')
+    or 'http://127.0.0.1:9330'
+).rstrip('/')
+SERVER_POOL_SYNC_ADMIN_KEY = (
+    os.getenv('SERVER_POOL_SYNC_ADMIN_KEY', '').strip()
+    or os.getenv('ADMIN_API_KEY', '').strip()
+    or _shared_emery_value('ADMIN_API_KEY')
+)
+MIN_SUPPORTED_APP_VERSION_CODE = int(os.getenv('MIN_SUPPORTED_APP_VERSION_CODE', '716'))
+APP_UPDATE_MESSAGE = os.getenv(
+    'APP_UPDATE_MESSAGE',
+    'Версия приложения устарела. Обновите приложение.',
+).strip()
 
 
 def is_admin(user_id: int) -> bool:

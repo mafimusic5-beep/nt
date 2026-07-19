@@ -1,5 +1,7 @@
 package com.v2ray.ang.network
 
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.dto.ProfileApiResponseBody
 import com.v2ray.ang.dto.VpnConnectApiResponseBody
 import com.v2ray.ang.dto.VpnConnectRequestBody
@@ -44,6 +46,7 @@ object EmeryBackendClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .get()
             .build()
     }
@@ -59,6 +62,7 @@ object EmeryBackendClient {
             .header("X-Emery-Nonce", proof.nonce)
             .header("X-Emery-Signature", proof.signatureBase64)
             .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
     }
@@ -151,6 +155,7 @@ object EmeryBackendClient {
     suspend fun fetchVpnServers(): Result<List<BackendServer>> = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url("${baseUrl()}/api/v1/vpn/servers")
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .get()
             .build()
         try {

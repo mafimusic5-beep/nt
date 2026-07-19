@@ -33,6 +33,20 @@ Copy `.env.example` to `.env` and set required values:
 - `ADMIN_API_KEY`
 - `ADMIN_IDS`
 - `BACKEND_BASE_URL`
+- `MIN_SUPPORTED_APP_VERSION_CODE=716`
+- `APP_UPDATE_MESSAGE=Версия приложения устарела. Обновите приложение.`
+
+Новые клиенты передают `X-Skryon-App-Version-Code`. Если переданная версия ниже минимальной, backend возвращает сообщение об обновлении вместо профиля/списка серверов. Отсутствие заголовка сохраняет старые совместимые контракты для legacy polling/event/pool-клиентов. APK, который после активации вообще не выходит в сеть, удалённо показать сообщение не сможет.
+
+Администратор может управлять общим пулом через Telegram:
+
+- `/addconfig <VLESS Reality ссылка>` (также `/add_config`) — добавить сервер;
+- `/delconfig ID` — отключить сервер и убрать его из синхронизированных приложений;
+- `/servers` — посмотреть ID серверов.
+
+Для связи старого Skryon-бота с этим backend отдельный секрет создавать не нужно: бот
+использует существующие `ADMIN_API_KEY` и `BACKEND_BASE_URL` из окружения или Emery `.env`.
+Нестандартный путь к файлу можно передать через `EMERY_ENV_FILE`.
 
 ## Run commands
 
@@ -100,6 +114,8 @@ pytest -q tests/test_redeem_flow.py
 - `GET /api/v1/admin/nodes/best-moscow`
 - `POST /api/v1/admin/nodes/{node_id}/provision`
 - `POST /api/v1/admin/nodes/{node_id}/deprovision`
+- `POST /api/v1/admin/nodes/{node_id}/disable`
+- `POST /api/v1/admin/nodes/{node_id}/enable`
 - `POST /api/v1/admin/nodes/healthcheck/run`
 - `POST /api/v1/admin/codes/generate`
 - `GET /api/v1/admin/activations/problems`
@@ -114,6 +130,7 @@ pytest -q tests/test_redeem_flow.py
 - Idempotent payment confirmation (`idempotency_key`)
 - Audit logging for critical actions
 - Node selection in `moscow` by `health_status -> load_score -> priority`
+- Backward-compatible region change feed: `GET /api/v1/vpn/regions/revision` and long-poll `GET /api/v1/vpn/regions/events?since=...`
 
 ## FirstVDS integration notes
 
