@@ -6,7 +6,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,11 +20,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -294,51 +294,94 @@ private fun RegionSelectorCard(
     tight: Boolean,
     onLocationSelected: (String) -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(false) }
     val selectedCode = selectedLocation.countryCodeLabel()
     val selectedTitle = selectedLocation.cityLabel()
     val cardShape = RoundedCornerShape(if (compact) 18.dp else 20.dp)
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (tight) 72.dp else 78.dp)
-            .clip(cardShape)
-            .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
-            .clickable(enabled = locations.isNotEmpty()) {
-                onLocationSelected(selectedLocation.title)
-            }
-            .padding(horizontal = if (compact) 16.dp else 18.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Регион",
-                style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextSecondary,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-            )
-            Spacer(Modifier.height(7.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
-                Spacer(Modifier.width(10.dp))
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val menuWidth = maxWidth
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (tight) 72.dp else 78.dp)
+                .clip(cardShape)
+                .background(Color.White.copy(alpha = 0.96f))
+                .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
+                .clickable(enabled = locations.isNotEmpty()) {
+                    expanded = true
+                }
+                .padding(horizontal = if (compact) 16.dp else 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "$selectedTitle • $selectedCode",
-                    style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-                    color = AppUiColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "Регион",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppUiColors.TextSecondary,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(7.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "$selectedTitle • $selectedCode",
+                        style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+                        color = AppUiColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded && locations.isNotEmpty(),
+            onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .width(menuWidth)
+                .background(Color.White),
+        ) {
+            locations.forEach { location ->
+                val code = location.countryCodeLabel()
+                val selected = location.id == selectedLocation.id || location.title == selectedLocation.title
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlagMark(code = code, modifier = Modifier.width(28.dp).height(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = location.cityLabel(),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = AppUiColors.TextPrimary,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = code,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = AppUiColors.TextSecondary,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onLocationSelected(location.id)
+                    },
+                    modifier = Modifier.background(
+                        if (selected) AppUiColors.RegionSelected else Color.White,
+                    ),
                 )
             }
         }
-        Text(
-            text = "⌄",
-            style = MaterialTheme.typography.titleLarge,
-            color = AppUiColors.TextPrimary,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 
