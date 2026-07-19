@@ -8,12 +8,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,7 +49,10 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
@@ -252,6 +258,7 @@ private fun ActivationScreen(
         val pantherTop = if (compact) 92.dp else 112.dp
         val pantherOffsetX = if (compact) 64.dp else 86.dp
         val cardHeight = if (compact) 306.dp else 368.dp
+        val uiScale = (maxWidth.value / 393f).coerceIn(0.82f, 1.45f)
 
         Text(
             text = "Skryon",
@@ -268,17 +275,8 @@ private fun ActivationScreen(
             maxLines = 1,
         )
 
-        Image(
-            painter = painterResource(id = R.drawable.skryon_panther_activation),
-            contentDescription = null,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.62f)
-                .height(pantherHeight),
-            contentScale = ContentScale.Fit,
-        )
-
+        // Keep the soft white transition behind the panther. The lower card is drawn
+        // after the image and masks its transparent tail, so the paws meet its top edge.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -293,15 +291,43 @@ private fun ActivationScreen(
                 ),
         )
 
+        Image(
+            painter = painterResource(id = R.drawable.skryon_panther_activation),
+            contentDescription = null,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(x = pantherOffsetX, y = pantherTop)
+                .fillMaxWidth(1.62f)
+                .height(pantherHeight),
+            contentScale = ContentScale.Fit,
+        )
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .offset(y = -cardHeight)
+                .fillMaxWidth()
+                .height(if (compact) 32.dp else 40.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0f),
+                        0.42f to Color.White.copy(alpha = 0.04f),
+                        0.76f to Color.White.copy(alpha = 0.24f),
+                        1f to Color.White.copy(alpha = 0.62f),
+                    ),
+                ),
+        )
+
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(cardHeight)
                 .shadow(
-                    elevation = 8.dp,
+                    elevation = 14.dp,
                     shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
-                    spotColor = Color(0x14000000),
+                    ambientColor = Color(0x38000000),
+                    spotColor = Color(0x70000000),
                 )
                 .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
                 .background(Color.White)
@@ -338,7 +364,10 @@ private fun ActivationScreen(
                     code = it
                     error = ""
                 },
-                compact = compact,
+                uiScale = uiScale,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 54.dp else 60.dp),
             )
             if (error.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
@@ -376,9 +405,9 @@ private fun ActivationScreen(
                     .height(if (compact) 56.dp else 64.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF08090B),
+                    containerColor = Color.Black,
                     contentColor = Color.White,
-                    disabledContainerColor = Color(0xFF2D3036),
+                    disabledContainerColor = Color.Black,
                     disabledContentColor = Color.White,
                 ),
             ) {
@@ -386,7 +415,7 @@ private fun ActivationScreen(
                     text = if (isLoading) "Проверка..." else "Войти",
                     style = TextStyle(
                         fontSize = if (compact) 22.sp else 25.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Bold,
                     ),
                 )
             }
@@ -398,76 +427,129 @@ private fun ActivationScreen(
 private fun ActivationCodeInput(
     code: String,
     onCodeChange: (String) -> Unit,
-    compact: Boolean,
+    uiScale: Float,
+    modifier: Modifier = Modifier,
 ) {
-    BasicTextField(
-        value = code,
-        onValueChange = { value ->
-            onCodeChange(sanitizeActivationCode(value))
-        },
-        singleLine = true,
-        textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
-        cursorBrush = SolidColor(Color.Transparent),
-        keyboardOptions = KeyboardOptions(
-            capitalization = KeyboardCapitalization.Characters,
-            keyboardType = KeyboardType.Ascii,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-        decorationBox = { innerTextField ->
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(if (compact) 54.dp else 60.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                ActivationCodeSlots(
-                    code = code,
-                    compact = compact,
-                )
+    val clipboardManager = LocalClipboardManager.current
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    Row(
+        modifier = modifier
+            .background(Color.White, RoundedCornerShape(8.dp * uiScale))
+            .border(
+                width = 1.dp,
+                color = Color(0xFFE1E1E1),
+                shape = RoundedCornerShape(8.dp * uiScale),
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = code,
+            onValueChange = { value ->
+                onCodeChange(sanitizeActivationCode(value))
+            },
+            singleLine = true,
+            textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
+            cursorBrush = SolidColor(Color.Transparent),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
+                keyboardType = KeyboardType.Ascii,
+            ),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .focusRequester(focusRequester),
+            decorationBox = { innerTextField ->
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .alpha(0.01f),
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    innerTextField()
+                    ActivationCodeSlots(
+                        code = code,
+                        uiScale = uiScale,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(0.01f),
+                    ) {
+                        innerTextField()
+                    }
                 }
-            }
-        },
-    )
+            },
+        )
+
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .height(21.dp * uiScale)
+                .background(Color(0xFFE1E1E1)),
+        )
+
+        Box(
+            modifier = Modifier
+                .width(61.dp * uiScale)
+                .fillMaxHeight()
+                .clickable {
+                    clipboardManager.getText()?.text?.let { pasted ->
+                        onCodeChange(sanitizeActivationCode(pasted))
+                    }
+                    focusRequester.requestFocus()
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "Вставить",
+                style = TextStyle(
+                    fontSize = (13f * uiScale).sp,
+                    lineHeight = (17f * uiScale).sp,
+                    fontWeight = FontWeight.Normal,
+                    color = Color(0xFF006B47),
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 @Composable
 private fun ActivationCodeSlots(
     code: String,
-    compact: Boolean,
+    uiScale: Float,
 ) {
-    val groups = listOf(1, 3, 2, 2, 2, 1)
+    val groups = listOf(4, 3, 4)
     var index = 0
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 8.dp * uiScale),
+        horizontalArrangement = Arrangement.spacedBy(
+            space = 24.dp * uiScale,
+            alignment = Alignment.CenterHorizontally,
+        ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        groups.forEachIndexed { groupIndex, groupSize ->
-            repeat(groupSize) {
-                val char = code.getOrNull(index)?.toString().orEmpty()
-                index += 1
-                CodeCharacterSlot(
-                    char = char,
-                    compact = compact,
-                )
-            }
-            if (groupIndex != groups.lastIndex) {
-                Text(
-                    text = "-",
-                    style = TextStyle(
-                        fontSize = if (compact) 20.sp else 24.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = Color(0xFF111319),
-                        textAlign = TextAlign.Center,
-                    ),
-                    modifier = Modifier.width(if (compact) 10.dp else 13.dp),
-                )
+        groups.forEach { groupSize ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp * uiScale),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(groupSize) {
+                    val slotIndex = index
+                    val char = code.getOrNull(slotIndex)?.toString().orEmpty()
+                    index += 1
+                    CodeCharacterSlot(
+                        char = char,
+                        active = slotIndex == code.length,
+                        uiScale = uiScale,
+                    )
+                }
             }
         }
     }
@@ -476,30 +558,47 @@ private fun ActivationCodeSlots(
 @Composable
 private fun CodeCharacterSlot(
     char: String,
-    compact: Boolean,
+    active: Boolean,
+    uiScale: Float,
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier.width(if (compact) 20.dp else 24.dp),
+    Box(
+        modifier = Modifier
+            .width(13.dp * uiScale)
+            .fillMaxHeight(),
     ) {
-        Text(
-            text = char,
-            style = TextStyle(
-                fontSize = if (compact) 20.sp else 24.sp,
-                lineHeight = if (compact) 24.sp else 28.sp,
-                fontWeight = FontWeight.Normal,
-                color = Color(0xFF111319),
-                textAlign = TextAlign.Center,
-            ),
-            modifier = Modifier.height(if (compact) 28.dp else 32.dp),
-            maxLines = 1,
-        )
+        if (char.isNotEmpty()) {
+            Text(
+                text = char,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = 8.dp * uiScale),
+                style = TextStyle(
+                    fontSize = (15f * uiScale).sp,
+                    lineHeight = (18f * uiScale).sp,
+                    fontWeight = FontWeight.Normal,
+                    color = Color(0xFF111319),
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = 1,
+            )
+        } else if (active) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = 11.dp * uiScale)
+                    .width(1.2.dp)
+                    .height(16.dp * uiScale)
+                    .background(Color(0xFF00704A)),
+            )
+        }
+
         Box(
             modifier = Modifier
-                .width(if (compact) 19.dp else 23.dp)
-                .height(1.35.dp)
-                .background(Color(0xFFC4C9D0)),
+                .align(Alignment.TopCenter)
+                .offset(y = 32.dp * uiScale)
+                .width(13.dp * uiScale)
+                .height(1.dp)
+                .background(if (active) Color(0xFF00704A) else Color(0xFFB8BDC5)),
         )
     }
 }
