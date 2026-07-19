@@ -103,30 +103,8 @@ fun VpnMainScreen(
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
     var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
-    var russiaPolicySelected by remember {
-        mutableStateOf(
-            MmkvManager.decodeSettingsBool(
-                AppConfig.PREF_REGIONAL_POLICY_RUSSIA_MODE,
-                false,
-            ),
-        )
-    }
+    var regionalPolicyMode by remember { mutableStateOf(readRegionalPolicyMode()) }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        val initialized = MmkvManager.decodeSettingsBool(
-            AppConfig.PREF_REGIONAL_POLICY_CHOICE_INITIALIZED,
-            false,
-        )
-        if (!initialized) {
-            applyRegionalPolicy(context, russiaMode = false)
-            russiaPolicySelected = false
-            if (uiState.connectionState != VpnConnectionState.Disconnected) {
-                reconnectAfterPolicyChange = true
-                onDisconnectClick()
-            }
-        }
-    }
 
     LaunchedEffect(
         reconnectAfterPolicyChange,
@@ -227,6 +205,8 @@ fun VpnMainScreen(
                     onClick = {
                         if (uiState.connectionState == VpnConnectionState.Connected) {
                             onDisconnectClick()
+                        } else if (regionalPolicyMode == null) {
+                            selectedTab = MainTab.Advanced
                         } else {
                             autoConnectEnabled = true
                             MmkvManager.encodeStartOnBoot(true)
@@ -239,14 +219,22 @@ fun VpnMainScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = "Режим использования: ${if (russiaPolicySelected) "Российская Федерация" else "Международный"} · Изменить",
+                        text = "Режим использования: ${regionalPolicyMode.displayLabel()} · ${if (regionalPolicyMode == null) "Выбрать" else "Изменить"}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = AppUiColors.TextSecondary,
                         fontWeight = FontWeight.Medium,
                         textAlign = TextAlign.Center,
                     )
                 }
-                if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
+                if (uiState.connectionState == VpnConnectionState.Disconnected && regionalPolicyMode == null) {
+                    Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
+                    Text(
+                        text = "Перед подключением выберите режим использования",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = AppUiColors.TextSecondary,
+                        textAlign = TextAlign.Center,
+                    )
+                } else if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
                     Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
                     Text(
                         text = when {
@@ -265,10 +253,10 @@ fun VpnMainScreen(
             } else {
                 Spacer(Modifier.height(if (tight) 16.dp else 22.dp))
                 AdvancedPage(
-                    russiaPolicySelected = russiaPolicySelected,
-                    onRegionalPolicyConfirmed = { russiaMode ->
-                        applyRegionalPolicy(context, russiaMode)
-                        russiaPolicySelected = russiaMode
+                    selectedPolicyMode = regionalPolicyMode,
+                    onRegionalPolicyConfirmed = { mode ->
+                        applyRegionalPolicy(context, mode)
+                        regionalPolicyMode = mode
                         reconnectAfterPolicyChange = true
                         if (uiState.connectionState != VpnConnectionState.Disconnected) {
                             onDisconnectClick()
@@ -670,8 +658,8 @@ private fun BottomNavItem(
 
 @Composable
 private fun AdvancedPage(
-    russiaPolicySelected: Boolean,
-    onRegionalPolicyConfirmed: (Boolean) -> Unit,
+    selectedPolicyMode: RegionalPolicyMode?,
+    onRegionalPolicyConfirmed: (RegionalPolicyMode) -> Unit,
     autoConnectEnabled: Boolean,
     onAutoConnectChange: (Boolean) -> Unit,
     compact: Boolean,
@@ -702,7 +690,7 @@ private fun AdvancedPage(
         Spacer(Modifier.height(if (tight) 14.dp else 18.dp))
 
         RegionalPolicyCard(
-            russiaModeSelected = russiaPolicySelected,
+            selectedMode = selectedPolicyMode,
             compact = compact,
             tight = tight,
             onPolicyConfirmed = onRegionalPolicyConfirmed,
@@ -741,22 +729,22 @@ private fun AdvancedPage(
 
 @Composable
 private fun RegionalPolicyCard(
-    russiaModeSelected: Boolean,
+    selectedMode: RegionalPolicyMode?,
     compact: Boolean,
     tight: Boolean,
-    onPolicyConfirmed: (Boolean) -> Unit,
+    onPolicyConfirmed: (RegionalPolicyMode) -> Unit,
 ) {
     var showOutsideRussiaConfirmation by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
 
-    fun requestMode(russiaMode: Boolean) {
-        if (russiaMode == russiaModeSelected) {
+    fun requestMode(mode: RegionalPolicyMode) {
+        if (mode == selectedMode) {
             return
         }
-        if (russiaModeSelected && !russiaMode) {
+        if (mode == RegionalPolicyMode.International) {
             showOutsideRussiaConfirmation = true
         } else {
-            onPolicyConfirmed(russiaMode)
+            onPolicyConfirmed(mode)
         }
     }
 
@@ -783,17 +771,17 @@ private fun RegionalPolicyCard(
         )
         Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
         PolicyChoiceRow(
-            selected = !russiaModeSelected,
+            selected = selectedMode == RegionalPolicyMode.International,
             title = "Международный",
             description = "VPN используется за пределами Российской Федерации",
-            onClick = { requestMode(false) },
+            onClick = { requestMode(RegionalPolicyMode.International) },
         )
         Spacer(Modifier.height(8.dp))
         PolicyChoiceRow(
-            selected = russiaModeSelected,
+            selected = selectedMode == RegionalPolicyMode.Russia,
             title = "Российская Федерация",
             description = "VPN используется на территории Российской Федерации",
-            onClick = { requestMode(true) },
+            onClick = { requestMode(RegionalPolicyMode.Russia) },
         )
         Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
         Text(
@@ -821,7 +809,7 @@ private fun RegionalPolicyCard(
                 Button(
                     onClick = {
                         showOutsideRussiaConfirmation = false
-                        onPolicyConfirmed(false)
+                        onPolicyConfirmed(RegionalPolicyMode.International)
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AppUiColors.TextPrimary,
@@ -887,11 +875,21 @@ private fun PolicyChoiceRow(
     }
 }
 
-private fun applyRegionalPolicy(context: Context, russiaMode: Boolean) {
-    val routingPreset = if (russiaMode) ROUTING_PRESET_RUSSIA else ROUTING_PRESET_GLOBAL
+private fun readRegionalPolicyMode(): RegionalPolicyMode? {
+    return when (MmkvManager.decodeSettingsString(AppConfig.PREF_REGIONAL_POLICY_MODE)) {
+        RegionalPolicyMode.International.storageValue -> RegionalPolicyMode.International
+        RegionalPolicyMode.Russia.storageValue -> RegionalPolicyMode.Russia
+        else -> null
+    }
+}
+
+private fun applyRegionalPolicy(context: Context, mode: RegionalPolicyMode) {
+    val routingPreset = when (mode) {
+        RegionalPolicyMode.International -> ROUTING_PRESET_GLOBAL
+        RegionalPolicyMode.Russia -> ROUTING_PRESET_RUSSIA
+    }
     SettingsManager.resetRoutingRulesetsFromPresets(context.applicationContext, routingPreset)
-    MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_RUSSIA_MODE, russiaMode)
-    MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_CHOICE_INITIALIZED, true)
+    MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_MODE, mode.storageValue)
 }
 
 @Composable
@@ -1085,6 +1083,17 @@ private fun PauseGlyph(tint: Color, compact: Boolean) {
 }
 
 private enum class MainTab { Home, Advanced }
+
+private enum class RegionalPolicyMode(val storageValue: String) {
+    International("international"),
+    Russia("russia"),
+}
+
+private fun RegionalPolicyMode?.displayLabel(): String = when (this) {
+    RegionalPolicyMode.International -> "Международный"
+    RegionalPolicyMode.Russia -> "Российская Федерация"
+    null -> "не выбран"
+}
 
 private enum class MiniIconType { Home, Settings }
 
