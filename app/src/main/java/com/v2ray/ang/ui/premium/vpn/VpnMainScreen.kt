@@ -205,8 +205,6 @@ fun VpnMainScreen(
                     onClick = {
                         if (uiState.connectionState == VpnConnectionState.Connected) {
                             onDisconnectClick()
-                        } else if (regionalPolicyMode == null) {
-                            selectedTab = MainTab.Advanced
                         } else {
                             autoConnectEnabled = true
                             MmkvManager.encodeStartOnBoot(true)
@@ -214,27 +212,7 @@ fun VpnMainScreen(
                         }
                     },
                 )
-                TextButton(
-                    onClick = { selectedTab = MainTab.Advanced },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = "Режим использования: ${regionalPolicyMode.displayLabel()} · ${if (regionalPolicyMode == null) "Выбрать" else "Изменить"}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = AppUiColors.TextSecondary,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                if (uiState.connectionState == VpnConnectionState.Disconnected && regionalPolicyMode == null) {
-                    Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
-                    Text(
-                        text = "Перед подключением выберите режим использования",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = AppUiColors.TextSecondary,
-                        textAlign = TextAlign.Center,
-                    )
-                } else if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
+                if (uiState.connectionState == VpnConnectionState.Disconnected && !uiState.connectButtonEnabled) {
                     Spacer(Modifier.height(if (tight) 6.dp else 10.dp))
                     Text(
                         text = when {
@@ -875,7 +853,7 @@ private fun PolicyChoiceRow(
     }
 }
 
-private fun readRegionalPolicyMode(): RegionalPolicyMode? {
+internal fun readRegionalPolicyMode(): RegionalPolicyMode? {
     return when (MmkvManager.decodeSettingsString(AppConfig.PREF_REGIONAL_POLICY_MODE)) {
         RegionalPolicyMode.International.storageValue -> RegionalPolicyMode.International
         RegionalPolicyMode.Russia.storageValue -> RegionalPolicyMode.Russia
@@ -883,7 +861,7 @@ private fun readRegionalPolicyMode(): RegionalPolicyMode? {
     }
 }
 
-private fun applyRegionalPolicy(context: Context, mode: RegionalPolicyMode) {
+internal fun applyRegionalPolicy(context: Context, mode: RegionalPolicyMode) {
     val routingPreset = when (mode) {
         RegionalPolicyMode.International -> ROUTING_PRESET_GLOBAL
         RegionalPolicyMode.Russia -> ROUTING_PRESET_RUSSIA
@@ -1084,15 +1062,9 @@ private fun PauseGlyph(tint: Color, compact: Boolean) {
 
 private enum class MainTab { Home, Advanced }
 
-private enum class RegionalPolicyMode(val storageValue: String) {
+internal enum class RegionalPolicyMode(val storageValue: String) {
     International("international"),
     Russia("russia"),
-}
-
-private fun RegionalPolicyMode?.displayLabel(): String = when (this) {
-    RegionalPolicyMode.International -> "Международный"
-    RegionalPolicyMode.Russia -> "Российская Федерация"
-    null -> "не выбран"
 }
 
 private enum class MiniIconType { Home, Settings }
