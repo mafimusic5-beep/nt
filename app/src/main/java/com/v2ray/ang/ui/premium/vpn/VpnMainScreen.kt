@@ -28,11 +28,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -103,11 +103,11 @@ fun VpnMainScreen(
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
     var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
-    var regionalPolicyEnabled by remember {
+    var russiaPolicySelected by remember {
         mutableStateOf(
             MmkvManager.decodeSettingsBool(
-                AppConfig.PREF_RF_REGIONAL_POLICY_ENABLED,
-                true,
+                AppConfig.PREF_REGIONAL_POLICY_RUSSIA_MODE,
+                false,
             ),
         )
     }
@@ -115,12 +115,12 @@ fun VpnMainScreen(
 
     LaunchedEffect(Unit) {
         val initialized = MmkvManager.decodeSettingsBool(
-            AppConfig.PREF_RF_REGIONAL_POLICY_INITIALIZED,
+            AppConfig.PREF_REGIONAL_POLICY_CHOICE_INITIALIZED,
             false,
         )
         if (!initialized) {
-            applyRegionalPolicy(context, enabled = true)
-            regionalPolicyEnabled = true
+            applyRegionalPolicy(context, russiaMode = false)
+            russiaPolicySelected = false
             if (uiState.connectionState != VpnConnectionState.Disconnected) {
                 reconnectAfterPolicyChange = true
                 onDisconnectClick()
@@ -239,7 +239,7 @@ fun VpnMainScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = "Региональная политика РФ: ${if (regionalPolicyEnabled) "включена" else "отключена"} · Настроить",
+                        text = "Режим использования: ${if (russiaPolicySelected) "Российская Федерация" else "Международный"} · Изменить",
                         style = MaterialTheme.typography.bodyMedium,
                         color = AppUiColors.TextSecondary,
                         fontWeight = FontWeight.Medium,
@@ -265,10 +265,10 @@ fun VpnMainScreen(
             } else {
                 Spacer(Modifier.height(if (tight) 16.dp else 22.dp))
                 AdvancedPage(
-                    regionalPolicyEnabled = regionalPolicyEnabled,
-                    onRegionalPolicyConfirmed = { enabled ->
-                        applyRegionalPolicy(context, enabled)
-                        regionalPolicyEnabled = enabled
+                    russiaPolicySelected = russiaPolicySelected,
+                    onRegionalPolicyConfirmed = { russiaMode ->
+                        applyRegionalPolicy(context, russiaMode)
+                        russiaPolicySelected = russiaMode
                         reconnectAfterPolicyChange = true
                         if (uiState.connectionState != VpnConnectionState.Disconnected) {
                             onDisconnectClick()
@@ -670,7 +670,7 @@ private fun BottomNavItem(
 
 @Composable
 private fun AdvancedPage(
-    regionalPolicyEnabled: Boolean,
+    russiaPolicySelected: Boolean,
     onRegionalPolicyConfirmed: (Boolean) -> Unit,
     autoConnectEnabled: Boolean,
     onAutoConnectChange: (Boolean) -> Unit,
@@ -702,7 +702,7 @@ private fun AdvancedPage(
         Spacer(Modifier.height(if (tight) 14.dp else 18.dp))
 
         RegionalPolicyCard(
-            enabled = regionalPolicyEnabled,
+            russiaModeSelected = russiaPolicySelected,
             compact = compact,
             tight = tight,
             onPolicyConfirmed = onRegionalPolicyConfirmed,
@@ -741,7 +741,7 @@ private fun AdvancedPage(
 
 @Composable
 private fun RegionalPolicyCard(
-    enabled: Boolean,
+    russiaModeSelected: Boolean,
     compact: Boolean,
     tight: Boolean,
     onPolicyConfirmed: (Boolean) -> Unit,
@@ -749,11 +749,14 @@ private fun RegionalPolicyCard(
     var showOutsideRussiaConfirmation by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
 
-    fun requestChange(nextEnabled: Boolean) {
-        if (nextEnabled) {
-            onPolicyConfirmed(true)
-        } else {
+    fun requestMode(russiaMode: Boolean) {
+        if (russiaMode == russiaModeSelected) {
+            return
+        }
+        if (russiaModeSelected && !russiaMode) {
             showOutsideRussiaConfirmation = true
+        } else {
+            onPolicyConfirmed(russiaMode)
         }
     }
 
@@ -772,35 +775,27 @@ private fun RegionalPolicyCard(
             color = AppUiColors.TextPrimary,
             fontWeight = FontWeight.SemiBold,
         )
-        Spacer(Modifier.height(if (tight) 8.dp else 10.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { requestChange(!enabled) }
-                .padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(
-                checked = enabled,
-                onCheckedChange = ::requestChange,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "Я использую VPN на территории Российской Федерации",
-                style = MaterialTheme.typography.bodyMedium,
-                color = AppUiColors.TextPrimary,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(if (tight) 8.dp else 10.dp))
+        Spacer(Modifier.height(6.dp))
         Text(
-            text = "Снимите отметку, если текущее подключение используется за пределами Российской Федерации.",
+            text = "Выберите территорию текущего использования VPN.",
             style = MaterialTheme.typography.bodySmall,
             color = AppUiColors.TextSecondary,
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+        PolicyChoiceRow(
+            selected = !russiaModeSelected,
+            title = "Международный",
+            description = "VPN используется за пределами Российской Федерации",
+            onClick = { requestMode(false) },
+        )
+        Spacer(Modifier.height(8.dp))
+        PolicyChoiceRow(
+            selected = russiaModeSelected,
+            title = "Российская Федерация",
+            description = "VPN используется на территории Российской Федерации",
+            onClick = { requestMode(true) },
+        )
+        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
         Text(
             text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение.",
             style = MaterialTheme.typography.bodySmall,
@@ -848,11 +843,55 @@ private fun RegionalPolicyCard(
     }
 }
 
-private fun applyRegionalPolicy(context: Context, enabled: Boolean) {
-    val routingPreset = if (enabled) ROUTING_PRESET_RUSSIA else ROUTING_PRESET_GLOBAL
+@Composable
+private fun PolicyChoiceRow(
+    selected: Boolean,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (selected) AppUiColors.SelectedSurface else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (selected) AppUiColors.TextPrimary.copy(alpha = 0.22f) else AppUiColors.Border,
+                shape = shape,
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = AppUiColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextSecondary,
+            )
+        }
+    }
+}
+
+private fun applyRegionalPolicy(context: Context, russiaMode: Boolean) {
+    val routingPreset = if (russiaMode) ROUTING_PRESET_RUSSIA else ROUTING_PRESET_GLOBAL
     SettingsManager.resetRoutingRulesetsFromPresets(context.applicationContext, routingPreset)
-    MmkvManager.encodeSettings(AppConfig.PREF_RF_REGIONAL_POLICY_ENABLED, enabled)
-    MmkvManager.encodeSettings(AppConfig.PREF_RF_REGIONAL_POLICY_INITIALIZED, true)
+    MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_RUSSIA_MODE, russiaMode)
+    MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_CHOICE_INITIALIZED, true)
 }
 
 @Composable
