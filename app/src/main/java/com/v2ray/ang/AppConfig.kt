@@ -71,6 +71,7 @@ object AppConfig {
     const val PREF_AUTO_RECONNECT = "pref_auto_reconnect"
     const val PREF_PREFERRED_REGION = "pref_preferred_region"
     const val PREF_REGIONAL_POLICY_MODE = "pref_regional_policy_mode_v3"
+    const val PREF_REGIONAL_POLICY_PENDING = "pref_regional_policy_pending_v1"
     const val PREF_EMERY_DEVICES_USED = "pref_emery_devices_used"
 
     /** Emery access key session (MMKV SETTINGS id). */
