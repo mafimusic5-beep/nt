@@ -137,5 +137,20 @@ class AdminService:
     def deprovision_node(self, node_id: int) -> dict:
         return self.node_orchestrator.deprovision_node(node_id)
 
+    def set_node_enabled(self, node_id: int, enabled: bool) -> dict:
+        node = self.admin_repo.get_node(node_id)
+        if not node:
+            raise HTTPException(status_code=404, detail="node_not_found")
+        node.status = "active" if enabled else "maintenance"
+        node.health_status = "healthy" if enabled else "down"
+        action = "enable_node" if enabled else "disable_node"
+        self.audit_repo.write("admin", "api", action, "vpn_node", str(node.id))
+        self.db.commit()
+        return {
+            "node_id": node.id,
+            "status": "ok",
+            "detail": "enabled" if enabled else "disabled",
+        }
+
     def run_healthcheck(self) -> dict:
         return self.node_orchestrator.run_healthcheck()

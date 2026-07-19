@@ -7,3 +7,7 @@ DATABASE_PATH = "skryon.db"
 DEFAULT_SERVER_NAME = "Secure-DE"
 DEFAULT_SERVER_REGION = "DE"
 DEFAULT_SERVER_CONFIG = "PASTE_CLIENT_CONFIG_HERE"
+SERVER_POOL_SYNC_URL = "http://127.0.0.1:9330"
+SERVER_POOL_SYNC_ADMIN_KEY = ""  # Optional override; existing Emery ADMIN_API_KEY is reused.
+MIN_SUPPORTED_APP_VERSION_CODE = 716
+APP_UPDATE_MESSAGE = "Версия приложения устарела. Обновите приложение."
