@@ -7,12 +7,16 @@
     ]
   },
   {
+    "remarks": "RKN restricted DNS safeguard",
+    "outboundTag": "proxy",
+    "port": "53"
+  },
+  {
     "remarks": "RKN restricted IP ranges",
     "outboundTag": "block",
     "ip": [
       "geoip:ru-blocked",
-      "geoip:ru-blocked-community",
-      "geoip:re-filter"
+      "geoip:ru-blocked-community"
     ]
   },
   {
