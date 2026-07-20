@@ -33,8 +33,6 @@ internal object RegionalPolicyManager {
     private const val ROUTING_PRESET_GLOBAL = 2
     private const val ROUTING_PRESET_RUSSIA = 4
     private const val RUNET_SOURCE_REPOSITORY = "runetfreedom/russia-v2ray-rules-dat"
-    private const val RUNET_RELEASE_BASE_URL =
-        "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release"
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 120_000
     private const val MIN_DATA_FILE_BYTES = 16L * 1024L
@@ -52,6 +50,10 @@ internal object RegionalPolicyManager {
     private val requiredAssets = listOf(
         GeoAsset(AppConfig.GEOSITE_DAT),
         GeoAsset(AppConfig.GEOIP_DAT),
+    )
+    private val sourceBaseUrls = listOf(
+        "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release",
+        "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download",
     )
 
     fun readMode(): RegionalPolicyMode? {
@@ -207,15 +209,8 @@ internal object RegionalPolicyManager {
         val temporaryFiles = mutableMapOf<GeoAsset, File>()
         try {
             requiredAssets.forEach { asset ->
-                val expectedHash = downloadChecksum(asset)
                 val temporaryFile = File(assetDirectory, ".${asset.fileName}.rkn.tmp")
-                if (temporaryFile.exists() && !temporaryFile.delete()) {
-                    throw IOException("Unable to replace temporary ${asset.fileName}")
-                }
-                val actualHash = downloadDataFile(asset, temporaryFile)
-                if (!actualHash.equals(expectedHash, ignoreCase = true)) {
-                    throw IOException("Checksum mismatch for ${asset.fileName}")
-                }
+                downloadAndVerifyAsset(asset, temporaryFile)
                 temporaryFiles[asset] = temporaryFile
             }
             replaceAssetsTransactionally(assetDirectory, temporaryFiles)
@@ -225,9 +220,31 @@ internal object RegionalPolicyManager {
     }
 
     @Throws(IOException::class)
-    private fun downloadChecksum(asset: GeoAsset): String {
+    private fun downloadAndVerifyAsset(asset: GeoAsset, target: File) {
+        var lastError: Exception? = null
+        sourceBaseUrls.forEach { baseUrl ->
+            try {
+                if (target.exists() && !target.delete()) {
+                    throw IOException("Unable to replace temporary ${asset.fileName}")
+                }
+                val expectedHash = downloadChecksum(asset, baseUrl)
+                val actualHash = downloadDataFile(asset, target, baseUrl)
+                if (!actualHash.equals(expectedHash, ignoreCase = true)) {
+                    throw IOException("Checksum mismatch for ${asset.fileName}")
+                }
+                return
+            } catch (error: Exception) {
+                lastError = error
+                target.delete()
+            }
+        }
+        throw IOException("Unable to download verified ${asset.fileName}", lastError)
+    }
+
+    @Throws(IOException::class)
+    private fun downloadChecksum(asset: GeoAsset, baseUrl: String): String {
         val bytes = downloadBytes(
-            url = "$RUNET_RELEASE_BASE_URL/${asset.checksumFileName}",
+            url = "$baseUrl/${asset.checksumFileName}",
             maximumBytes = MAX_CHECKSUM_BYTES,
         )
         return parseSha256Checksum(bytes.toString(Charsets.UTF_8))
@@ -235,8 +252,8 @@ internal object RegionalPolicyManager {
     }
 
     @Throws(IOException::class)
-    private fun downloadDataFile(asset: GeoAsset, target: File): String {
-        val connection = openConnection("$RUNET_RELEASE_BASE_URL/${asset.fileName}")
+    private fun downloadDataFile(asset: GeoAsset, target: File, baseUrl: String): String {
+        val connection = openConnection("$baseUrl/${asset.fileName}")
         try {
             if (connection.responseCode != HttpURLConnection.HTTP_OK) {
                 throw IOException("HTTP ${connection.responseCode} for ${asset.fileName}")
@@ -322,6 +339,9 @@ internal object RegionalPolicyManager {
             requiredAssets.forEach { asset ->
                 val target = File(assetDirectory, asset.fileName)
                 val backup = File(assetDirectory, ".${asset.fileName}.rkn.bak")
+                if (!target.exists() && backup.exists() && !backup.renameTo(target)) {
+                    throw IOException("Unable to recover backup for ${asset.fileName}")
+                }
                 if (backup.exists() && !backup.delete()) {
                     throw IOException("Unable to clear backup for ${asset.fileName}")
                 }
