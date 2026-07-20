@@ -1,5 +1,21 @@
 [
   {
+    "remarks": "RKN restricted domains",
+    "outboundTag": "block",
+    "domain": [
+      "geosite:ru-blocked-all"
+    ]
+  },
+  {
+    "remarks": "RKN restricted IP ranges",
+    "outboundTag": "block",
+    "ip": [
+      "geoip:ru-blocked",
+      "geoip:ru-blocked-community",
+      "geoip:re-filter"
+    ]
+  },
+  {
     "remarks": "Bypass bittorrent",
     "outboundTag": "direct",
     "protocol": [
