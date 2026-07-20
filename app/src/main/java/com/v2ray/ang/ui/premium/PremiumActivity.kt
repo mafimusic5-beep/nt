@@ -70,13 +70,12 @@ import androidx.navigation.compose.rememberNavController
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.RegionalPolicyManager
+import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
-import com.v2ray.ang.ui.premium.vpn.RegionalPolicyMode
-import com.v2ray.ang.ui.premium.vpn.applyRegionalPolicy
-import com.v2ray.ang.ui.premium.vpn.readRegionalPolicyMode
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -189,13 +188,16 @@ private fun EmeryApp(
             }
             composable(EmeryRoute.RegionalPolicy.name) {
                 RegionalPolicyOnboardingScreen(
-                    initialMode = readRegionalPolicyMode(),
+                    initialMode = RegionalPolicyManager.readMode(),
                     onContinue = { mode ->
-                        applyRegionalPolicy(context, mode)
-                        MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
-                        navController.navigate(EmeryRoute.Home.name) {
-                            popUpTo(EmeryRoute.RegionalPolicy.name) { inclusive = true }
+                        val result = RegionalPolicyManager.apply(context, mode)
+                        if (result.isSuccess) {
+                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
+                            navController.navigate(EmeryRoute.Home.name) {
+                                popUpTo(EmeryRoute.RegionalPolicy.name) { inclusive = true }
+                            }
                         }
+                        result
                     },
                 )
             }
@@ -233,9 +235,12 @@ private fun regionalPolicyPending(): Boolean {
 @Composable
 private fun RegionalPolicyOnboardingScreen(
     initialMode: RegionalPolicyMode?,
-    onContinue: (RegionalPolicyMode) -> Unit,
+    onContinue: suspend (RegionalPolicyMode) -> Result<Unit>,
 ) {
+    val coroutineScope = rememberCoroutineScope()
     var selectedMode by remember(initialMode) { mutableStateOf(initialMode) }
+    var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf("") }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -294,6 +299,7 @@ private fun RegionalPolicyOnboardingScreen(
                 Spacer(Modifier.height(if (compact) 14.dp else 18.dp))
                 OnboardingPolicyChoice(
                     selected = selectedMode == RegionalPolicyMode.International,
+                    enabled = !saving,
                     title = "Международный",
                     description = "VPN используется за пределами Российской Федерации",
                     onClick = { selectedMode = RegionalPolicyMode.International },
@@ -301,8 +307,9 @@ private fun RegionalPolicyOnboardingScreen(
                 Spacer(Modifier.height(10.dp))
                 OnboardingPolicyChoice(
                     selected = selectedMode == RegionalPolicyMode.Russia,
+                    enabled = !saving,
                     title = "Российская Федерация",
-                    description = "VPN используется на территории Российской Федерации",
+                    description = "Для использования в РФ; ограниченные ресурсы блокируются",
                     onClick = { selectedMode = RegionalPolicyMode.Russia },
                 )
 
@@ -310,6 +317,14 @@ private fun RegionalPolicyOnboardingScreen(
                     Spacer(Modifier.height(14.dp))
                     Text(
                         text = "Я подтверждаю, что текущее VPN-подключение используется за пределами Российской Федерации.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF111319),
+                        fontWeight = FontWeight.Medium,
+                    )
+                } else if (selectedMode == RegionalPolicyMode.Russia) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFF111319),
                         fontWeight = FontWeight.Medium,
@@ -329,12 +344,47 @@ private fun RegionalPolicyOnboardingScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF6F7580),
                 )
+                if (saving) {
+                    Spacer(Modifier.height(14.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFF111319),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = "Обновляем список ограничений…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF111319),
+                        )
+                    }
+                } else if (saveError.isNotBlank()) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = saveError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFB42318),
+                    )
+                }
             }
 
             Spacer(Modifier.height(if (compact) 18.dp else 24.dp))
             Button(
-                onClick = { selectedMode?.let(onContinue) },
-                enabled = selectedMode != null,
+                onClick = {
+                    val mode = selectedMode ?: return@Button
+                    saveError = ""
+                    saving = true
+                    coroutineScope.launch {
+                        val result = onContinue(mode)
+                        saving = false
+                        if (result.isFailure) {
+                            saveError =
+                                "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
+                        }
+                    }
+                },
+                enabled = selectedMode != null && !saving,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(if (compact) 54.dp else 60.dp),
@@ -347,10 +397,11 @@ private fun RegionalPolicyOnboardingScreen(
                 ),
             ) {
                 Text(
-                    text = when (selectedMode) {
-                        RegionalPolicyMode.International -> "Подтвердить и продолжить"
-                        RegionalPolicyMode.Russia -> "Сохранить и продолжить"
-                        null -> "Выберите режим"
+                    text = when {
+                        selectedMode == null -> "Выберите режим"
+                        saving -> "Сохраняем…"
+                        selectedMode == RegionalPolicyMode.International -> "Подтвердить и продолжить"
+                        else -> "Сохранить и продолжить"
                     },
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium,
@@ -363,6 +414,7 @@ private fun RegionalPolicyOnboardingScreen(
 @Composable
 private fun OnboardingPolicyChoice(
     selected: Boolean,
+    enabled: Boolean,
     title: String,
     description: String,
     onClick: () -> Unit,
@@ -378,12 +430,13 @@ private fun OnboardingPolicyChoice(
                 color = if (selected) Color(0xFF067A6F).copy(alpha = 0.45f) else Color(0xFFE3E6EA),
                 shape = shape,
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(
             selected = selected,
+            enabled = enabled,
             onClick = null,
         )
         Spacer(Modifier.width(10.dp))

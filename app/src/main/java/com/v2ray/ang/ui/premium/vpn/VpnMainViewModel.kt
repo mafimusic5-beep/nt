@@ -12,6 +12,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
@@ -552,6 +553,21 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         )
 
         connectJob = viewModelScope.launch {
+            val policyAssets = RegionalPolicyManager.prepareForConnection(getApplication())
+            if (policyAssets.isFailure) {
+                setDisconnectedWithError("Не удалось обновить список ограничений РФ")
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H11",
+                    location = "VpnMainViewModel.kt:onConnectClick",
+                    message = "regional policy data refresh failed",
+                    data = JSONObject().put(
+                        "error",
+                        policyAssets.exceptionOrNull()?.message ?: "unknown",
+                    ),
+                )
+                return@launch
+            }
+
             val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = { payload ->
