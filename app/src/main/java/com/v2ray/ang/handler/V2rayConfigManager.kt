@@ -660,6 +660,10 @@ object V2rayConfigManager {
             v2rayConfig.dns = V2rayConfig.DnsBean(
                 servers = servers,
                 hosts = hosts,
+                // The current VPN server has IPv4 connectivity only. In the
+                // Russia policy, returning IPv4 answers avoids an IPv6
+                // blackhole while the VPN still captures IPv6 to prevent leaks.
+                queryStrategy = if (RegionalPolicyManager.isRussiaModeEnabled()) "UseIPv4" else null,
                 tag = AppConfig.TAG_DNS
             )
 

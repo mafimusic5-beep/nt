@@ -111,10 +111,13 @@ internal object RegionalPolicyManager {
             return false
         }
 
-        val firstRules = MmkvManager.decodeRoutingRulesets()?.take(2).orEmpty()
+        val firstRules = MmkvManager.decodeRoutingRulesets()?.take(3).orEmpty()
         val domainRuleReady = firstRules.any { rule ->
             rule.outboundTag == AppConfig.TAG_BLOCKED &&
                 rule.domain?.contains("geosite:ru-blocked-all") == true
+        }
+        val dnsRuleReady = firstRules.any { rule ->
+            rule.outboundTag == AppConfig.TAG_PROXY && rule.port == "53"
         }
         val ipRuleReady = firstRules.any { rule ->
             rule.outboundTag == AppConfig.TAG_BLOCKED &&
@@ -122,12 +125,12 @@ internal object RegionalPolicyManager {
                     listOf(
                         "geoip:ru-blocked",
                         "geoip:ru-blocked-community",
-                        "geoip:re-filter",
                     ),
                 ) == true
         }
-        return domainRuleReady && ipRuleReady &&
+        return domainRuleReady && dnsRuleReady && ipRuleReady &&
             MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY) == "IPIfNonMatch" &&
+            MmkvManager.decodeSettingsBool(AppConfig.PREF_LOCAL_DNS_ENABLED, false) &&
             MmkvManager.decodeSettingsBool(AppConfig.PREF_SNIFFING_ENABLED, true) != false &&
             MmkvManager.decodeSettingsBool(AppConfig.PREF_ROUTE_ONLY_ENABLED, false)
     }
@@ -194,6 +197,9 @@ internal object RegionalPolicyManager {
         if (mode == RegionalPolicyMode.Russia) {
             moveRestrictionRulesToFront()
             MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, "IPIfNonMatch")
+            // Resolve device DNS inside Xray. This keeps DNS reachable through
+            // the tunnel and lets the domain rules run before any IP fallback.
+            MmkvManager.encodeSettings(AppConfig.PREF_LOCAL_DNS_ENABLED, true)
             MmkvManager.encodeSettings(AppConfig.PREF_SNIFFING_ENABLED, true)
             MmkvManager.encodeSettings(AppConfig.PREF_ROUTE_ONLY_ENABLED, true)
         }
