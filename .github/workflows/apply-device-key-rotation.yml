@@ -6,6 +6,11 @@ on:
       - fix/rkn-blacklist-full-tunnel
     paths:
       - .github/workflows/apply-device-key-rotation.yml
+  pull_request:
+    branches:
+      - fix/activation-connectivity-latest-ui
+    paths:
+      - .github/workflows/apply-device-key-rotation.yml
 
 permissions:
   contents: write
@@ -25,18 +30,20 @@ jobs:
 
           path = Path('orchestrator/device_auth.py')
           text = path.read_text(encoding='utf-8')
-          old = '''            stored_fingerprint = str(existing['public_key_fingerprint'] or '')
+          old = """        if existing:
+              stored_fingerprint = str(existing['public_key_fingerprint'] or '')
               if stored_fingerprint and stored_fingerprint != fingerprint:
                   raise DeviceAuthError('device_signature_invalid', 409)
               if not bool(existing['active']):
-          '''
-          new = '''            stored_fingerprint = str(existing['public_key_fingerprint'] or '')
+          """
+          new = """        if existing:
+              stored_fingerprint = str(existing['public_key_fingerprint'] or '')
               # Reinstall keeps the stable Android ID but Android removes the old
               # Keystore entry. Rotate the key in-place for that same device row;
               # the UPDATE below replaces the fingerprint, so the previous key
               # immediately stops authenticating and no extra tariff slot is used.
               if not bool(existing['active']):
-          '''
+          """
           if old not in text:
               if 'Rotate the key in-place for that same device row' in text:
                   print('Patch already applied')
