@@ -7,12 +7,6 @@
     ]
   },
   {
-    "remarks": "Block udp443",
-    "outboundTag": "block",
-    "port": "443",
-    "network": "udp"
-  },
-  {
     "remarks": "Direct LAN IP",
     "outboundTag": "direct",
     "ip": [
@@ -27,17 +21,48 @@
     ]
   },
   {
-    "remarks": "Bypass Russia domains",
-    "outboundTag": "direct",
+    "remarks": "Proxy selected restricted services",
+    "outboundTag": "proxy",
     "domain": [
-      "geosite:category-ru"
+      "domain:youtube.com",
+      "domain:youtu.be",
+      "domain:googlevideo.com",
+      "domain:ytimg.com",
+      "domain:instagram.com",
+      "domain:cdninstagram.com",
+      "domain:facebook.com",
+      "domain:fbcdn.net",
+      "domain:fbsbx.com",
+      "domain:messenger.com",
+      "domain:x.com",
+      "domain:twitter.com",
+      "domain:t.co",
+      "domain:twimg.com",
+      "domain:discord.com",
+      "domain:discord.gg",
+      "domain:discordapp.com",
+      "domain:discordapp.net",
+      "domain:linkedin.com",
+      "domain:licdn.com",
+      "domain:signal.org",
+      "domain:openai.com",
+      "domain:chatgpt.com",
+      "domain:oaistatic.com",
+      "domain:oaiusercontent.com"
     ]
   },
   {
-    "remarks": "Bypass Russia IP",
-    "outboundTag": "direct",
+    "remarks": "Proxy selected restricted service IP ranges",
+    "outboundTag": "proxy",
     "ip": [
-       "geoip:ru"
+      "geoip:facebook",
+      "geoip:google",
+      "geoip:twitter"
     ]
+  },
+  {
+    "remarks": "Direct everything else",
+    "port": "0-65535",
+    "outboundTag": "direct"
   }
 ]
