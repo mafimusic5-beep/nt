@@ -2,6 +2,7 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
+import secrets
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict, Optional
@@ -77,6 +78,15 @@ def safe_months(value: int) -> int:
     return max(MIN_MONTHS, min(months, MAX_MONTHS))
 
 
+def checkout_secret_valid(value: str) -> bool:
+    supplied = value.strip()
+    return bool(CHECKOUT_SECRET and supplied and secrets.compare_digest(supplied, CHECKOUT_SECRET))
+
+
+def checkout_auth_error():
+    return JSONResponse(status_code=401, content={'ok': False, 'reason': 'bad_secret'})
+
+
 def public_code_row(row: dict) -> dict:
     plan = row.get('plan') or ''
     return {
@@ -112,6 +122,21 @@ def issue_code(plan: str, customer: str, external_id: Optional[str] = None, mont
 
 def issue_renewal(code: str, plan: str, customer: str, months: int = 1, external_id: Optional[str] = None) -> dict:
     selected = PLANS[plan]
+    current = get_activation_code(code)
+    if not current:
+        return {'ok': False, 'reason': 'not_found'}
+    if current.get('status') == 'banned':
+        return {'ok': False, 'reason': 'banned'}
+
+    used_devices = int(current.get('used_devices') or 0)
+    if used_devices > selected['devices']:
+        return {
+            'ok': False,
+            'reason': 'device_limit_conflict',
+            'usedDevices': used_devices,
+            'maxDevices': selected['devices'],
+        }
+
     selected_months = safe_months(months)
     days = selected['days'] * selected_months
     order = renew_activation_code(code, plan, selected['devices'], days, customer.strip(), external_id)
@@ -131,6 +156,19 @@ def issue_renewal(code: str, plan: str, customer: str, months: int = 1, external
     }
 
 
+def renewal_error_response(result: dict):
+    reason = result.get('reason')
+    if reason == 'not_found':
+        status = 404
+    elif reason == 'banned':
+        status = 403
+    elif reason == 'device_limit_conflict':
+        status = 409
+    else:
+        status = 400
+    return JSONResponse(status_code=status, content=result)
+
+
 @router.get('/checkout')
 def page_checkout():
     return FileResponse(WEB_DIR / 'checkout.html')
@@ -147,7 +185,13 @@ def plans():
 
 
 @router.post('/api/checkout/get-code')
-def get_code(payload: CheckoutRequest, request: Request):
+def get_code(
+    payload: CheckoutRequest,
+    request: Request,
+    x_checkout_secret: str = Header(default=''),
+):
+    if not checkout_secret_valid(x_checkout_secret):
+        return checkout_auth_error()
     if limited('checkout:' + remote_ip(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
@@ -166,21 +210,27 @@ def find_code(payload: CodeLookupRequest, request: Request):
 
 
 @router.post('/api/checkout/renew-code')
-def renew_code(payload: RenewCodeRequest, request: Request):
+def renew_code(
+    payload: RenewCodeRequest,
+    request: Request,
+    x_checkout_secret: str = Header(default=''),
+):
+    if not checkout_secret_valid(x_checkout_secret):
+        return checkout_auth_error()
     if limited('renew-code:' + remote_ip(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
     result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months)
     if not result.get('ok'):
-        return JSONResponse(status_code=404, content=result)
+        return renewal_error_response(result)
     return result
 
 
 @router.post('/api/checkout/callback')
 def callback(payload: CheckoutCallbackRequest, x_checkout_secret: str = Header(default='')):
-    if not CHECKOUT_SECRET or x_checkout_secret != CHECKOUT_SECRET:
-        return JSONResponse(status_code=401, content={'ok': False, 'reason': 'bad_secret'})
+    if not checkout_secret_valid(x_checkout_secret):
+        return checkout_auth_error()
     if payload.status != 'paid':
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'not_paid'})
     if not plan_or_error(payload.plan):
@@ -190,7 +240,7 @@ def callback(payload: CheckoutCallbackRequest, x_checkout_secret: str = Header(d
             return JSONResponse(status_code=400, content={'ok': False, 'reason': 'missing_code'})
         result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months, payload.externalId)
         if not result.get('ok'):
-            return JSONResponse(status_code=404, content=result)
+            return renewal_error_response(result)
         return result
     return issue_code(payload.plan, payload.customer, payload.externalId, payload.months)
 
