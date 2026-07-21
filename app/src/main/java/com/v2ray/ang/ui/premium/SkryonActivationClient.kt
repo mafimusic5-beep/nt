@@ -6,9 +6,9 @@ import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.fmt.VlessFmt
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryAccessProfile
+import com.v2ray.ang.handler.EmeryDeviceRecord
 import com.v2ray.ang.handler.MmkvManager
-import com.v2ray.ang.network.EmeryAuthClient
-import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.handler.validateDeviceLimit
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import java.io.IOException
 import java.net.Inet4Address
@@ -21,6 +21,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 
 internal const val SKRYON_ACTIVATION_CODE_PREF = "SKRYON_ACTIVATION_CODE"
@@ -102,6 +103,12 @@ private fun executeActivationRequest(request: Request): ActivationHttpResponse {
     throw lastError ?: IOException("Activation request failed")
 }
 
+/**
+ * One signed POST atomically reserves the tariff slot, records the device and returns
+ * the VPN configuration. Existing production already enforces code/device counters;
+ * the upgraded backend additionally verifies the Keystore signature and returns the
+ * complete device inventory in the same response.
+ */
 internal suspend fun activateSkryonCode(
     context: Context,
     code: String,
@@ -109,35 +116,6 @@ internal suspend fun activateSkryonCode(
 ): SkryonActivationResult = withContext(Dispatchers.IO) {
     try {
         val submittedCode = formattedCode.ifBlank { code.trim() }
-
-        // Register first. The official client does not ask for a VPN configuration
-        // until the backend has atomically reserved a tariff slot for this device.
-        val registration = EmeryAuthClient.verifyAccessKey(submittedCode)
-        if (registration.isFailure) {
-            val reason = registration.exceptionOrNull()?.message.orEmpty()
-            return@withContext SkryonActivationResult(
-                ok = false,
-                error = activationReasonText(reason),
-            )
-        }
-
-        // A second independently signed request must observe the committed device
-        // row, exact counters, tariff limit and complete inventory.
-        val registeredProfile = registration.getOrThrow()
-        val confirmation = EmeryBackendClient.confirmDeviceRegistration(
-            accessKey = submittedCode,
-            activationProfile = registeredProfile,
-        )
-        if (confirmation.isFailure) {
-            val reason = confirmation.exceptionOrNull()?.message.orEmpty()
-            return@withContext SkryonActivationResult(
-                ok = false,
-                error = activationReasonText(reason),
-            )
-        }
-        val confirmedProfile = confirmation.getOrThrow()
-
-        // Only a confirmed registered device may request its VLESS configuration.
         val activationPath = "/api/activate"
         val proof = EmeryDeviceIdentity.buildActivationProof(
             path = activationPath,
@@ -172,39 +150,111 @@ internal suspend fun activateSkryonCode(
 
         val response = executeActivationRequest(request)
         val text = response.body
+        val json = runCatching { JSONObject(text) }.getOrNull()
+
         if (response.code == 409) {
-            val reason = runCatching { JSONObject(text).optString("reason") }.getOrDefault("")
+            val reason = json?.serverReason().orEmpty().ifBlank { "device_limit_reached" }
             return@withContext SkryonActivationResult(
                 ok = false,
-                error = activationReasonText(reason.ifBlank { "device_limit_reached" }),
+                error = activationReasonText(reason),
             )
         }
         if (response.code == 429) {
-            return@withContext SkryonActivationResult(ok = false, error = "Слишком много попыток. Попробуйте позже")
-        }
-        if (!response.successful || text.isBlank()) {
-            return@withContext SkryonActivationResult(ok = false, error = "Сервер активации недоступен")
-        }
-        val json = JSONObject(text)
-        if (!json.optBoolean("ok", false)) {
             return@withContext SkryonActivationResult(
                 ok = false,
-                error = json.optString("message").ifBlank { activationReasonText(json.optString("reason")) },
+                error = "Слишком много попыток. Попробуйте позже",
             )
         }
+        if (!response.successful || json == null) {
+            val reason = json?.serverReason().orEmpty()
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = if (reason.isBlank()) {
+                    "Сервер активации недоступен"
+                } else {
+                    activationReasonText(reason)
+                },
+            )
+        }
+        if (!json.optBoolean("ok", false)) {
+            val reason = json.serverReason()
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = json.optString("message").ifBlank { activationReasonText(reason) },
+            )
+        }
+
         val confirmedCode = json.optString("code", submittedCode).trim().ifBlank { submittedCode }
-        if (confirmedCode != submittedCode) {
+        if (normalizeActivationCode(confirmedCode) != normalizeActivationCode(submittedCode)) {
             return@withContext SkryonActivationResult(
                 ok = false,
                 error = activationReasonText("activation_code_mismatch"),
             )
         }
+
         val config = json.optString("config").trim()
         if (!config.startsWith("vless://")) {
-            return@withContext SkryonActivationResult(ok = false, error = "Конфиг сервера повреждён")
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = "Конфиг сервера повреждён",
+            )
         }
 
+        val devicesUsed = json.optIntOrNull("devices_used", "devicesUsed", "usedDevices")
+            ?: return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText("device_counter_missing"),
+            )
+        val devicesLimit = json.optIntOrNull("devices_limit", "devicesLimit", "maxDevices")
+            ?: return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText("device_counter_missing"),
+            )
+        val rawPlanName = json.optString("planTitle")
+            .ifBlank { json.optString("plan_name") }
+            .ifBlank { json.optString("plan") }
+        val planName = canonicalPlanName(rawPlanName, devicesLimit)
+        if (!validateDeviceLimit(planName, devicesUsed, devicesLimit)) {
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText("plan_limit_mismatch"),
+            )
+        }
+
+        val devices = parseActivationDevices(
+            array = json.optJSONArray("devices"),
+            currentDeviceId = proof.deviceId,
+            currentDeviceName = proof.deviceName,
+        ).ifEmpty {
+            provisionalDeviceInventory(
+                currentDeviceId = proof.deviceId,
+                currentDeviceName = proof.deviceName,
+                devicesUsed = devicesUsed,
+            )
+        }
+        if (devices.count { it.active } != devicesUsed ||
+            devices.none { it.deviceId == proof.deviceId && it.active }
+        ) {
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText("device_inventory_mismatch"),
+            )
+        }
+
+        val confirmedProfile = EmeryAccessProfile(
+            accessKey = confirmedCode,
+            vpnEnabled = true,
+            routerEnabled = false,
+            expiresAt = json.optString("expires_at").ifBlank { json.optString("expiresAt") },
+            planName = planName,
+            deviceId = proof.deviceId,
+            deviceName = proof.deviceName,
+            devicesUsed = devicesUsed,
+            devicesLimit = devicesLimit,
+            devices = devices,
+        )
         EmeryAccessManager.saveProfile(confirmedProfile)
+
         SkryonActivationResult(
             ok = true,
             code = confirmedCode,
@@ -213,8 +263,10 @@ internal suspend fun activateSkryonCode(
             revision = json.optLong("revision", -1L),
             accessProfile = confirmedProfile,
         )
-    } catch (_: Exception) {
+    } catch (_: IOException) {
         SkryonActivationResult(ok = false, error = "Нет соединения с сервером")
+    } catch (_: Exception) {
+        SkryonActivationResult(ok = false, error = "Ошибка регистрации устройства")
     }
 }
 
@@ -260,7 +312,7 @@ internal suspend fun syncSkryonConfig(
 
             val json = JSONObject(text)
             if (!json.optBoolean("ok", false)) {
-                val reason = json.optString("reason")
+                val reason = json.serverReason()
                 return@withContext SkryonConfigSyncResult(
                     ok = false,
                     reason = reason,
@@ -315,6 +367,113 @@ internal fun clearActivatedSkryonConfig() {
     EmeryAccessManager.clearSession()
 }
 
+private fun normalizeActivationCode(value: String): String {
+    return value.filter { it.isLetterOrDigit() }.uppercase()
+}
+
+private fun canonicalPlanName(rawPlanName: String, devicesLimit: Int): String {
+    val normalized = rawPlanName
+        .trim()
+        .lowercase()
+        .replace('ё', 'е')
+        .replace("_", "")
+        .replace("-", "")
+        .replace(" ", "")
+    return when {
+        normalized == "personal" || normalized == "личный" -> "Личный"
+        normalized == "personalplus" || normalized == "plus" ||
+            normalized == "личный+" || normalized == "личныйплюс" -> "Личный+"
+        normalized == "family" || normalized.contains("семейн") -> "Семейный"
+        normalized.isBlank() || normalized == "manual" -> when (devicesLimit) {
+            1 -> "Личный"
+            2 -> "Личный+"
+            5 -> "Семейный"
+            else -> rawPlanName
+        }
+        else -> rawPlanName
+    }
+}
+
+private fun parseActivationDevices(
+    array: JSONArray?,
+    currentDeviceId: String,
+    currentDeviceName: String,
+): List<EmeryDeviceRecord> {
+    if (array == null) return emptyList()
+    return buildList {
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("device_id").ifBlank { item.optString("deviceId") }.trim()
+            if (id.isBlank()) continue
+            add(
+                EmeryDeviceRecord(
+                    deviceId = id,
+                    deviceName = item.optString("device_name").ifBlank {
+                        item.optString("deviceName").ifBlank {
+                            if (id == currentDeviceId) currentDeviceName else "Устройство"
+                        }
+                    },
+                    platform = item.optString("platform", "android"),
+                    appVersion = item.optString("app_version").ifBlank { item.optString("appVersion") },
+                    firstSeenAt = item.optString("first_seen_at").ifBlank { item.optString("firstSeenAt") },
+                    lastSeenAt = item.optString("last_seen_at").ifBlank { item.optString("lastSeenAt") },
+                    active = if (item.has("active")) item.optBoolean("active", true) else true,
+                    isCurrent = if (item.has("is_current")) {
+                        item.optBoolean("is_current", id == currentDeviceId)
+                    } else {
+                        item.optBoolean("isCurrent", id == currentDeviceId)
+                    },
+                )
+            )
+        }
+    }
+}
+
+private fun provisionalDeviceInventory(
+    currentDeviceId: String,
+    currentDeviceName: String,
+    devicesUsed: Int,
+): List<EmeryDeviceRecord> {
+    return buildList {
+        add(
+            EmeryDeviceRecord(
+                deviceId = currentDeviceId,
+                deviceName = currentDeviceName,
+                platform = "android",
+                appVersion = BuildConfig.VERSION_NAME,
+                active = true,
+                isCurrent = true,
+            )
+        )
+        for (index in 2..devicesUsed) {
+            add(
+                EmeryDeviceRecord(
+                    deviceId = "legacy-slot-$index",
+                    deviceName = "Зарегистрированное устройство $index",
+                    platform = "server",
+                    active = true,
+                    isCurrent = false,
+                )
+            )
+        }
+    }
+}
+
+private fun JSONObject.optIntOrNull(vararg names: String): Int? {
+    names.forEach { name ->
+        if (has(name) && !isNull(name)) {
+            return optInt(name)
+        }
+    }
+    return null
+}
+
+private fun JSONObject.serverReason(): String {
+    return optString("reason")
+        .ifBlank { optString("error") }
+        .ifBlank { optString("detail") }
+}
+
 private fun activationReasonText(reason: String): String {
     return when (reason) {
         "not_found" -> "Код не найден"
@@ -323,7 +482,7 @@ private fun activationReasonText(reason: String): String {
         "not_bound" -> "Код не привязан к этому устройству"
         "already_bound" -> "Код уже активирован на другом устройстве"
         "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
-        "device_signature_invalid" -> "Не удалось подтвердить подлинность устройства"
+        "device_signature_invalid", "device_signature_missing" -> "Не удалось подтвердить подлинность устройства"
         "device_not_registered", "device_confirmation_missing" -> "Сервер не подтвердил регистрацию устройства"
         "device_mismatch", "device_inventory_mismatch" -> "Сервер вернул другое устройство"
         "device_inventory_missing" -> "Сервер не вернул таблицу зарегистрированных устройств"
