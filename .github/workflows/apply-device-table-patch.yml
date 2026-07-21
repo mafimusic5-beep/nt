@@ -1,0 +1,79 @@
+name: Apply device table patch
+
+on:
+  push:
+    branches:
+      - fix/rkn-blacklist-full-tunnel
+    paths:
+      - .github/workflows/apply-device-table-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/rkn-blacklist-full-tunnel
+          fetch-depth: 0
+
+      - name: Insert devices table into Advanced page
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt")
+          text = path.read_text(encoding="utf-8")
+          marker = """        RegionalPolicyCard(
+              selectedMode = selectedPolicyMode,
+              updateInProgress = policyUpdateInProgress,
+              updateError = policyUpdateError,
+              compact = compact,
+              tight = tight,
+              onPolicyConfirmed = onRegionalPolicyConfirmed,
+          )
+
+          Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+
+          AutoConnectCard(
+"""
+          replacement = """        RegionalPolicyCard(
+              selectedMode = selectedPolicyMode,
+              updateInProgress = policyUpdateInProgress,
+              updateError = policyUpdateError,
+              compact = compact,
+              tight = tight,
+              onPolicyConfirmed = onRegionalPolicyConfirmed,
+          )
+
+          Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+
+          DeviceTableCard(
+              compact = compact,
+              tight = tight,
+          )
+
+          Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+
+          AutoConnectCard(
+"""
+          if "DeviceTableCard(" in text:
+              print("Device table already connected")
+          elif marker not in text:
+              raise SystemExit("AdvancedPage insertion marker not found")
+          else:
+              path.write_text(text.replace(marker, replacement, 1), encoding="utf-8")
+
+      - name: Commit patch
+        run: |
+          if git diff --quiet; then
+            echo "No source change required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt
+          git commit -m "Show registered devices in advanced settings"
+          git push origin HEAD:fix/rkn-blacklist-full-tunnel
