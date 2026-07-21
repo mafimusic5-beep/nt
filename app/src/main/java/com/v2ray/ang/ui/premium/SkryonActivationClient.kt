@@ -109,6 +109,35 @@ internal suspend fun activateSkryonCode(
 ): SkryonActivationResult = withContext(Dispatchers.IO) {
     try {
         val submittedCode = formattedCode.ifBlank { code.trim() }
+
+        // Register first. The official client does not ask for a VPN configuration
+        // until the backend has atomically reserved a tariff slot for this device.
+        val registration = EmeryAuthClient.verifyAccessKey(submittedCode)
+        if (registration.isFailure) {
+            val reason = registration.exceptionOrNull()?.message.orEmpty()
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText(reason),
+            )
+        }
+
+        // A second independently signed request must observe the committed device
+        // row, exact counters, tariff limit and complete inventory.
+        val registeredProfile = registration.getOrThrow()
+        val confirmation = EmeryBackendClient.confirmDeviceRegistration(
+            accessKey = submittedCode,
+            activationProfile = registeredProfile,
+        )
+        if (confirmation.isFailure) {
+            val reason = confirmation.exceptionOrNull()?.message.orEmpty()
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText(reason),
+            )
+        }
+        val confirmedProfile = confirmation.getOrThrow()
+
+        // Only a confirmed registered device may request its VLESS configuration.
         val activationPath = "/api/activate"
         val proof = EmeryDeviceIdentity.buildActivationProof(
             path = activationPath,
@@ -143,6 +172,13 @@ internal suspend fun activateSkryonCode(
 
         val response = executeActivationRequest(request)
         val text = response.body
+        if (response.code == 409) {
+            val reason = runCatching { JSONObject(text).optString("reason") }.getOrDefault("")
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText(reason.ifBlank { "device_limit_reached" }),
+            )
+        }
         if (response.code == 429) {
             return@withContext SkryonActivationResult(ok = false, error = "Слишком много попыток. Попробуйте позже")
         }
@@ -156,37 +192,19 @@ internal suspend fun activateSkryonCode(
                 error = json.optString("message").ifBlank { activationReasonText(json.optString("reason")) },
             )
         }
+        val confirmedCode = json.optString("code", submittedCode).trim().ifBlank { submittedCode }
+        if (confirmedCode != submittedCode) {
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText("activation_code_mismatch"),
+            )
+        }
         val config = json.optString("config").trim()
         if (!config.startsWith("vless://")) {
             return@withContext SkryonActivationResult(ok = false, error = "Конфиг сервера повреждён")
         }
 
-        val confirmedCode = json.optString("code", submittedCode).trim().ifBlank { submittedCode }
-        val registration = EmeryAuthClient.verifyAccessKey(confirmedCode)
-        if (registration.isFailure) {
-            val reason = registration.exceptionOrNull()?.message.orEmpty()
-            return@withContext SkryonActivationResult(
-                ok = false,
-                error = activationReasonText(reason),
-            )
-        }
-
-        val registeredProfile = registration.getOrThrow()
-        val confirmation = EmeryBackendClient.confirmDeviceRegistration(
-            accessKey = confirmedCode,
-            activationProfile = registeredProfile,
-        )
-        if (confirmation.isFailure) {
-            val reason = confirmation.exceptionOrNull()?.message.orEmpty()
-            return@withContext SkryonActivationResult(
-                ok = false,
-                error = activationReasonText(reason),
-            )
-        }
-
-        val confirmedProfile = confirmation.getOrThrow()
         EmeryAccessManager.saveProfile(confirmedProfile)
-
         SkryonActivationResult(
             ok = true,
             code = confirmedCode,
@@ -311,6 +329,7 @@ private fun activationReasonText(reason: String): String {
         "device_inventory_missing" -> "Сервер не вернул таблицу зарегистрированных устройств"
         "device_counter_missing", "device_counter_mismatch" -> "Сервер не подтвердил количество устройств"
         "plan_limit_mismatch" -> "Лимит устройств не соответствует выбранному тарифу"
+        "activation_code_mismatch" -> "Сервер вернул конфигурацию для другого кода"
         "no_server" -> "Сервер ещё не добавлен"
         "too_many_attempts" -> "Слишком много попыток. Попробуйте позже"
         "upgrade_required" -> "Версия приложения устарела. Обновите приложение."
