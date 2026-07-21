@@ -698,6 +698,13 @@ private fun AdvancedPage(
 
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
+        DeviceTableCard(
+            compact = compact,
+            tight = tight,
+        )
+
+        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+
         AutoConnectCard(
             enabled = autoConnectEnabled,
             compact = compact,
