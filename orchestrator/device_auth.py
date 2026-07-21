@@ -413,8 +413,10 @@ def register_device(
         current_time = now_iso()
         if existing:
             stored_fingerprint = str(existing['public_key_fingerprint'] or '')
-            if stored_fingerprint and stored_fingerprint != fingerprint:
-                raise DeviceAuthError('device_signature_invalid', 409)
+            # Reinstall keeps the stable Android ID but Android removes the old
+            # Keystore entry. Rotate the key in-place for that same device row;
+            # the UPDATE below replaces the fingerprint, so the previous key
+            # immediately stops authenticating and no extra tariff slot is used.
             if not bool(existing['active']):
                 used = con.execute(
                     'SELECT COUNT(*) AS count FROM code_devices WHERE code = ? AND active = 1',
