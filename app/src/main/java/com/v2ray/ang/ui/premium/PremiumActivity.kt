@@ -8,6 +8,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,13 +24,16 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,8 +67,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.RegionalPolicyManager
+import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
@@ -75,7 +83,7 @@ import org.json.JSONObject
 
 private const val ACTIVATION_CODE_LENGTH = 11
 
-private enum class EmeryRoute { Splash, Activation, Home }
+private enum class EmeryRoute { Splash, Activation, RegionalPolicy, Home }
 
 class PremiumActivity : ComponentActivity() {
 
@@ -146,10 +154,10 @@ private fun EmeryApp(
         ) {
             composable(EmeryRoute.Splash.name) {
                 SplashScreen {
-                    val nextRoute = if (savedActivationCode().isBlank()) {
-                        EmeryRoute.Activation.name
-                    } else {
-                        EmeryRoute.Home.name
+                    val nextRoute = when {
+                        savedActivationCode().isBlank() -> EmeryRoute.Activation.name
+                        regionalPolicyPending() -> EmeryRoute.RegionalPolicy.name
+                        else -> EmeryRoute.Home.name
                     }
                     navController.navigate(nextRoute) {
                         popUpTo(EmeryRoute.Splash.name) { inclusive = true }
@@ -168,8 +176,25 @@ private fun EmeryApp(
                             MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
                             MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, result.serverId)
                             MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, result.revision)
-                            navController.navigate(EmeryRoute.Home.name) {
+                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_MODE, "")
+                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, true)
+                            navController.navigate(EmeryRoute.RegionalPolicy.name) {
                                 popUpTo(EmeryRoute.Activation.name) { inclusive = true }
+                            }
+                        }
+                        result
+                    },
+                )
+            }
+            composable(EmeryRoute.RegionalPolicy.name) {
+                RegionalPolicyOnboardingScreen(
+                    initialMode = RegionalPolicyManager.readMode(),
+                    onContinue = { mode ->
+                        val result = RegionalPolicyManager.apply(context, mode)
+                        if (result.isSuccess) {
+                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
+                            navController.navigate(EmeryRoute.Home.name) {
+                                popUpTo(EmeryRoute.RegionalPolicy.name) { inclusive = true }
                             }
                         }
                         result
@@ -201,6 +226,235 @@ private fun savedActivationCode(): String {
     return MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CODE_PREF, "")
         ?.trim()
         .orEmpty()
+}
+
+private fun regionalPolicyPending(): Boolean {
+    return MmkvManager.decodeSettingsBool(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
+}
+
+@Composable
+private fun RegionalPolicyOnboardingScreen(
+    initialMode: RegionalPolicyMode?,
+    onContinue: suspend (RegionalPolicyMode) -> Result<Unit>,
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var selectedMode by remember(initialMode) { mutableStateOf(initialMode) }
+    var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf("") }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .navigationBarsPadding(),
+    ) {
+        val compact = maxHeight < 760.dp
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = if (compact) 20.dp else 24.dp, vertical = if (compact) 20.dp else 28.dp),
+        ) {
+            Text(
+                text = "Skryon",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color(0xFF111319),
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(if (compact) 24.dp else 34.dp))
+            Text(
+                text = "Настройка режима",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color(0xFF111319),
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Активация завершена. Выберите территорию использования VPN.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color(0xFF6F7580),
+            )
+            Spacer(Modifier.height(if (compact) 18.dp else 24.dp))
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color(0xFFFCFCFD))
+                    .border(1.dp, Color(0xFFE3E6EA), RoundedCornerShape(24.dp))
+                    .padding(if (compact) 16.dp else 20.dp),
+            ) {
+                Text(
+                    text = "Региональная политика РФ",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color(0xFF111319),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Ни один режим не выбирается автоматически.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF6F7580),
+                )
+                Spacer(Modifier.height(if (compact) 14.dp else 18.dp))
+                OnboardingPolicyChoice(
+                    selected = selectedMode == RegionalPolicyMode.International,
+                    enabled = !saving,
+                    title = "Международный",
+                    description = "VPN используется за пределами Российской Федерации",
+                    onClick = { selectedMode = RegionalPolicyMode.International },
+                )
+                Spacer(Modifier.height(10.dp))
+                OnboardingPolicyChoice(
+                    selected = selectedMode == RegionalPolicyMode.Russia,
+                    enabled = !saving,
+                    title = "Российская Федерация",
+                    description = "Для использования в РФ; ограниченные ресурсы блокируются",
+                    onClick = { selectedMode = RegionalPolicyMode.Russia },
+                )
+
+                if (selectedMode == RegionalPolicyMode.International) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "Я подтверждаю, что текущее VPN-подключение используется за пределами Российской Федерации.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF111319),
+                        fontWeight = FontWeight.Medium,
+                    )
+                } else if (selectedMode == RegionalPolicyMode.Russia) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF111319),
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF067A6F),
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF6F7580),
+                )
+                if (saving) {
+                    Spacer(Modifier.height(14.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFF111319),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = "Обновляем список ограничений…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF111319),
+                        )
+                    }
+                } else if (saveError.isNotBlank()) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = saveError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFB42318),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(if (compact) 18.dp else 24.dp))
+            Button(
+                onClick = {
+                    val mode = selectedMode ?: return@Button
+                    saveError = ""
+                    saving = true
+                    coroutineScope.launch {
+                        val result = onContinue(mode)
+                        saving = false
+                        if (result.isFailure) {
+                            saveError =
+                                "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
+                        }
+                    }
+                },
+                enabled = selectedMode != null && !saving,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 54.dp else 60.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF111319),
+                    contentColor = Color.White,
+                    disabledContainerColor = Color(0xFFB9BEC6),
+                    disabledContentColor = Color.White.copy(alpha = 0.78f),
+                ),
+            ) {
+                Text(
+                    text = when {
+                        selectedMode == null -> "Выберите режим"
+                        saving -> "Сохраняем…"
+                        selectedMode == RegionalPolicyMode.International -> "Подтвердить и продолжить"
+                        else -> "Сохранить и продолжить"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingPolicyChoice(
+    selected: Boolean,
+    enabled: Boolean,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (selected) Color(0xFFF0F7F6) else Color.White)
+            .border(
+                width = 1.dp,
+                color = if (selected) Color(0xFF067A6F).copy(alpha = 0.45f) else Color(0xFFE3E6EA),
+                shape = shape,
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            enabled = enabled,
+            onClick = null,
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color(0xFF111319),
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF6F7580),
+            )
+        }
+    }
 }
 
 @Composable
