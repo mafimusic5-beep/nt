@@ -41,57 +41,31 @@ internal fun expectedDeviceLimitForPlan(planName: String): Int? {
         .lowercase(Locale.ROOT)
         .replace('ё', 'е')
         .replace(" ", "")
+        .replace("_", "")
+        .replace("-", "")
 
     return when {
-        normalized.contains("семейн") || normalized.contains("family") -> 5
-        normalized.contains("личный+") || normalized.contains("личныйплюс") ||
-            normalized.contains("personal+") || normalized.contains("personalplus") ||
-            normalized.contains("plus") -> 2
-        normalized.contains("личн") || normalized.contains("personal") -> 1
-        normalized.contains("development") -> 5
+        normalized == "family" || normalized.contains("семейн") -> 5
+        normalized == "plus" || normalized == "personalplus" ||
+            normalized == "личный+" || normalized == "личныйплюс" -> 2
+        normalized == "personal" || normalized == "личный" -> 1
         else -> null
     }
 }
 
 internal fun validateDeviceLimit(planName: String, devicesUsed: Int, devicesLimit: Int): Boolean {
-    if (devicesLimit !in setOf(1, 2, 5)) return false
-    if (devicesUsed !in 1..devicesLimit) return false
-    val expected = expectedDeviceLimitForPlan(planName)
-    return expected == null || expected == devicesLimit
+    val expected = expectedDeviceLimitForPlan(planName) ?: return false
+    if (devicesLimit != expected) return false
+    return devicesUsed in 1..devicesLimit
 }
 
 object EmeryAccessManager {
 
-    private val developmentProfile = EmeryAccessProfile(
-        accessKey = "DEV-SESSION",
-        vpnEnabled = true,
-        routerEnabled = true,
-        expiresAt = "2099-12-31T23:59:59Z",
-        planName = "Development",
-        deviceId = "dev-device",
-        deviceName = "Development device",
-        devicesUsed = 1,
-        devicesLimit = 5,
-        devices = listOf(
-            EmeryDeviceRecord(
-                deviceId = "dev-device",
-                deviceName = "Development device",
-                platform = "android",
-                appVersion = BuildConfig.VERSION_NAME,
-                active = true,
-                isCurrent = true,
-            )
-        ),
-    )
-
     fun isActivated(): Boolean {
-        if (BuildConfig.DEBUG) return true
         return !MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY).isNullOrBlank()
     }
 
     fun loadProfile(): EmeryAccessProfile? {
-        if (BuildConfig.DEBUG) return developmentProfile
-
         val key = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY) ?: return null
         if (key.isBlank()) return null
         val expires = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_EXPIRES_AT) ?: return null
