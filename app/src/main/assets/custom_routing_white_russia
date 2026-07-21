@@ -1,28 +1,7 @@
 [
   {
-    "remarks": "Bypass bittorrent",
-    "outboundTag": "direct",
-    "protocol": [
-      "bittorrent"
-    ]
-  },
-  {
-    "remarks": "Direct LAN IP",
-    "outboundTag": "direct",
-    "ip": [
-      "geoip:private"
-    ]
-  },
-  {
-    "remarks": "Direct LAN domains",
-    "outboundTag": "direct",
-    "domain": [
-      "geosite:private"
-    ]
-  },
-  {
-    "remarks": "Proxy selected restricted services",
-    "outboundTag": "proxy",
+    "remarks": "Block RKN-listed service domains",
+    "outboundTag": "block",
     "domain": [
       "domain:youtube.com",
       "domain:youtu.be",
@@ -52,17 +31,12 @@
     ]
   },
   {
-    "remarks": "Proxy selected restricted service IP ranges",
-    "outboundTag": "proxy",
+    "remarks": "Block RKN-listed service IP ranges",
+    "outboundTag": "block",
     "ip": [
       "geoip:facebook",
       "geoip:google",
       "geoip:twitter"
     ]
-  },
-  {
-    "remarks": "Direct everything else",
-    "port": "0-65535",
-    "outboundTag": "direct"
   }
 ]
