@@ -1,5 +1,25 @@
 [
   {
+    "remarks": "RKN restricted domains",
+    "outboundTag": "block",
+    "domain": [
+      "geosite:ru-blocked-all"
+    ]
+  },
+  {
+    "remarks": "RKN restricted DNS safeguard",
+    "outboundTag": "proxy",
+    "port": "53"
+  },
+  {
+    "remarks": "RKN restricted IP ranges",
+    "outboundTag": "block",
+    "ip": [
+      "geoip:ru-blocked",
+      "geoip:ru-blocked-community"
+    ]
+  },
+  {
     "remarks": "Bypass bittorrent",
     "outboundTag": "direct",
     "protocol": [
