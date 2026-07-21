@@ -1,11 +1,15 @@
 package com.v2ray.ang.ui.premium
 
 import android.content.Context
-import android.provider.Settings
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.fmt.VlessFmt
+import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.network.EmeryAuthClient
+import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.security.EmeryDeviceIdentity
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -33,6 +37,7 @@ internal data class SkryonActivationResult(
     val config: String = "",
     val serverId: Long = -1L,
     val revision: Long = -1L,
+    val accessProfile: EmeryAccessProfile? = null,
     val error: String = "",
 )
 
@@ -103,16 +108,36 @@ internal suspend fun activateSkryonCode(
     formattedCode: String,
 ): SkryonActivationResult = withContext(Dispatchers.IO) {
     try {
+        val submittedCode = formattedCode.ifBlank { code.trim() }
+        val activationPath = "/api/activate"
+        val proof = EmeryDeviceIdentity.buildActivationProof(
+            path = activationPath,
+            accessKey = submittedCode,
+        )
         val requestJson = JSONObject()
-            .put("code", formattedCode)
-            .put("deviceId", stableDeviceId(context))
+            .put("code", submittedCode)
+            .put("deviceId", proof.deviceId)
+            .put("deviceName", proof.deviceName)
+            .put("device_id", proof.deviceId)
+            .put("device_name", proof.deviceName)
+            .put("client_public_key", proof.publicKeyBase64)
+            .put("timestamp", proof.timestampMillis)
+            .put("nonce", proof.nonce)
+            .put("signature", proof.signatureBase64)
+            .put("signature_algorithm", proof.signatureAlgorithm)
+            .put("client_platform", "android")
             .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
             .toString()
         val request = Request.Builder()
-            .url(SKRYON_WEBSITE_API_BASE_URL + "/api/activate")
+            .url(SKRYON_WEBSITE_API_BASE_URL + activationPath)
             .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .header("Accept", "application/json")
             .header("Connection", "close")
+            .header("X-Emery-Device-Id", proof.deviceId)
+            .header("X-Emery-Timestamp", proof.timestampMillis)
+            .header("X-Emery-Nonce", proof.nonce)
+            .header("X-Emery-Signature", proof.signatureBase64)
+            .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
             .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .build()
 
@@ -135,12 +160,40 @@ internal suspend fun activateSkryonCode(
         if (!config.startsWith("vless://")) {
             return@withContext SkryonActivationResult(ok = false, error = "Конфиг сервера повреждён")
         }
+
+        val confirmedCode = json.optString("code", submittedCode).trim().ifBlank { submittedCode }
+        val registration = EmeryAuthClient.verifyAccessKey(confirmedCode)
+        if (registration.isFailure) {
+            val reason = registration.exceptionOrNull()?.message.orEmpty()
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText(reason),
+            )
+        }
+
+        val registeredProfile = registration.getOrThrow()
+        val confirmation = EmeryBackendClient.confirmDeviceRegistration(
+            accessKey = confirmedCode,
+            activationProfile = registeredProfile,
+        )
+        if (confirmation.isFailure) {
+            val reason = confirmation.exceptionOrNull()?.message.orEmpty()
+            return@withContext SkryonActivationResult(
+                ok = false,
+                error = activationReasonText(reason),
+            )
+        }
+
+        val confirmedProfile = confirmation.getOrThrow()
+        EmeryAccessManager.saveProfile(confirmedProfile)
+
         SkryonActivationResult(
             ok = true,
-            code = json.optString("code", formattedCode),
+            code = confirmedCode,
             config = config,
             serverId = json.optLong("serverId", -1L),
             revision = json.optLong("revision", -1L),
+            accessProfile = confirmedProfile,
         )
     } catch (_: Exception) {
         SkryonActivationResult(ok = false, error = "Нет соединения с сервером")
@@ -153,16 +206,28 @@ internal suspend fun syncSkryonConfig(
     revision: Long,
 ): SkryonConfigSyncResult = withContext(Dispatchers.IO) {
     try {
+        val path = "/api/config/sync"
+        val proof = EmeryDeviceIdentity.buildRequestProof(
+            method = "POST",
+            path = path,
+            authSecret = code,
+        )
         val requestJson = JSONObject()
             .put("code", code)
-            .put("deviceId", stableDeviceId(context))
+            .put("deviceId", proof.deviceId)
+            .put("device_id", proof.deviceId)
             .put("revision", revision)
             .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
             .toString()
         val request = Request.Builder()
-            .url(SKRYON_WEBSITE_API_BASE_URL + "/api/config/sync")
+            .url(SKRYON_WEBSITE_API_BASE_URL + path)
             .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .header("Accept", "application/json")
+            .header("X-Emery-Device-Id", proof.deviceId)
+            .header("X-Emery-Timestamp", proof.timestampMillis)
+            .header("X-Emery-Nonce", proof.nonce)
+            .header("X-Emery-Signature", proof.signatureBase64)
+            .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
             .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .build()
 
@@ -229,24 +294,27 @@ internal fun clearActivatedSkryonConfig() {
     MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, "")
     MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, "")
     MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, -1L)
-}
-
-private fun stableDeviceId(context: Context): String {
-    val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-    return androidId?.takeIf { it.isNotBlank() } ?: "android-device"
+    EmeryAccessManager.clearSession()
 }
 
 private fun activationReasonText(reason: String): String {
     return when (reason) {
         "not_found" -> "Код не найден"
-        "expired" -> "Срок кода истёк"
+        "expired", "invalid_or_expired_key" -> "Срок кода истёк или код недействителен"
         "banned" -> "Код отключён"
         "not_bound" -> "Код не привязан к этому устройству"
         "already_bound" -> "Код уже активирован на другом устройстве"
-        "device_limit" -> "Лимит устройств для этого кода исчерпан"
+        "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
+        "device_signature_invalid" -> "Не удалось подтвердить подлинность устройства"
+        "device_not_registered", "device_confirmation_missing" -> "Сервер не подтвердил регистрацию устройства"
+        "device_mismatch", "device_inventory_mismatch" -> "Сервер вернул другое устройство"
+        "device_inventory_missing" -> "Сервер не вернул таблицу зарегистрированных устройств"
+        "device_counter_missing", "device_counter_mismatch" -> "Сервер не подтвердил количество устройств"
+        "plan_limit_mismatch" -> "Лимит устройств не соответствует выбранному тарифу"
         "no_server" -> "Сервер ещё не добавлен"
         "too_many_attempts" -> "Слишком много попыток. Попробуйте позже"
         "upgrade_required" -> "Версия приложения устарела. Обновите приложение."
-        else -> "Ошибка активации"
+        "network" -> "Нет соединения с сервером регистрации"
+        else -> "Ошибка регистрации устройства"
     }
 }
