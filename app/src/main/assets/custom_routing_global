@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "remarks": "Force HTTPS over TCP",
+    "outboundTag": "block",
+    "port": "443",
+    "network": "udp"
+  },
+  {
+    "remarks": "Proxy all remaining traffic",
+    "port": "0-65535",
+    "outboundTag": "proxy"
+  }
+]
