@@ -25,6 +25,17 @@ Every Android installation generates an EC key pair in Android Keystore. The pri
 
 The backend must bind a device row to both the normalized `device_id` and the stored public-key fingerprint. A matching ID with a different key is not the same device and must be rejected.
 
+## `POST /api/activate`
+
+This endpoint currently delivers the VLESS configuration used by the Premium activation screen. It must not return a configuration merely because the code is valid.
+
+Before returning `config`, the endpoint must either:
+
+1. invoke the same atomic registration operation described for `/auth/key`; or
+2. require a previously committed active device row whose ID and public-key fingerprint match the signed request.
+
+It must verify the timestamp, nonce and ECDSA proof itself or through a shared registration service. When the tariff limit is reached it must return HTTP `409` with `device_limit_reached` and no configuration. This server-side check is required because a modified client could otherwise call `/api/activate` directly and bypass Android-side validation.
+
 ## `POST /auth/key`
 
 The endpoint must perform the following work in one database transaction:
@@ -103,4 +114,4 @@ Device removal should normally mark a row inactive rather than delete audit hist
 
 ## Configuration delivery
 
-VPN configuration endpoints must require the same signed registered-device proof. A valid access code by itself must not be enough to download or refresh a VPN configuration.
+All VPN configuration and refresh endpoints must require the same signed registered-device proof. A valid access code by itself must not be enough to download or refresh a VPN configuration.
