@@ -4,10 +4,20 @@ on:
   push:
     paths:
       - 'orchestrator/**'
+      - 'app/build.gradle.kts'
+      - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
       - '.github/workflows/activation-key-tests.yml'
   pull_request:
     paths:
       - 'orchestrator/**'
+      - 'app/build.gradle.kts'
+      - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
       - '.github/workflows/activation-key-tests.yml'
 
 permissions:
@@ -44,3 +54,19 @@ jobs:
           path: /tmp/activation-key-tests.log
           if-no-files-found: error
           retention-days: 3
+
+  android-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+      - name: Assemble Playstore debug
+        run: ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
