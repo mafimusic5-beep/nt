@@ -68,5 +68,9 @@ jobs:
           cache: gradle
       - name: Make Gradle executable
         run: chmod +x gradlew
+      - name: Verify signed protocol version
+        run: |
+          grep -F 'val appVersionCode = 717' app/build.gradle.kts
+          grep -F 'versionName = "2.0.17"' app/build.gradle.kts
       - name: Assemble Playstore debug
         run: ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
