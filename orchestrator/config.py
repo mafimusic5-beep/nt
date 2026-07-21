@@ -55,7 +55,11 @@ SERVER_POOL_SYNC_ADMIN_KEY = (
     or os.getenv('ADMIN_API_KEY', '').strip()
     or _shared_emery_value('ADMIN_API_KEY')
 )
-MIN_SUPPORTED_APP_VERSION_CODE = int(os.getenv('MIN_SUPPORTED_APP_VERSION_CODE', '716'))
+SIGNED_DEVICE_PROTOCOL_VERSION_CODE = 717
+MIN_SUPPORTED_APP_VERSION_CODE = max(
+    int(os.getenv('MIN_SUPPORTED_APP_VERSION_CODE', str(SIGNED_DEVICE_PROTOCOL_VERSION_CODE))),
+    SIGNED_DEVICE_PROTOCOL_VERSION_CODE,
+)
 APP_UPDATE_MESSAGE = os.getenv(
     'APP_UPDATE_MESSAGE',
     'Версия приложения устарела. Обновите приложение.',
