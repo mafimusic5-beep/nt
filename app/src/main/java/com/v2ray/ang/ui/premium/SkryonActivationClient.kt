@@ -2,6 +2,7 @@ package com.v2ray.ang.ui.premium
 
 import android.content.Context
 import android.provider.Settings
+import android.util.Log
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.fmt.VlessFmt
@@ -26,6 +27,8 @@ internal const val SKRYON_SERVER_ID_PREF = "SKRYON_SERVER_ID"
 internal const val SKRYON_CONFIG_REVISION_PREF = "SKRYON_CONFIG_REVISION"
 
 private const val SKRYON_WEBSITE_API_BASE_URL = "https://skryon.ru"
+private const val SKRYON_NETWORK_TAG = "SkryonNetwork"
+private const val SKRYON_NETWORK_ATTEMPTS = 2
 
 internal data class SkryonActivationResult(
     val ok: Boolean,
@@ -55,14 +58,6 @@ private object Ipv4FirstDns : Dns {
 
 private val client by lazy {
     OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
-        .build()
-}
-
-private val activationClient by lazy {
-    client.newBuilder()
         .dns(Ipv4FirstDns)
         .retryOnConnectionFailure(true)
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -75,22 +70,26 @@ private val activationClient by lazy {
 private val configSyncClient by lazy {
     client.newBuilder()
         .readTimeout(35, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
         .build()
 }
 
-private data class ActivationHttpResponse(
+private data class SkryonHttpResponse(
     val code: Int,
     val successful: Boolean,
     val body: String,
 )
 
-private fun executeActivationRequest(request: Request): ActivationHttpResponse {
+private fun executeRequest(
+    httpClient: OkHttpClient,
+    request: Request,
+): SkryonHttpResponse {
     var lastError: IOException? = null
 
-    repeat(2) {
+    repeat(SKRYON_NETWORK_ATTEMPTS) { attempt ->
         try {
-            activationClient.newCall(request).execute().use { response ->
-                return ActivationHttpResponse(
+            httpClient.newCall(request).execute().use { response ->
+                return SkryonHttpResponse(
                     code = response.code,
                     successful = response.isSuccessful,
                     body = response.body?.string().orEmpty(),
@@ -98,11 +97,16 @@ private fun executeActivationRequest(request: Request): ActivationHttpResponse {
             }
         } catch (e: IOException) {
             lastError = e
-            activationClient.connectionPool.evictAll()
+            Log.w(
+                SKRYON_NETWORK_TAG,
+                "Request attempt ${attempt + 1} failed: ${request.url.encodedPath}",
+                e,
+            )
+            httpClient.connectionPool.evictAll()
         }
     }
 
-    throw lastError ?: IOException("Activation request failed")
+    throw lastError ?: IOException("Skryon request failed")
 }
 
 internal suspend fun activateSkryonCode(
@@ -124,7 +128,7 @@ internal suspend fun activateSkryonCode(
             .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .build()
 
-        val response = executeActivationRequest(request)
+        val response = executeRequest(client, request)
         val text = response.body
         if (response.code == 429) {
             return@withContext SkryonActivationResult(ok = false, error = "Слишком много попыток. Попробуйте позже")
@@ -150,7 +154,8 @@ internal suspend fun activateSkryonCode(
             serverId = json.optLong("serverId", -1L),
             revision = json.optLong("revision", -1L),
         )
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        Log.e(SKRYON_NETWORK_TAG, "Activation request failed", e)
         SkryonActivationResult(ok = false, error = "Нет соединения с сервером")
     }
 }
@@ -171,47 +176,48 @@ internal suspend fun syncSkryonConfig(
             .url(SKRYON_WEBSITE_API_BASE_URL + "/api/config/sync")
             .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .header("Accept", "application/json")
+            .header("Connection", "close")
             .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .build()
 
-        configSyncClient.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful || text.isBlank()) {
-                return@withContext SkryonConfigSyncResult(
-                    ok = false,
-                    error = "Синхронизация сервера недоступна",
-                )
-            }
-
-            val json = JSONObject(text)
-            if (!json.optBoolean("ok", false)) {
-                val reason = json.optString("reason")
-                return@withContext SkryonConfigSyncResult(
-                    ok = false,
-                    reason = reason,
-                    error = json.optString("message").ifBlank { activationReasonText(reason) },
-                )
-            }
-
-            val server = json.optJSONObject("server")
-            val config = server?.optString("config")?.trim().orEmpty()
-            if (config.isNotBlank() && !config.startsWith("vless://")) {
-                return@withContext SkryonConfigSyncResult(
-                    ok = false,
-                    error = "Конфиг сервера повреждён",
-                )
-            }
-
-            SkryonConfigSyncResult(
-                ok = true,
-                changed = json.optBoolean("changed", false),
-                config = config,
-                serverId = server?.optLong("id", -1L) ?: -1L,
-                revision = json.optLong("revision", revision),
-                reason = if (server == null) "no_server" else "",
+        val response = executeRequest(configSyncClient, request)
+        val text = response.body
+        if (!response.successful || text.isBlank()) {
+            return@withContext SkryonConfigSyncResult(
+                ok = false,
+                error = "Синхронизация сервера недоступна",
             )
         }
-    } catch (_: Exception) {
+
+        val json = JSONObject(text)
+        if (!json.optBoolean("ok", false)) {
+            val reason = json.optString("reason")
+            return@withContext SkryonConfigSyncResult(
+                ok = false,
+                reason = reason,
+                error = json.optString("message").ifBlank { activationReasonText(reason) },
+            )
+        }
+
+        val server = json.optJSONObject("server")
+        val config = server?.optString("config")?.trim().orEmpty()
+        if (config.isNotBlank() && !config.startsWith("vless://")) {
+            return@withContext SkryonConfigSyncResult(
+                ok = false,
+                error = "Конфиг сервера повреждён",
+            )
+        }
+
+        SkryonConfigSyncResult(
+            ok = true,
+            changed = json.optBoolean("changed", false),
+            config = config,
+            serverId = server?.optLong("id", -1L) ?: -1L,
+            revision = json.optLong("revision", revision),
+            reason = if (server == null) "no_server" else "",
+        )
+    } catch (e: Exception) {
+        Log.e(SKRYON_NETWORK_TAG, "Config sync request failed", e)
         SkryonConfigSyncResult(ok = false, error = "Нет соединения с сервером")
     }
 }
