@@ -1,9 +1,11 @@
 package com.v2ray.ang.security
 
 import android.os.Build
+import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.handler.MmkvManager
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -15,6 +17,7 @@ import java.util.UUID
 
 private const val PREF_EMERY_DEVICE_ID = "pref_emery_device_id"
 private const val PREF_EMERY_DEVICE_NAME = "pref_emery_device_name"
+private const val BROKEN_LEGACY_ANDROID_ID = "9774d56d682e549c"
 
 object EmeryDeviceIdentity {
 
@@ -40,7 +43,26 @@ object EmeryDeviceIdentity {
         val signatureAlgorithm: String = SIGNATURE_ALGORITHM,
     )
 
+    /**
+     * Keep compatibility with the original Premium activation implementation, which
+     * registered Settings.Secure.ANDROID_ID. On Android 8+ this value is stable for
+     * the same device/user/app-signing key across reinstall, so reinstalling the APK
+     * does not consume another tariff slot. The Keystore public key is still bound by
+     * the upgraded backend and is used for every signed request.
+     */
     fun deviceId(): String {
+        val androidId = runCatching {
+            Settings.Secure.getString(
+                AngApplication.application.contentResolver,
+                Settings.Secure.ANDROID_ID,
+            )
+        }.getOrNull()?.trim().orEmpty()
+
+        if (androidId.isNotBlank() && androidId != BROKEN_LEGACY_ANDROID_ID) {
+            MmkvManager.encodeSettings(PREF_EMERY_DEVICE_ID, androidId)
+            return androidId
+        }
+
         val saved = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_ID)?.trim().orEmpty()
         if (saved.isNotEmpty()) {
             return saved
