@@ -4,16 +4,19 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryApiConfig
+import com.v2ray.ang.handler.EmeryDeviceRecord
+import com.v2ray.ang.handler.validateDeviceLimit
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.IOException
-import java.util.concurrent.TimeUnit
+import org.json.JSONArray
 import org.json.JSONObject
 
 object EmeryAuthClient {
@@ -29,10 +32,8 @@ object EmeryAuthClient {
 
     /**
      * POST /auth/key with device-bound proof.
-     * The backend should verify:
-     * 1) the access key was issued by the bot/backend;
-     * 2) the device public key/signature pair is valid;
-     * 3) the key has not exceeded its allowed device count.
+     * A successful response is accepted only when the backend explicitly confirms
+     * the same device id and returns a valid tariff device counter.
      */
     suspend fun verifyAccessKey(key: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
         val trimmed = key.trim()
@@ -118,27 +119,115 @@ object EmeryAuthClient {
                     val err = parsed.optString("error").ifBlank { "invalid_or_expired_key" }
                     return@withContext Result.failure(IllegalStateException(err))
                 }
+                if (parsed.has("device_registered") && !parsed.optBoolean("device_registered", false)) {
+                    return@withContext Result.failure(IllegalStateException("device_not_registered"))
+                }
 
                 val expires = parsed.optString("expires_at").ifBlank { parsed.optString("expiresAt") }
                 if (expires.isBlank()) {
                     return@withContext Result.failure(IllegalStateException("parse_error"))
                 }
 
-                val profile = EmeryAccessProfile(
-                    accessKey = trimmed,
-                    vpnEnabled = parsed.optBoolean("vpn_enabled", parsed.optBoolean("vpnEnabled", false)),
-                    routerEnabled = parsed.optBoolean("router_enabled", parsed.optBoolean("routerEnabled", false)),
-                    expiresAt = expires,
-                    planName = parsed.optString("plan_name").ifBlank { parsed.optString("planName") },
-                    deviceId = parsed.optString("device_id").ifBlank { proof.deviceId },
-                    deviceName = parsed.optString("device_name").ifBlank { proof.deviceName },
-                    devicesUsed = parsed.optInt("devices_used", parsed.optInt("devicesUsed", 1)),
-                    devicesLimit = parsed.optInt("devices_limit", parsed.optInt("devicesLimit", 5)),
+                val serverDeviceId = parsed.optString("device_id").ifBlank { parsed.optString("deviceId") }.trim()
+                if (serverDeviceId.isBlank()) {
+                    return@withContext Result.failure(IllegalStateException("device_not_registered"))
+                }
+                if (serverDeviceId != proof.deviceId) {
+                    return@withContext Result.failure(IllegalStateException("device_mismatch"))
+                }
+
+                val planName = parsed.optString("plan_name").ifBlank { parsed.optString("planName") }
+                val devicesUsed = parsed.optIntOrNull("devices_used", "devicesUsed")
+                    ?: return@withContext Result.failure(IllegalStateException("device_counter_missing"))
+                val devicesLimit = parsed.optIntOrNull("devices_limit", "devicesLimit")
+                    ?: return@withContext Result.failure(IllegalStateException("device_counter_missing"))
+                if (!validateDeviceLimit(planName, devicesUsed, devicesLimit)) {
+                    return@withContext Result.failure(IllegalStateException("plan_limit_mismatch"))
+                }
+
+                val devices = parseDevices(
+                    array = parsed.optJSONArray("devices"),
+                    currentDeviceId = proof.deviceId,
+                    fallbackName = proof.deviceName,
                 )
-                Result.success(profile)
+                if (devices.isNotEmpty() && devices.none { it.deviceId == proof.deviceId && it.active }) {
+                    return@withContext Result.failure(IllegalStateException("device_inventory_mismatch"))
+                }
+
+                Result.success(
+                    EmeryAccessProfile(
+                        accessKey = trimmed,
+                        vpnEnabled = parsed.optBoolean("vpn_enabled", parsed.optBoolean("vpnEnabled", false)),
+                        routerEnabled = parsed.optBoolean("router_enabled", parsed.optBoolean("routerEnabled", false)),
+                        expiresAt = expires,
+                        planName = planName,
+                        deviceId = serverDeviceId,
+                        deviceName = parsed.optString("device_name").ifBlank {
+                            parsed.optString("deviceName").ifBlank { proof.deviceName }
+                        },
+                        devicesUsed = devicesUsed,
+                        devicesLimit = devicesLimit,
+                        devices = devices.ifEmpty {
+                            listOf(
+                                EmeryDeviceRecord(
+                                    deviceId = proof.deviceId,
+                                    deviceName = proof.deviceName,
+                                    platform = "android",
+                                    appVersion = BuildConfig.VERSION_NAME,
+                                    active = true,
+                                    isCurrent = true,
+                                )
+                            )
+                        },
+                    )
+                )
             }
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))
+        }
+    }
+
+    private fun JSONObject.optIntOrNull(vararg names: String): Int? {
+        names.forEach { name ->
+            if (has(name) && !isNull(name)) {
+                return optInt(name)
+            }
+        }
+        return null
+    }
+
+    private fun parseDevices(
+        array: JSONArray?,
+        currentDeviceId: String,
+        fallbackName: String,
+    ): List<EmeryDeviceRecord> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optString("device_id").ifBlank { item.optString("deviceId") }.trim()
+                if (id.isBlank()) continue
+                add(
+                    EmeryDeviceRecord(
+                        deviceId = id,
+                        deviceName = item.optString("device_name").ifBlank {
+                            item.optString("deviceName").ifBlank {
+                                if (id == currentDeviceId) fallbackName else "Устройство"
+                            }
+                        },
+                        platform = item.optString("platform", "android"),
+                        appVersion = item.optString("app_version").ifBlank { item.optString("appVersion") },
+                        firstSeenAt = item.optString("first_seen_at").ifBlank { item.optString("firstSeenAt") },
+                        lastSeenAt = item.optString("last_seen_at").ifBlank { item.optString("lastSeenAt") },
+                        active = if (item.has("active")) item.optBoolean("active", true) else true,
+                        isCurrent = if (item.has("is_current")) {
+                            item.optBoolean("is_current", id == currentDeviceId)
+                        } else {
+                            item.optBoolean("isCurrent", id == currentDeviceId)
+                        },
+                    )
+                )
+            }
         }
     }
 }
