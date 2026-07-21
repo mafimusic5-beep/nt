@@ -28,23 +28,33 @@ import org.json.JSONObject
 
 /**
  * Authenticated Emery API calls after the access key is known.
- * Uses Authorization: Bearer <access key> together with a device-bound request signature.
+ * Device registration/profile use the public HTTPS API. Region and pool calls keep
+ * their configured backend URL.
  */
 object EmeryBackendClient {
+
+    private const val PUBLIC_DEVICE_API_BASE_URL = "https://skryon.ru"
+    private const val PUBLIC_DEVICE_PROFILE_PATH = "/api/device/profile"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
-    private fun authorizedGet(path: String, accessKey: String): Request {
+    private fun authorizedGet(
+        path: String,
+        accessKey: String,
+        baseUrlOverride: String? = null,
+    ): Request {
         val credential = accessKey.trim()
         val proof = EmeryDeviceIdentity.buildRequestProof(method = "GET", path = path, authSecret = credential)
+        val resolvedBaseUrl = (baseUrlOverride ?: baseUrl()).trimEnd('/')
         return Request.Builder()
-            .url("${baseUrl()}$path")
+            .url("$resolvedBaseUrl$path")
             .header("Authorization", "Bearer $credential")
             .header("X-Emery-Device-Id", proof.deviceId)
             .header("X-Emery-Timestamp", proof.timestampMillis)
@@ -91,79 +101,66 @@ object EmeryBackendClient {
     ): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
-        val request = authorizedGet("/profile", key)
+        val request = authorizedGet(
+            path = PUBLIC_DEVICE_PROFILE_PATH,
+            accessKey = key,
+            baseUrlOverride = PUBLIC_DEVICE_API_BASE_URL,
+        )
         try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
+                if (response.code == 404 || response.code == 405) {
+                    return@withContext EmeryAuthClient.verifyAccessKey(key)
+                }
                 if (response.code == 401 || response.code == 403) {
-                    val err = JsonUtil.fromJson(raw, VpnConfigApiResponseBody::class.java)?.error
-                    return@withContext Result.failure(IllegalStateException(err ?: "device_not_registered"))
+                    val err = runCatching { JSONObject(raw).optString("error") }
+                        .getOrDefault("")
+                        .ifBlank {
+                            JsonUtil.fromJson(raw, VpnConfigApiResponseBody::class.java)?.error.orEmpty()
+                        }
+                    return@withContext Result.failure(
+                        IllegalStateException(err.ifBlank { "device_not_registered" })
+                    )
                 }
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(IllegalStateException("http_${response.code}"))
                 }
                 val parsed = JsonUtil.fromJson(raw, ProfileApiResponseBody::class.java)
-                    ?: return@withContext Result.failure(IllegalStateException("parse_error"))
+                    ?: return@withContext EmeryAuthClient.verifyAccessKey(key)
                 val expires = parsed.expiresAt.orEmpty()
-                if (expires.isBlank()) {
-                    return@withContext Result.failure(IllegalStateException("parse_error"))
-                }
-
                 val local = EmeryAccessManager.loadProfile()
                 val currentDeviceId = EmeryDeviceIdentity.deviceId()
                 val serverDeviceId = parsed.deviceId?.trim().orEmpty()
                 if (requireDeviceInventory && serverDeviceId.isBlank()) {
-                    return@withContext Result.failure(IllegalStateException("device_confirmation_missing"))
+                    return@withContext EmeryAuthClient.verifyAccessKey(key)
                 }
                 if (serverDeviceId.isNotBlank() && serverDeviceId != currentDeviceId) {
                     return@withContext Result.failure(IllegalStateException("device_mismatch"))
                 }
 
-                val serverPlanName = parsed.planName?.trim().orEmpty()
-                val planName = if (requireDeviceInventory) {
-                    if (serverPlanName.isBlank()) {
-                        return@withContext Result.failure(IllegalStateException("plan_limit_mismatch"))
-                    }
-                    serverPlanName
-                } else {
-                    serverPlanName.ifBlank { local?.planName.orEmpty() }
-                }
-
+                val planName = parsed.planName.orEmpty().ifBlank { local?.planName.orEmpty() }
                 val serverDevices = parsed.devices.orEmpty().mapNotNull { it.toDeviceRecord(currentDeviceId) }
                 val devices = when {
                     serverDevices.isNotEmpty() -> serverDevices
-                    requireDeviceInventory -> return@withContext Result.failure(
-                        IllegalStateException("device_inventory_missing")
-                    )
+                    requireDeviceInventory -> return@withContext EmeryAuthClient.verifyAccessKey(key)
                     else -> local?.devices.orEmpty()
                 }
 
-                val devicesUsed = if (requireDeviceInventory) {
-                    parsed.devicesUsed ?: return@withContext Result.failure(
-                        IllegalStateException("device_counter_missing")
-                    )
-                } else {
-                    parsed.devicesUsed
-                        ?: serverDevices.count { it.active }.takeIf { it > 0 }
-                        ?: local?.devicesUsed
-                        ?: 0
-                }
-                val devicesLimit = if (requireDeviceInventory) {
-                    parsed.devicesLimit ?: return@withContext Result.failure(
-                        IllegalStateException("device_counter_missing")
-                    )
-                } else {
-                    parsed.devicesLimit
-                        ?: expectedDeviceLimitForPlan(planName)
-                        ?: local?.devicesLimit
-                        ?: 0
-                }
+                val devicesUsed = parsed.devicesUsed
+                    ?: serverDevices.count { it.active }.takeIf { it > 0 }
+                    ?: local?.devicesUsed
+                    ?: 0
+                val devicesLimit = parsed.devicesLimit
+                    ?: expectedDeviceLimitForPlan(planName)
+                    ?: local?.devicesLimit
+                    ?: 0
 
                 if (requireDeviceInventory) {
                     if (!validateDeviceLimit(planName, devicesUsed, devicesLimit)) {
                         return@withContext Result.failure(IllegalStateException("plan_limit_mismatch"))
                     }
-                    if (devices.map { it.deviceId }.distinct().size != devices.size) {
+                    val ids = devices.map { it.deviceId }
+                    if (ids.distinct().size != ids.size) {
                         return@withContext Result.failure(IllegalStateException("device_inventory_mismatch"))
                     }
                     if (devices.count { it.active } != devicesUsed) {
@@ -193,7 +190,7 @@ object EmeryBackendClient {
                 )
             }
         } catch (_: IOException) {
-            Result.failure(IllegalStateException("network"))
+            EmeryAuthClient.verifyAccessKey(key)
         }
     }
 
@@ -214,6 +211,8 @@ object EmeryBackendClient {
             profile.copy(
                 vpnEnabled = profile.vpnEnabled || activationProfile.vpnEnabled,
                 routerEnabled = profile.routerEnabled || activationProfile.routerEnabled,
+                expiresAt = profile.expiresAt.ifBlank { activationProfile.expiresAt },
+                planName = profile.planName.ifBlank { activationProfile.planName },
             )
         }
     }
