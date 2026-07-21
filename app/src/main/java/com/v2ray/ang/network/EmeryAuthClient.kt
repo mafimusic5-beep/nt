@@ -154,13 +154,14 @@ object EmeryAuthClient {
                     )
                 }
 
-                val planName = parsed.optString("planTitle")
-                    .ifBlank { parsed.optString("plan_name") }
-                    .ifBlank { parsed.optString("plan") }
                 val devicesUsed = parsed.optIntOrNull("devices_used", "devicesUsed", "usedDevices")
                     ?: return Result.failure(IllegalStateException("device_counter_missing"))
                 val devicesLimit = parsed.optIntOrNull("devices_limit", "devicesLimit", "maxDevices")
                     ?: return Result.failure(IllegalStateException("device_counter_missing"))
+                val rawPlanName = parsed.optString("planTitle")
+                    .ifBlank { parsed.optString("plan_name") }
+                    .ifBlank { parsed.optString("plan") }
+                val planName = canonicalPlanName(rawPlanName, devicesLimit)
                 if (!validateDeviceLimit(planName, devicesUsed, devicesLimit)) {
                     return Result.failure(IllegalStateException("plan_limit_mismatch"))
                 }
@@ -256,11 +257,12 @@ object EmeryAuthClient {
                     return Result.failure(IllegalStateException("device_mismatch"))
                 }
 
-                val planName = parsed.optString("plan_name").ifBlank { parsed.optString("planName") }
                 val devicesUsed = parsed.optIntOrNull("devices_used", "devicesUsed")
                     ?: return Result.failure(IllegalStateException("device_counter_missing"))
                 val devicesLimit = parsed.optIntOrNull("devices_limit", "devicesLimit")
                     ?: return Result.failure(IllegalStateException("device_counter_missing"))
+                val rawPlanName = parsed.optString("plan_name").ifBlank { parsed.optString("planName") }
+                val planName = canonicalPlanName(rawPlanName, devicesLimit)
                 if (!validateDeviceLimit(planName, devicesUsed, devicesLimit)) {
                     return Result.failure(IllegalStateException("plan_limit_mismatch"))
                 }
@@ -296,6 +298,29 @@ object EmeryAuthClient {
             }
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))
+        }
+    }
+
+    private fun canonicalPlanName(rawPlanName: String, devicesLimit: Int): String {
+        val normalized = rawPlanName
+            .trim()
+            .lowercase()
+            .replace('ё', 'е')
+            .replace("_", "")
+            .replace("-", "")
+            .replace(" ", "")
+        return when {
+            normalized == "personal" || normalized == "личный" -> "Личный"
+            normalized == "personalplus" || normalized == "plus" ||
+                normalized == "личный+" || normalized == "личныйплюс" -> "Личный+"
+            normalized == "family" || normalized.contains("семейн") -> "Семейный"
+            normalized.isBlank() || normalized == "manual" -> when (devicesLimit) {
+                1 -> "Личный"
+                2 -> "Личный+"
+                5 -> "Семейный"
+                else -> rawPlanName
+            }
+            else -> rawPlanName
         }
     }
 
