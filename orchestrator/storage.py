@@ -168,7 +168,14 @@ def get_activation_code(code: str) -> Optional[Dict[str, Any]]:
             'SELECT code, status, expires_at, max_devices, plan, (SELECT COUNT(*) FROM code_devices WHERE code_devices.code = activation_codes.code) AS used_devices FROM activation_codes WHERE code = ?',
             (formatted,),
         ).fetchone()
-    return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        expires_at = parse_iso(result.get('expires_at'))
+        if result.get('status') == 'active' and expires_at and expires_at <= datetime.now(timezone.utc):
+            con.execute('UPDATE activation_codes SET status = ? WHERE code = ?', ('expired', formatted))
+            result['status'] = 'expired'
+        return result
 
 
 def renew_activation_code(code: str, plan: str, max_devices: int, days: int = 30, customer: str = '', external_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -211,6 +218,10 @@ def get_checkout_order(external_id: str) -> Optional[Dict[str, Any]]:
 
 def get_codes(limit: int = 20) -> List[Dict[str, Any]]:
     with connect() as con:
+        con.execute(
+            'UPDATE activation_codes SET status = ? WHERE status = ? AND expires_at IS NOT NULL AND expires_at <= ?',
+            ('expired', 'active', now_iso()),
+        )
         rows = con.execute(
             'SELECT code, status, device_id, note, created_at, expires_at, used_at, max_devices, plan, (SELECT COUNT(*) FROM code_devices WHERE code_devices.code = activation_codes.code) AS used_devices FROM activation_codes ORDER BY id DESC LIMIT ?',
             (limit,),

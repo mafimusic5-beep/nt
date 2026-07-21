@@ -502,6 +502,12 @@ def register_device(
         )
         con.commit()
         return payload
+    except DeviceAuthError as error:
+        if error.reason == 'expired':
+            con.commit()
+        else:
+            con.rollback()
+        raise
     except Exception:
         con.rollback()
         raise
@@ -584,6 +590,12 @@ def authenticate_registered_device(
         )
         con.commit()
         return payload
+    except DeviceAuthError as error:
+        if error.reason == 'expired':
+            con.commit()
+        else:
+            con.rollback()
+        raise
     except Exception:
         con.rollback()
         raise

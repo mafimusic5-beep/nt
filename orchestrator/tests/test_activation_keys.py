@@ -296,6 +296,7 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         with self.assertRaises(device_auth.DeviceAuthError) as expired:
             self.register(code=expired_code, device_id='expired-device')
         self.assertEqual('expired', expired.exception.reason)
+        self.assertEqual('expired', storage.get_activation_code(expired_code)['status'])
 
         banned_code = self.create_code('personal', 1)
         self.assertTrue(storage.revoke_activation_code(banned_code))
