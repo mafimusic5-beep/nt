@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
@@ -27,20 +28,20 @@ import com.v2ray.ang.ui.premium.syncSkryonConfig
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
 
 class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -553,6 +554,23 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         )
 
         connectJob = viewModelScope.launch {
+            val accessVerification = EmeryBackendClient.fetchProfile(
+                accessKey = currentState.activationKey,
+                requireDeviceInventory = true,
+            )
+            if (accessVerification.isFailure) {
+                val reason = accessVerification.exceptionOrNull()?.message.orEmpty()
+                setDisconnectedWithError(deviceAccessError(reason))
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H12",
+                    location = "VpnMainViewModel.kt:onConnectClick",
+                    message = "registered device verification failed before VPN start",
+                    data = JSONObject().put("error", reason.ifBlank { "unknown" }),
+                )
+                return@launch
+            }
+            EmeryAccessManager.saveProfile(accessVerification.getOrThrow())
+
             val policyAssets = RegionalPolicyManager.prepareForConnection(getApplication())
             if (policyAssets.isFailure) {
                 setDisconnectedWithError("Не удалось обновить список ограничений РФ")
@@ -618,6 +636,24 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     )
                 },
             )
+        }
+    }
+
+    private fun deviceAccessError(reason: String): String {
+        return when (reason) {
+            "device_not_registered", "device_confirmation_missing" ->
+                "Это устройство не зарегистрировано для тарифа"
+            "device_mismatch", "device_inventory_mismatch" ->
+                "Сервер не подтвердил текущее устройство"
+            "device_counter_missing", "device_counter_mismatch" ->
+                "Сервер не подтвердил список устройств"
+            "plan_limit_mismatch" ->
+                "Лимит устройств не соответствует тарифу"
+            "invalid_or_expired_key" ->
+                "Код доступа недействителен или истёк"
+            "network" ->
+                "Не удалось проверить устройство. Проверьте интернет"
+            else -> "Не удалось подтвердить доступ этого устройства"
         }
     }
 
