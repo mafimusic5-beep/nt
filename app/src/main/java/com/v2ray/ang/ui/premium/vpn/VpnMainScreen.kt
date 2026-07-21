@@ -6,7 +6,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,17 +23,26 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +54,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -55,6 +64,9 @@ import androidx.compose.ui.unit.dp
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.RegionalPolicyManager
+import com.v2ray.ang.handler.RegionalPolicyMode
+import kotlinx.coroutines.launch
 
 @Composable
 fun VpnMainRoute(
@@ -88,8 +100,27 @@ fun VpnMainScreen(
     onDisconnectClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val policyScope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
     var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
+    var regionalPolicyMode by remember { mutableStateOf(RegionalPolicyManager.readMode()) }
+    var regionalPolicyUpdating by remember { mutableStateOf(false) }
+    var regionalPolicyError by remember { mutableStateOf("") }
+    var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
+
+    LaunchedEffect(
+        reconnectAfterPolicyChange,
+        uiState.connectionState,
+        uiState.connectButtonEnabled,
+    ) {
+        if (reconnectAfterPolicyChange && uiState.connectionState == VpnConnectionState.Disconnected) {
+            reconnectAfterPolicyChange = false
+            if (uiState.connectButtonEnabled) {
+                onConnectClick()
+            }
+        }
+    }
 
     BoxWithConstraints(
         modifier = modifier
@@ -203,6 +234,30 @@ fun VpnMainScreen(
             } else {
                 Spacer(Modifier.height(if (tight) 16.dp else 22.dp))
                 AdvancedPage(
+                    selectedPolicyMode = regionalPolicyMode,
+                    policyUpdateInProgress = regionalPolicyUpdating,
+                    policyUpdateError = regionalPolicyError,
+                    onRegionalPolicyConfirmed = { mode ->
+                        regionalPolicyError = ""
+                        regionalPolicyUpdating = true
+                        policyScope.launch {
+                            val result = RegionalPolicyManager.apply(context, mode)
+                            regionalPolicyUpdating = false
+                            result.fold(
+                                onSuccess = {
+                                    regionalPolicyMode = mode
+                                    reconnectAfterPolicyChange = true
+                                    if (uiState.connectionState != VpnConnectionState.Disconnected) {
+                                        onDisconnectClick()
+                                    }
+                                },
+                                onFailure = {
+                                    regionalPolicyError =
+                                        "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
+                                },
+                            )
+                        }
+                    },
                     autoConnectEnabled = autoConnectEnabled,
                     onAutoConnectChange = { enabled ->
                         autoConnectEnabled = enabled
@@ -294,51 +349,94 @@ private fun RegionSelectorCard(
     tight: Boolean,
     onLocationSelected: (String) -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(false) }
     val selectedCode = selectedLocation.countryCodeLabel()
     val selectedTitle = selectedLocation.cityLabel()
     val cardShape = RoundedCornerShape(if (compact) 18.dp else 20.dp)
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (tight) 72.dp else 78.dp)
-            .clip(cardShape)
-            .background(Color.White.copy(alpha = 0.96f))
-            .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
-            .clickable(enabled = locations.isNotEmpty()) {
-                onLocationSelected(selectedLocation.title)
-            }
-            .padding(horizontal = if (compact) 16.dp else 18.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Регион",
-                style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextSecondary,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-            )
-            Spacer(Modifier.height(7.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
-                Spacer(Modifier.width(10.dp))
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val menuWidth = maxWidth
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (tight) 72.dp else 78.dp)
+                .clip(cardShape)
+                .background(Color.White.copy(alpha = 0.96f))
+                .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
+                .clickable(enabled = locations.isNotEmpty()) {
+                    expanded = true
+                }
+                .padding(horizontal = if (compact) 16.dp else 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "$selectedTitle • $selectedCode",
-                    style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
-                    color = AppUiColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "Регион",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppUiColors.TextSecondary,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(7.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "$selectedTitle • $selectedCode",
+                        style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+                        color = AppUiColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded && locations.isNotEmpty(),
+            onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .width(menuWidth)
+                .background(Color.White),
+        ) {
+            locations.forEach { location ->
+                val code = location.countryCodeLabel()
+                val selected = location.id == selectedLocation.id || location.title == selectedLocation.title
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlagMark(code = code, modifier = Modifier.width(28.dp).height(20.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = location.cityLabel(),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = AppUiColors.TextPrimary,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = code,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = AppUiColors.TextSecondary,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onLocationSelected(location.id)
+                    },
+                    modifier = Modifier.background(
+                        if (selected) AppUiColors.RegionSelected else Color.White,
+                    ),
                 )
             }
         }
-        Text(
-            text = "⌄",
-            style = MaterialTheme.typography.titleLarge,
-            color = AppUiColors.TextPrimary,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 
@@ -556,6 +654,10 @@ private fun BottomNavItem(
 
 @Composable
 private fun AdvancedPage(
+    selectedPolicyMode: RegionalPolicyMode?,
+    policyUpdateInProgress: Boolean,
+    policyUpdateError: String,
+    onRegionalPolicyConfirmed: (RegionalPolicyMode) -> Unit,
     autoConnectEnabled: Boolean,
     onAutoConnectChange: (Boolean) -> Unit,
     compact: Boolean,
@@ -566,7 +668,7 @@ private fun AdvancedPage(
     var statusText by remember { mutableStateOf("") }
 
     Column(
-        modifier = modifier,
+        modifier = modifier.verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
@@ -578,12 +680,23 @@ private fun AdvancedPage(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Дополнительные параметры VPN",
+            text = "Региональная политика и параметры VPN",
             style = MaterialTheme.typography.titleMedium,
             color = AppUiColors.TextSecondary,
-            maxLines = 1,
+            maxLines = 2,
         )
         Spacer(Modifier.height(if (tight) 14.dp else 18.dp))
+
+        RegionalPolicyCard(
+            selectedMode = selectedPolicyMode,
+            updateInProgress = policyUpdateInProgress,
+            updateError = policyUpdateError,
+            compact = compact,
+            tight = tight,
+            onPolicyConfirmed = onRegionalPolicyConfirmed,
+        )
+
+        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
         AutoConnectCard(
             enabled = autoConnectEnabled,
@@ -610,7 +723,193 @@ private fun AdvancedPage(
             },
         )
 
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
+    }
+}
+
+@Composable
+private fun RegionalPolicyCard(
+    selectedMode: RegionalPolicyMode?,
+    updateInProgress: Boolean,
+    updateError: String,
+    compact: Boolean,
+    tight: Boolean,
+    onPolicyConfirmed: (RegionalPolicyMode) -> Unit,
+) {
+    var showOutsideRussiaConfirmation by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
+
+    fun requestMode(mode: RegionalPolicyMode) {
+        if (updateInProgress || mode == selectedMode) {
+            return
+        }
+        if (mode == RegionalPolicyMode.International) {
+            showOutsideRussiaConfirmation = true
+        } else {
+            onPolicyConfirmed(mode)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.96f))
+            .border(1.dp, AppUiColors.Border, shape)
+            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (tight) 14.dp else 18.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = "Региональная политика РФ",
+            style = MaterialTheme.typography.titleMedium,
+            color = AppUiColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Выберите территорию текущего использования VPN.",
+            style = MaterialTheme.typography.bodySmall,
+            color = AppUiColors.TextSecondary,
+        )
+        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+        PolicyChoiceRow(
+            selected = selectedMode == RegionalPolicyMode.International,
+            enabled = !updateInProgress,
+            title = "Международный",
+            description = "VPN используется за пределами Российской Федерации",
+            onClick = { requestMode(RegionalPolicyMode.International) },
+        )
+        Spacer(Modifier.height(8.dp))
+        PolicyChoiceRow(
+            selected = selectedMode == RegionalPolicyMode.Russia,
+            enabled = !updateInProgress,
+            title = "Российская Федерация",
+            description = "Для использования в РФ; ограниченные ресурсы блокируются",
+            onClick = { requestMode(RegionalPolicyMode.Russia) },
+        )
+        if (selectedMode == RegionalPolicyMode.Russia) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextPrimary,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+        Text(
+            text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение.",
+            style = MaterialTheme.typography.bodySmall,
+            color = AppUiColors.TextSecondary,
+        )
+        if (updateInProgress) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = AppUiColors.TextPrimary,
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "Обновляем список ограничений…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppUiColors.TextPrimary,
+                )
+            }
+        } else if (updateError.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = updateError,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFB42318),
+            )
+        }
+    }
+
+    if (showOutsideRussiaConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showOutsideRussiaConfirmation = false },
+            title = {
+                Text(
+                    text = "Использование за пределами РФ",
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+            text = {
+                Text(
+                    text = "Я подтверждаю, что текущее VPN-подключение используется за пределами Российской Федерации.",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showOutsideRussiaConfirmation = false
+                        onPolicyConfirmed(RegionalPolicyMode.International)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AppUiColors.TextPrimary,
+                        contentColor = Color.White,
+                    ),
+                ) {
+                    Text(
+                        text = "Подтвердить и переподключиться",
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showOutsideRussiaConfirmation = false }) {
+                    Text("Отмена")
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PolicyChoiceRow(
+    selected: Boolean,
+    enabled: Boolean,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (selected) AppUiColors.SelectedSurface else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (selected) AppUiColors.TextPrimary.copy(alpha = 0.22f) else AppUiColors.Border,
+                shape = shape,
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            enabled = enabled,
+            onClick = null,
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = AppUiColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextSecondary,
+            )
+        }
     }
 }
 

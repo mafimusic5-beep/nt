@@ -1,43 +1,22 @@
 [
   {
-    "remarks": "Bypass bittorrent",
-    "outboundTag": "direct",
-    "protocol": [
-      "bittorrent"
-    ]
-  },
-  {
-    "remarks": "Block udp443",
+    "remarks": "RKN restricted domains",
     "outboundTag": "block",
-    "port": "443",
-    "network": "udp"
-  },
-  {
-    "remarks": "Direct LAN IP",
-    "outboundTag": "direct",
-    "ip": [
-      "geoip:private"
-    ]
-  },
-  {
-    "remarks": "Direct LAN domains",
-    "outboundTag": "direct",
     "domain": [
-      "geosite:private"
+      "geosite:ru-blocked-all"
     ]
   },
   {
-    "remarks": "Bypass Russia domains",
-    "outboundTag": "direct",
-    "domain": [
-      "geosite:category-ru"
-    ]
+    "remarks": "RKN restricted DNS safeguard",
+    "outboundTag": "proxy",
+    "port": "53"
   },
   {
-    "remarks": "Bypass Russia IP",
-    "outboundTag": "direct",
+    "remarks": "RKN restricted IP ranges",
+    "outboundTag": "block",
     "ip": [
-       "geoip:ru"
+      "geoip:ru-blocked",
+      "geoip:ru-blocked-community"
     ]
   }
 ]
