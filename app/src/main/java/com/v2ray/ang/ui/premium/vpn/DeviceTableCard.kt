@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -79,7 +80,7 @@ internal fun DeviceTableCard(
         modifier = modifier
             .fillMaxWidth()
             .background(Color.White.copy(alpha = 0.96f), shape)
-            .border(1.dp, AppUiColors.Border, shape)
+            .border(1.dp, DeviceTableColors.Border, shape)
             .padding(
                 horizontal = if (compact) 14.dp else 18.dp,
                 vertical = if (tight) 14.dp else 18.dp,
@@ -93,14 +94,14 @@ internal fun DeviceTableCard(
                 Text(
                     text = "Устройства тарифа",
                     style = MaterialTheme.typography.titleMedium,
-                    color = AppUiColors.TextPrimary,
+                    color = DeviceTableColors.TextPrimary,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = profile?.planName?.ifBlank { "Тариф не определён" } ?: "Активация не найдена",
                     style = MaterialTheme.typography.bodySmall,
-                    color = AppUiColors.TextSecondary,
+                    color = DeviceTableColors.TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -108,8 +109,8 @@ internal fun DeviceTableCard(
             if (loading) {
                 CircularProgressIndicator(
                     strokeWidth = 2.dp,
-                    modifier = Modifier.height(20.dp),
-                    color = AppUiColors.TextPrimary,
+                    modifier = Modifier.size(20.dp),
+                    color = DeviceTableColors.TextPrimary,
                 )
             }
         }
@@ -121,7 +122,7 @@ internal fun DeviceTableCard(
             Text(
                 text = "Введите и подтвердите код доступа, чтобы увидеть зарегистрированные устройства.",
                 style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextSecondary,
+                color = DeviceTableColors.TextSecondary,
             )
         } else {
             DeviceUsageSummary(currentProfile)
@@ -131,14 +132,14 @@ internal fun DeviceTableCard(
                 .sortedWith(
                     compareByDescending<EmeryDeviceRecord> { it.isCurrent }
                         .thenByDescending { it.active }
-                        .thenBy { it.deviceName.lowercase() }
+                        .thenBy { it.deviceName.lowercase() },
                 )
 
             if (devices.isEmpty()) {
                 Text(
                     text = "Сервер не вернул ни одного зарегистрированного устройства.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFB42318),
+                    color = DeviceTableColors.Error,
                 )
             } else {
                 DeviceTableHeader()
@@ -156,7 +157,7 @@ internal fun DeviceTableCard(
             Text(
                 text = error,
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFB42318),
+                color = DeviceTableColors.Error,
             )
         }
 
@@ -167,8 +168,8 @@ internal fun DeviceTableCard(
             modifier = Modifier.fillMaxWidth().height(if (tight) 46.dp else 50.dp),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = AppUiColors.TextPrimary,
-                disabledContentColor = AppUiColors.TextSecondary,
+                contentColor = DeviceTableColors.TextPrimary,
+                disabledContentColor = DeviceTableColors.TextSecondary,
             ),
         ) {
             Text(if (loading) "Проверяем сервер…" else "Обновить таблицу")
@@ -179,11 +180,11 @@ internal fun DeviceTableCard(
 @Composable
 private fun DeviceUsageSummary(profile: EmeryAccessProfile) {
     val limit = profile.devicesLimit.coerceAtLeast(0)
-    val used = profile.devicesUsed.coerceIn(0, limit.coerceAtLeast(profile.devicesUsed))
+    val used = profile.devicesUsed.coerceAtLeast(0)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(AppUiColors.SelectedSurface, RoundedCornerShape(14.dp))
+            .background(DeviceTableColors.SelectedSurface, RoundedCornerShape(14.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
@@ -191,13 +192,13 @@ private fun DeviceUsageSummary(profile: EmeryAccessProfile) {
         Text(
             text = "Зарегистрировано",
             style = MaterialTheme.typography.bodyMedium,
-            color = AppUiColors.TextPrimary,
+            color = DeviceTableColors.TextPrimary,
             fontWeight = FontWeight.Medium,
         )
         Text(
             text = "$used из $limit",
             style = MaterialTheme.typography.titleMedium,
-            color = if (limit > 0 && used >= limit) Color(0xFFB42318) else AppUiColors.PositiveStrong,
+            color = if (limit > 0 && used >= limit) DeviceTableColors.Error else DeviceTableColors.Positive,
             fontWeight = FontWeight.SemiBold,
         )
     }
@@ -214,14 +215,14 @@ private fun DeviceTableHeader() {
             text = "Устройство",
             modifier = Modifier.weight(1.25f),
             style = MaterialTheme.typography.bodySmall,
-            color = AppUiColors.TextSecondary,
+            color = DeviceTableColors.TextSecondary,
             fontWeight = FontWeight.Medium,
         )
         Text(
             text = "Последняя активность",
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
-            color = AppUiColors.TextSecondary,
+            color = DeviceTableColors.TextSecondary,
             fontWeight = FontWeight.Medium,
         )
     }
@@ -231,15 +232,15 @@ private fun DeviceTableHeader() {
 private fun DeviceTableRow(device: EmeryDeviceRecord) {
     val rowShape = RoundedCornerShape(14.dp)
     val background = when {
-        device.isCurrent -> AppUiColors.SelectedSurface
-        !device.active -> Color(0xFFF6F6F7)
+        device.isCurrent -> DeviceTableColors.SelectedSurface
+        !device.active -> DeviceTableColors.DisabledSurface
         else -> Color.White
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(background, rowShape)
-            .border(1.dp, AppUiColors.Border.copy(alpha = 0.65f), rowShape)
+            .border(1.dp, DeviceTableColors.Border.copy(alpha = 0.65f), rowShape)
             .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -247,7 +248,7 @@ private fun DeviceTableRow(device: EmeryDeviceRecord) {
             Text(
                 text = device.deviceName.ifBlank { "Устройство" },
                 style = MaterialTheme.typography.bodyMedium,
-                color = AppUiColors.TextPrimary,
+                color = DeviceTableColors.TextPrimary,
                 fontWeight = if (device.isCurrent) FontWeight.SemiBold else FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -261,7 +262,7 @@ private fun DeviceTableRow(device: EmeryDeviceRecord) {
                     if (!device.active) append(" • отключено")
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (device.active) AppUiColors.TextSecondary else Color(0xFFB42318),
+                color = if (device.active) DeviceTableColors.TextSecondary else DeviceTableColors.Error,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -269,7 +270,7 @@ private fun DeviceTableRow(device: EmeryDeviceRecord) {
             Text(
                 text = device.deviceId.take(8).ifBlank { "—" },
                 style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextSecondary.copy(alpha = 0.72f),
+                color = DeviceTableColors.TextSecondary.copy(alpha = 0.72f),
                 maxLines = 1,
             )
         }
@@ -277,7 +278,7 @@ private fun DeviceTableRow(device: EmeryDeviceRecord) {
             text = displayDeviceTime(device.lastSeenAt.ifBlank { device.firstSeenAt }),
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
-            color = AppUiColors.TextSecondary,
+            color = DeviceTableColors.TextSecondary,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -304,4 +305,14 @@ private fun deviceTableError(reason: String): String {
         "network" -> "Не удалось обновить таблицу устройств: нет соединения с сервером."
         else -> "Не удалось подтвердить список устройств на сервере."
     }
+}
+
+private object DeviceTableColors {
+    val Border = Color(0xFFE6E9EE)
+    val TextPrimary = Color(0xFF111319)
+    val TextSecondary = Color(0xFF7D828D)
+    val SelectedSurface = Color(0xFFF4F6F8)
+    val DisabledSurface = Color(0xFFF6F6F7)
+    val Positive = Color(0xFF36A852)
+    val Error = Color(0xFFB42318)
 }
