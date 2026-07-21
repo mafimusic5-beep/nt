@@ -119,7 +119,16 @@ object EmeryBackendClient {
                     return@withContext Result.failure(IllegalStateException("device_mismatch"))
                 }
 
-                val planName = parsed.planName.orEmpty().ifBlank { local?.planName.orEmpty() }
+                val serverPlanName = parsed.planName?.trim().orEmpty()
+                val planName = if (requireDeviceInventory) {
+                    if (serverPlanName.isBlank()) {
+                        return@withContext Result.failure(IllegalStateException("plan_limit_mismatch"))
+                    }
+                    serverPlanName
+                } else {
+                    serverPlanName.ifBlank { local?.planName.orEmpty() }
+                }
+
                 val serverDevices = parsed.devices.orEmpty().mapNotNull { it.toDeviceRecord(currentDeviceId) }
                 val devices = when {
                     serverDevices.isNotEmpty() -> serverDevices
@@ -129,18 +138,36 @@ object EmeryBackendClient {
                     else -> local?.devices.orEmpty()
                 }
 
-                val devicesUsed = parsed.devicesUsed
-                    ?: serverDevices.count { it.active }.takeIf { it > 0 }
-                    ?: local?.devicesUsed
-                    ?: 0
-                val devicesLimit = parsed.devicesLimit
-                    ?: expectedDeviceLimitForPlan(planName)
-                    ?: local?.devicesLimit
-                    ?: 0
+                val devicesUsed = if (requireDeviceInventory) {
+                    parsed.devicesUsed ?: return@withContext Result.failure(
+                        IllegalStateException("device_counter_missing")
+                    )
+                } else {
+                    parsed.devicesUsed
+                        ?: serverDevices.count { it.active }.takeIf { it > 0 }
+                        ?: local?.devicesUsed
+                        ?: 0
+                }
+                val devicesLimit = if (requireDeviceInventory) {
+                    parsed.devicesLimit ?: return@withContext Result.failure(
+                        IllegalStateException("device_counter_missing")
+                    )
+                } else {
+                    parsed.devicesLimit
+                        ?: expectedDeviceLimitForPlan(planName)
+                        ?: local?.devicesLimit
+                        ?: 0
+                }
 
                 if (requireDeviceInventory) {
                     if (!validateDeviceLimit(planName, devicesUsed, devicesLimit)) {
                         return@withContext Result.failure(IllegalStateException("plan_limit_mismatch"))
+                    }
+                    if (devices.map { it.deviceId }.distinct().size != devices.size) {
+                        return@withContext Result.failure(IllegalStateException("device_inventory_mismatch"))
+                    }
+                    if (devices.count { it.active } != devicesUsed) {
+                        return@withContext Result.failure(IllegalStateException("device_counter_mismatch"))
                     }
                     val currentRow = devices.firstOrNull { it.deviceId == currentDeviceId }
                     if (currentRow == null || !currentRow.active) {
