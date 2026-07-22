@@ -81,6 +81,18 @@ def test_node_sort_prefers_lowest_fill_percentage():
     assert selected.id == twenty_percent.id
 
 
+def test_fill_percentage_is_primary_over_health_tiebreaker():
+    degraded_but_empty = _node(3, "de", current=0, capacity=100, health="degraded")
+    healthy_but_busy = _node(4, "de", current=80, capacity=100, health="healthy")
+
+    selected = sorted(
+        [healthy_but_busy, degraded_but_empty],
+        key=NodeOrchestrationService._node_sort_key,
+    )[0]
+
+    assert selected.id == degraded_but_empty.id
+
+
 def test_connect_reselects_freest_server_inside_requested_region():
     requested = _node(10, "de", current=90, capacity=100)
     freest_de = _node(11, "de", current=3, capacity=20)
