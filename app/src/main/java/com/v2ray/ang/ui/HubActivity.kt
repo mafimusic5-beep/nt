@@ -2,13 +2,14 @@ package com.v2ray.ang.ui
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.lifecycle.lifecycleScope
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.databinding.ActivityHubBinding
-import com.v2ray.ang.extension.toast
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
+import com.v2ray.ang.handler.MmkvManager
 import kotlinx.coroutines.launch
 
 class HubActivity : BaseActivity() {
@@ -31,9 +32,11 @@ class HubActivity : BaseActivity() {
         binding.textExpires.text = getString(R.string.emery_expires_label) + ": " + profile.expiresAt
 
         binding.cardVpn.isVisible = profile.vpnEnabled
-        // Keep already-activated users up-to-date with newly available nodes.
-        lifecycleScope.launch {
-            EmeryVpnSync.syncProfileAndVpnConfig(profile.accessKey)
+        // Remote synchronization is opt-in and disabled by default.
+        if (MmkvManager.decodeSettingsBool(AppConfig.SUBSCRIPTION_AUTO_UPDATE, false)) {
+            lifecycleScope.launch {
+                EmeryVpnSync.syncProfileAndVpnConfig(profile.accessKey)
+            }
         }
 
         binding.cardVpn.setOnClickListener {
