@@ -68,6 +68,17 @@ jobs:
           java-version: '17'
           cache: gradle
       - name: Compile Android Kotlin
+        id: android-build
         run: |
+          set +e
           chmod +x gradlew
-          ./gradlew :app:compileDebugKotlin --stacktrace
+          ./gradlew :app:compileDebugKotlin --stacktrace 2>&1 | tee android-build.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+      - name: Upload Android build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-log
+          path: android-build.log
+          if-no-files-found: error
