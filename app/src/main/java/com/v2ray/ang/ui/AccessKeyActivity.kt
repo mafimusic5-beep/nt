@@ -4,10 +4,12 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import androidx.lifecycle.lifecycleScope
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.databinding.ActivityAccessKeyBinding
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
+import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.network.EmeryAuthClient
 import com.v2ray.ang.ui.premium.PremiumActivity
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
@@ -77,6 +79,14 @@ class AccessKeyActivity : BaseActivity() {
             result.fold(
                 onSuccess = { profile ->
                     EmeryAccessManager.saveProfile(profile)
+                    val syncEnabled = MmkvManager.decodeSettingsBool(AppConfig.SUBSCRIPTION_AUTO_UPDATE, false)
+                    if (!syncEnabled) {
+                        hideLoading()
+                        binding.buttonActivate.isEnabled = true
+                        openPremiumAndFinish()
+                        return@fold
+                    }
+
                     val sync = EmeryVpnSync.syncProfileAndVpnConfig(profile.accessKey)
                     hideLoading()
                     binding.buttonActivate.isEnabled = true
