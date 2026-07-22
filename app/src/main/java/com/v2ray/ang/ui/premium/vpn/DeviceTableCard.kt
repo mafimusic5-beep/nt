@@ -3,6 +3,7 @@ package com.v2ray.ang.ui.premium.vpn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,14 +11,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,26 +52,19 @@ internal fun DeviceTableCard(
         loading = true
         error = ""
         scope.launch {
-            val result = EmeryBackendClient.fetchProfile(
+            EmeryBackendClient.fetchProfile(
                 accessKey = accessKey,
                 requireDeviceInventory = true,
-            )
-            result.fold(
+            ).fold(
                 onSuccess = { refreshed ->
                     EmeryAccessManager.saveProfile(refreshed)
                     profile = refreshed
                 },
-                onFailure = { throwable ->
-                    error = deviceTableError(throwable.message.orEmpty())
+                onFailure = {
+                    error = "Не удалось обновить данные. Попробуйте ещё раз позже."
                 },
             )
             loading = false
-        }
-    }
-
-    LaunchedEffect(profile?.accessKey) {
-        if (!profile?.accessKey.isNullOrBlank()) {
-            refresh()
         }
     }
 
@@ -80,49 +73,35 @@ internal fun DeviceTableCard(
         modifier = modifier
             .fillMaxWidth()
             .background(Color.White.copy(alpha = 0.96f), shape)
-            .border(1.dp, DeviceTableColors.Border, shape)
+            .border(1.dp, DeviceCardColors.Border, shape)
             .padding(
                 horizontal = if (compact) 14.dp else 18.dp,
                 vertical = if (tight) 14.dp else 18.dp,
             ),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Устройства тарифа",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = DeviceTableColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = profile?.planName?.ifBlank { "Тариф не определён" } ?: "Активация не найдена",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = DeviceTableColors.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (loading) {
-                CircularProgressIndicator(
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(20.dp),
-                    color = DeviceTableColors.TextPrimary,
-                )
-            }
-        }
+        Text(
+            text = "Устройства тарифа",
+            style = MaterialTheme.typography.titleMedium,
+            color = DeviceCardColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = profile?.planName?.ifBlank { "Тариф не определён" } ?: "Активация не найдена",
+            style = MaterialTheme.typography.bodySmall,
+            color = DeviceCardColors.TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
 
         Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
 
         val currentProfile = profile
         if (currentProfile == null) {
             Text(
-                text = "Введите и подтвердите код доступа, чтобы увидеть зарегистрированные устройства.",
+                text = "Введите и подтвердите код доступа, чтобы увидеть устройства тарифа.",
                 style = MaterialTheme.typography.bodySmall,
-                color = DeviceTableColors.TextSecondary,
+                color = DeviceCardColors.TextSecondary,
             )
         } else {
             DeviceUsageSummary(currentProfile)
@@ -134,20 +113,21 @@ internal fun DeviceTableCard(
                         .thenByDescending { it.active }
                         .thenBy { it.deviceName.lowercase() },
                 )
+                .ifEmpty {
+                    listOf(
+                        EmeryDeviceRecord(
+                            deviceId = currentProfile.deviceId,
+                            deviceName = currentProfile.deviceName,
+                            active = true,
+                            isCurrent = true,
+                        )
+                    )
+                }
 
-            if (devices.isEmpty()) {
-                Text(
-                    text = "Сервер не вернул ни одного зарегистрированного устройства.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = DeviceTableColors.Error,
-                )
-            } else {
-                DeviceTableHeader()
-                devices.forEachIndexed { index, device ->
-                    DeviceTableRow(device = device)
-                    if (index != devices.lastIndex) {
-                        Spacer(Modifier.height(6.dp))
-                    }
+            devices.forEachIndexed { index, device ->
+                DeviceCard(device = device)
+                if (index != devices.lastIndex) {
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         }
@@ -157,7 +137,7 @@ internal fun DeviceTableCard(
             Text(
                 text = error,
                 style = MaterialTheme.typography.bodySmall,
-                color = DeviceTableColors.Error,
+                color = DeviceCardColors.Error,
             )
         }
 
@@ -168,11 +148,11 @@ internal fun DeviceTableCard(
             modifier = Modifier.fillMaxWidth().height(if (tight) 46.dp else 50.dp),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = DeviceTableColors.TextPrimary,
-                disabledContentColor = DeviceTableColors.TextSecondary,
+                contentColor = DeviceCardColors.TextPrimary,
+                disabledContentColor = DeviceCardColors.TextSecondary,
             ),
         ) {
-            Text(if (loading) "Проверяем сервер…" else "Обновить таблицу")
+            Text("Обновить устройства")
         }
     }
 }
@@ -180,139 +160,115 @@ internal fun DeviceTableCard(
 @Composable
 private fun DeviceUsageSummary(profile: EmeryAccessProfile) {
     val limit = profile.devicesLimit.coerceAtLeast(0)
-    val used = profile.devicesUsed.coerceAtLeast(0)
+    val used = profile.devicesUsed.coerceIn(0, limit.coerceAtLeast(profile.devicesUsed))
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(DeviceTableColors.SelectedSurface, RoundedCornerShape(14.dp))
+            .background(DeviceCardColors.SelectedSurface, RoundedCornerShape(14.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "Зарегистрировано",
+            text = "Используется устройств",
             style = MaterialTheme.typography.bodyMedium,
-            color = DeviceTableColors.TextPrimary,
+            color = DeviceCardColors.TextPrimary,
             fontWeight = FontWeight.Medium,
         )
         Text(
-            text = "$used из $limit",
+            text = if (limit > 0) "$used из $limit" else "$used",
             style = MaterialTheme.typography.titleMedium,
-            color = if (limit > 0 && used >= limit) DeviceTableColors.Error else DeviceTableColors.Positive,
+            color = DeviceCardColors.Positive,
             fontWeight = FontWeight.SemiBold,
         )
     }
 }
 
 @Composable
-private fun DeviceTableHeader() {
+private fun DeviceCard(device: EmeryDeviceRecord) {
+    val shape = RoundedCornerShape(16.dp)
+    val background = if (device.isCurrent) DeviceCardColors.SelectedSurface else Color.White
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .background(background, shape)
+            .border(1.dp, DeviceCardColors.Border.copy(alpha = 0.75f), shape)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        Text(
-            text = "Устройство",
-            modifier = Modifier.weight(1.25f),
-            style = MaterialTheme.typography.bodySmall,
-            color = DeviceTableColors.TextSecondary,
-            fontWeight = FontWeight.Medium,
+        Box(
+            modifier = Modifier
+                .padding(top = 5.dp)
+                .size(9.dp)
+                .background(
+                    color = if (device.active) DeviceCardColors.Positive else DeviceCardColors.Disabled,
+                    shape = CircleShape,
+                ),
         )
-        Text(
-            text = "Последняя активность",
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall,
-            color = DeviceTableColors.TextSecondary,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-@Composable
-private fun DeviceTableRow(device: EmeryDeviceRecord) {
-    val rowShape = RoundedCornerShape(14.dp)
-    val background = when {
-        device.isCurrent -> DeviceTableColors.SelectedSurface
-        !device.active -> DeviceTableColors.DisabledSurface
-        else -> Color.White
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(background, rowShape)
-            .border(1.dp, DeviceTableColors.Border.copy(alpha = 0.65f), rowShape)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1.25f)) {
+        Spacer(Modifier.size(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = device.deviceName.ifBlank { "Устройство" },
-                style = MaterialTheme.typography.bodyMedium,
-                color = DeviceTableColors.TextPrimary,
+                text = displayDeviceName(device),
+                style = MaterialTheme.typography.bodyLarge,
+                color = DeviceCardColors.TextPrimary,
                 fontWeight = if (device.isCurrent) FontWeight.SemiBold else FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(3.dp))
             Text(
-                text = buildString {
-                    append(device.platform.ifBlank { "unknown" })
-                    if (device.appVersion.isNotBlank()) append(" • ${device.appVersion}")
-                    if (device.isCurrent) append(" • это устройство")
-                    if (!device.active) append(" • отключено")
-                },
+                text = if (device.active) "Активно" else "Отключено",
                 style = MaterialTheme.typography.bodySmall,
-                color = if (device.active) DeviceTableColors.TextSecondary else DeviceTableColors.Error,
+                color = if (device.active) DeviceCardColors.Positive else DeviceCardColors.Error,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = displayLastActivity(device),
+                style = MaterialTheme.typography.bodySmall,
+                color = DeviceCardColors.TextSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = device.deviceId.take(8).ifBlank { "—" },
-                style = MaterialTheme.typography.bodySmall,
-                color = DeviceTableColors.TextSecondary.copy(alpha = 0.72f),
-                maxLines = 1,
-            )
         }
-        Text(
-            text = displayDeviceTime(device.lastSeenAt.ifBlank { device.firstSeenAt }),
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall,
-            color = DeviceTableColors.TextSecondary,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
-private fun displayDeviceTime(value: String): String {
-    val cleaned = value.trim()
-    if (cleaned.isBlank()) return "нет данных"
-    return cleaned
+private fun displayDeviceName(device: EmeryDeviceRecord): String {
+    if (device.isCurrent) return "Это устройство"
+    val value = device.deviceName.trim()
+    if (value.isBlank()) return "Android-устройство"
+    val lower = value.lowercase()
+    val technical = listOf(
+        "sdk_gphone",
+        "google sdk",
+        "android sdk built for",
+        "generic_x86",
+        "generic x86",
+        "x86_64",
+        "arm64-v8a",
+        "emulator",
+    ).any(lower::contains)
+    return if (technical) "Android-устройство" else value.take(40)
+}
+
+private fun displayLastActivity(device: EmeryDeviceRecord): String {
+    val raw = device.lastSeenAt.ifBlank { device.firstSeenAt }.trim()
+    if (raw.isBlank()) {
+        return if (device.isCurrent && device.active) "Активно сейчас" else "Нет данных об активности"
+    }
+    val time = raw
         .replace('T', ' ')
         .removeSuffix("Z")
         .take(16)
+    return "Последняя активность: $time"
 }
 
-private fun deviceTableError(reason: String): String {
-    return when (reason) {
-        "device_inventory_missing" -> "Backend не вернул таблицу устройств. Обновите серверный API."
-        "device_inventory_mismatch" -> "Текущее устройство отсутствует в серверной таблице."
-        "device_confirmation_missing" -> "Backend не подтвердил идентификатор текущего устройства."
-        "device_mismatch" -> "Backend вернул другой идентификатор устройства."
-        "device_counter_missing", "device_counter_mismatch" -> "Backend не подтвердил счётчик устройств."
-        "plan_limit_mismatch" -> "Серверный лимит не соответствует тарифу."
-        "network" -> "Не удалось обновить таблицу устройств: нет соединения с сервером."
-        else -> "Не удалось подтвердить список устройств на сервере."
-    }
-}
-
-private object DeviceTableColors {
+private object DeviceCardColors {
     val Border = Color(0xFFE6E9EE)
     val TextPrimary = Color(0xFF111319)
     val TextSecondary = Color(0xFF7D828D)
     val SelectedSurface = Color(0xFFF4F6F8)
-    val DisabledSurface = Color(0xFFF6F6F7)
     val Positive = Color(0xFF36A852)
+    val Disabled = Color(0xFFA8ADB7)
     val Error = Color(0xFFB42318)
 }
