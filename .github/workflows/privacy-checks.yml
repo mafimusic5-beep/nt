@@ -29,12 +29,12 @@ jobs:
         run: python -m compileall -q orchestrator 'emery vpn orchestrator/src'
       - name: Test legacy orchestrator
         run: |
-          python -m pip install --upgrade pip
-          pip install -r orchestrator/requirements.txt pytest
+          python -m pip install -q --upgrade pip
+          pip install -q -r orchestrator/requirements.txt pytest
           pytest -q orchestrator/tests
       - name: Test modern backend
         run: |
-          pip install -r 'emery vpn orchestrator/requirements.txt'
+          pip install -q -r 'emery vpn orchestrator/requirements.txt'
           cd 'emery vpn orchestrator'
           pytest -q tests
 
