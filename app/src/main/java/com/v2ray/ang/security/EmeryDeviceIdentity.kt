@@ -1,6 +1,5 @@
 package com.v2ray.ang.security
 
-import android.os.Build
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -18,12 +17,24 @@ import java.util.UUID
 private const val PREF_EMERY_DEVICE_ID = "pref_emery_device_id"
 private const val PREF_EMERY_DEVICE_NAME = "pref_emery_device_name"
 private const val BROKEN_LEGACY_ANDROID_ID = "9774d56d682e549c"
+private const val DEFAULT_DEVICE_NAME = "Android-устройство"
 
 object EmeryDeviceIdentity {
 
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
     private const val KEY_ALIAS_PREFIX = "emery_device_key_"
     private const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
+
+    private val technicalNameMarkers = listOf(
+        "sdk_gphone",
+        "google sdk",
+        "android sdk built for",
+        "generic_x86",
+        "generic x86",
+        "x86_64",
+        "arm64-v8a",
+        "emulator",
+    )
 
     data class ActivationProof(
         val deviceId: String,
@@ -44,11 +55,10 @@ object EmeryDeviceIdentity {
     )
 
     /**
-     * Keep compatibility with the original Premium activation implementation, which
-     * registered Settings.Secure.ANDROID_ID. On Android 8+ this value is stable for
-     * the same device/user/app-signing key across reinstall, so reinstalling the APK
-     * does not consume another tariff slot. The Keystore public key is still bound by
-     * the upgraded backend and is used for every signed request.
+     * Android 8+ keeps this value stable for the same device, Android user and app
+     * signing key across an ordinary reinstall. That lets the backend rotate the
+     * Android Keystore key in the existing tariff slot instead of registering a
+     * second device.
      */
     fun deviceId(): String {
         val androidId = runCatching {
@@ -72,21 +82,16 @@ object EmeryDeviceIdentity {
         return generated
     }
 
+    /**
+     * The server and UI only receive a friendly alias. Hardware manufacturer,
+     * model and emulator architecture are never exposed as the device name.
+     */
     fun deviceName(): String {
         val cached = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_NAME)?.trim().orEmpty()
-        if (cached.isNotEmpty()) {
-            return cached
+        val resolved = sanitizeDeviceName(cached)
+        if (cached != resolved) {
+            MmkvManager.encodeSettings(PREF_EMERY_DEVICE_NAME, resolved)
         }
-        val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
-        val model = Build.MODEL?.trim().orEmpty()
-        val raw = listOf(manufacturer, model)
-            .filter { it.isNotBlank() }
-            .joinToString(separator = " ")
-            .replace('\n', ' ')
-            .replace('\r', ' ')
-            .trim()
-        val resolved = raw.ifBlank { "Android Device" }.take(80)
-        MmkvManager.encodeSettings(PREF_EMERY_DEVICE_NAME, resolved)
         return resolved
     }
 
@@ -132,6 +137,24 @@ object EmeryDeviceIdentity {
             nonce = nonce,
             signatureBase64 = signCanonical(canonical),
         )
+    }
+
+    private fun sanitizeDeviceName(value: String): String {
+        val normalized = value
+            .replace('\n', ' ')
+            .replace('\r', ' ')
+            .trim()
+            .replace(Regex("\\s+"), " ")
+            .take(64)
+        if (normalized.isBlank()) {
+            return DEFAULT_DEVICE_NAME
+        }
+        val lower = normalized.lowercase(Locale.ROOT)
+        return if (technicalNameMarkers.any { marker -> lower.contains(marker) }) {
+            DEFAULT_DEVICE_NAME
+        } else {
+            normalized
+        }
     }
 
     private fun publicKeyBase64(): String {
