@@ -26,6 +26,7 @@ import com.v2ray.ang.handler.ManualDiagnosticCodes
 import com.v2ray.ang.handler.ManualModeDebugLogger
 import com.v2ray.ang.handler.ManualModeDiagnostics
 import com.v2ray.ang.handler.NotificationManager
+import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.util.MyContextWrapper
@@ -109,6 +110,12 @@ class V2RayVpnService : VpnService(), ServiceControl {
         try {
             // Promote to foreground immediately to avoid FGS timeout
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
+            if (!RegionalPolicyManager.isPolicyReadyForServiceStart(this)) {
+                Log.e(AppConfig.TAG, "StartCore-VPN: Russia policy data is stale or incomplete")
+                MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
+                stopAllService()
+                return START_NOT_STICKY
+            }
             if (setupVpnService()) {
                 startService()
             }
@@ -253,8 +260,12 @@ class V2RayVpnService : VpnService(), ServiceControl {
             builder.addRoute("0.0.0.0", 0)
         }
 
-        // Configure IPv6 if enabled
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PREFER_IPV6) == true) {
+        // Russia policy must also capture IPv6; otherwise an app could bypass
+        // the IPv4 restrictions whenever the device has native IPv6 access.
+        val captureIpv6 =
+            RegionalPolicyManager.isRussiaModeEnabled() ||
+                MmkvManager.decodeSettingsBool(AppConfig.PREF_PREFER_IPV6)
+        if (captureIpv6) {
             builder.addAddress(vpnConfig.ipv6Client, 126)
             if (bypassLan) {
                 builder.addRoute("2000::", 3) // Currently only 1/8 of total IPv6 is in use
@@ -313,6 +324,13 @@ class V2RayVpnService : VpnService(), ServiceControl {
      */
     private fun configurePerAppProxy(builder: Builder) {
         val selfPackageName = BuildConfig.APPLICATION_ID
+
+        // Russia policy is a device-wide traffic policy. User-configured app
+        // exclusions must not allow an app to bypass its blocking rules.
+        if (RegionalPolicyManager.isRussiaModeEnabled()) {
+            builder.addDisallowedApplication(selfPackageName)
+            return
+        }
 
         // If per-app proxy is not enabled, disallow the VPN service's own package and return
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY) == false) {
@@ -442,4 +460,3 @@ class V2RayVpnService : VpnService(), ServiceControl {
         }
     }
 }
-

@@ -1,4 +1,4 @@
-﻿import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
+import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
@@ -12,7 +12,7 @@ plugins {
 }
 
 /** Must match [android.defaultConfig.versionCode] (used in [androidComponents] per-ABI overrides). */
-val appVersionCode = 716
+val appVersionCode = 717
 
 android {
     namespace = "com.v2ray.ang"
@@ -23,7 +23,7 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = appVersionCode
-        versionName = "2.0.16"
+        versionName = "2.0.17"
         multiDexEnabled = true
         buildConfigField("int", "SKRYON_VERSION_CODE", appVersionCode.toString())
 

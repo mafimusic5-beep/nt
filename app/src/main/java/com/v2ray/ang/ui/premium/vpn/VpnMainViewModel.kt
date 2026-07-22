@@ -10,8 +10,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.AngConfigManager
+import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
@@ -26,20 +28,20 @@ import com.v2ray.ang.ui.premium.syncSkryonConfig
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
 
 class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -161,6 +163,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
+                locationsError = "",
             )
         }
     }
@@ -552,6 +555,53 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         )
 
         connectJob = viewModelScope.launch {
+            // The device table is a manual UI action. The connect path performs only a
+            // lightweight access refresh and never requires the full device inventory.
+            val accessVerification = EmeryBackendClient.fetchProfile(
+                accessKey = currentState.activationKey,
+                requireDeviceInventory = false,
+            )
+            accessVerification.fold(
+                onSuccess = { profile ->
+                    EmeryAccessManager.saveProfile(profile)
+                },
+                onFailure = { error ->
+                    val reason = error.message.orEmpty()
+                    if (isBlockingAccessFailure(reason)) {
+                        setDisconnectedWithError(deviceAccessError(reason))
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H12",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "access denied before VPN start",
+                            data = JSONObject().put("error", reason.ifBlank { "unknown" }),
+                        )
+                        return@launch
+                    }
+
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H12",
+                        location = "VpnMainViewModel.kt:onConnectClick",
+                        message = "optional access refresh unavailable; continuing with activated configuration",
+                        data = JSONObject().put("error", reason.ifBlank { "unknown" }),
+                    )
+                },
+            )
+
+            val policyAssets = RegionalPolicyManager.prepareForConnection(getApplication())
+            if (policyAssets.isFailure) {
+                setDisconnectedWithError("Не удалось обновить список ограничений РФ")
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H11",
+                    location = "VpnMainViewModel.kt:onConnectClick",
+                    message = "regional policy data refresh failed",
+                    data = JSONObject().put(
+                        "error",
+                        policyAssets.exceptionOrNull()?.message ?: "unknown",
+                    ),
+                )
+                return@launch
+            }
+
             val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = { payload ->
@@ -602,6 +652,42 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     )
                 },
             )
+        }
+    }
+
+    private fun isBlockingAccessFailure(reason: String): Boolean {
+        val normalized = reason.trim().lowercase()
+        return normalized in setOf(
+            "not_found",
+            "expired",
+            "banned",
+            "blocked",
+            "revoked",
+            "invalid_or_expired_key",
+            "vpn_disabled",
+            "upgrade_required",
+        )
+    }
+
+    private fun deviceAccessError(reason: String): String {
+        return when (reason) {
+            "device_not_registered", "device_confirmation_missing" ->
+                "Это устройство не зарегистрировано для тарифа"
+            "device_mismatch", "device_inventory_mismatch" ->
+                "Сервер не подтвердил текущее устройство"
+            "device_counter_missing", "device_counter_mismatch" ->
+                "Сервер не подтвердил список устройств"
+            "plan_limit_mismatch" ->
+                "Лимит устройств не соответствует тарифу"
+            "invalid_or_expired_key", "not_found", "expired", "banned", "blocked", "revoked" ->
+                "Код доступа недействителен или истёк"
+            "vpn_disabled" ->
+                "Доступ к VPN отключён"
+            "upgrade_required" ->
+                "Требуется обновить приложение"
+            "network" ->
+                "Не удалось проверить устройство. Проверьте интернет"
+            else -> "Не удалось подтвердить доступ этого устройства"
         }
     }
 
@@ -672,6 +758,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
+                locationsError = "",
             )
         }
         VpnUiDebugLogger.log(

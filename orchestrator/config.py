@@ -39,7 +39,10 @@ ADMIN_IDS = _split_admin_ids(os.getenv('ADMIN_IDS', ''))
 API_HOST = os.getenv('API_HOST', '0.0.0.0')
 API_PORT = int(os.getenv('API_PORT', '8080'))
 API_SECRET = os.getenv('API_SECRET', '')
-CHECKOUT_SECRET = os.getenv('CHECKOUT_SECRET', '')
+CHECKOUT_SECRET = (
+    os.getenv('CHECKOUT_SECRET', '').strip()
+    or _shared_emery_value('CHECKOUT_SECRET')
+)
 DATABASE_PATH = os.getenv('DATABASE_PATH', 'skryon.db')
 DEFAULT_SERVER_NAME = os.getenv('DEFAULT_SERVER_NAME', 'Secure-DE')
 DEFAULT_SERVER_REGION = os.getenv('DEFAULT_SERVER_REGION', 'DE')
@@ -55,7 +58,13 @@ SERVER_POOL_SYNC_ADMIN_KEY = (
     or os.getenv('ADMIN_API_KEY', '').strip()
     or _shared_emery_value('ADMIN_API_KEY')
 )
-MIN_SUPPORTED_APP_VERSION_CODE = int(os.getenv('MIN_SUPPORTED_APP_VERSION_CODE', '716'))
+
+# Builds before 717 do not implement the signed device protocol and must be upgraded.
+SIGNED_DEVICE_PROTOCOL_VERSION_CODE = 717
+MIN_SUPPORTED_APP_VERSION_CODE = max(
+    int(os.getenv('MIN_SUPPORTED_APP_VERSION_CODE', str(SIGNED_DEVICE_PROTOCOL_VERSION_CODE))),
+    SIGNED_DEVICE_PROTOCOL_VERSION_CODE,
+)
 APP_UPDATE_MESSAGE = os.getenv(
     'APP_UPDATE_MESSAGE',
     'Версия приложения устарела. Обновите приложение.',
