@@ -47,7 +47,7 @@ jobs:
           set +e
           python -m compileall -q 'emery vpn orchestrator/src'
           cd 'emery vpn orchestrator'
-          pytest -q tests 2>&1 | tee ../modern-tests.log
+          PYTHONPATH=. pytest -q tests 2>&1 | tee ../modern-tests.log
           status=${PIPESTATUS[0]}
           exit "$status"
       - name: Upload modern test log
