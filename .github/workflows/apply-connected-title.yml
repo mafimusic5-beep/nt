@@ -1,0 +1,44 @@
+name: Apply connected title update
+
+on:
+  push:
+    branches:
+      - fix/connected-title-all-good
+
+permissions:
+  contents: write
+
+jobs:
+  update-title:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/connected-title-all-good
+          fetch-depth: 0
+
+      - name: Replace connected title
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt")
+          text = path.read_text(encoding="utf-8")
+          old = 'VpnConnectionState.Connected -> "Защита включена"'
+          new = 'VpnConnectionState.Connected -> "Всё в порядке"'
+          if text.count(old) != 1:
+              raise SystemExit(f"Expected exactly one title occurrence, found {text.count(old)}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+
+      - name: Commit source change and remove helper workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-connected-title.yml
+          git add app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt
+          git commit -m "Change connected status title"
+          git push origin HEAD:fix/connected-title-all-good
