@@ -1,13 +1,14 @@
 package com.v2ray.ang.ui.premium.vpn
 
-import android.util.Log
-import com.v2ray.ang.BuildConfig
-import com.v2ray.ang.diagnostics.ClientErrorReporter
 import org.json.JSONObject
+import java.io.File
+import java.util.UUID
 
 object VpnUiDebugLogger {
 
-    private const val TAG = "SkryonVpn"
+    // Keep in sync with current debug-mode session configuration.
+    private const val SESSION_ID = "e77b78"
+    private const val LOG_PATH = "debug-e77b78.log"
 
     fun log(
         hypothesisId: String,
@@ -16,31 +17,19 @@ object VpnUiDebugLogger {
         runId: String = "run1",
         data: JSONObject = JSONObject(),
     ) {
-        if (BuildConfig.DEBUG) {
-            Log.d(TAG, "$location: $message")
+        try {
+            val payload = JSONObject()
+                .put("sessionId", SESSION_ID)
+                .put("id", "log_${UUID.randomUUID()}")
+                .put("timestamp", System.currentTimeMillis())
+                .put("location", location)
+                .put("message", message)
+                .put("data", data)
+                .put("runId", runId)
+                .put("hypothesisId", hypothesisId)
+                .toString()
+            File(LOG_PATH).appendText(payload + "\n")
+        } catch (_: Exception) {
         }
-
-        if (shouldReport(message)) {
-            val code = data.optString("error")
-                .ifBlank { data.optString("reason") }
-                .ifBlank { message }
-            ClientErrorReporter.reportHandled(
-                stage = location.substringBefore(':').ifBlank { hypothesisId },
-                code = code,
-            )
-        }
-    }
-
-    private fun shouldReport(message: String): Boolean {
-        val normalized = message.trim().lowercase()
-        return listOf(
-            "failed",
-            "failure",
-            "error",
-            "denied",
-            "unavailable",
-            "timed out",
-            "timeout",
-        ).any(normalized::contains)
     }
 }
