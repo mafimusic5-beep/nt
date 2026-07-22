@@ -1,5 +1,12 @@
-from api import ActivationRequest, client_key
-from checkout_routes import privacy_rate_key
+import sys
+from pathlib import Path
+
+ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1]
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from api import ActivationRequest, client_key  # noqa: E402
+from checkout_routes import privacy_rate_key  # noqa: E402
 
 
 def test_activation_rate_key_uses_only_hashed_request_data() -> None:
