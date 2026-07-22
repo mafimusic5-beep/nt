@@ -555,6 +555,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         )
 
         connectJob = viewModelScope.launch {
+            // The device table is a manual UI action. The connect path performs only a
+            // lightweight access refresh and never requires the full device inventory.
             val accessVerification = EmeryBackendClient.fetchProfile(
                 accessKey = currentState.activationKey,
                 requireDeviceInventory = false,
