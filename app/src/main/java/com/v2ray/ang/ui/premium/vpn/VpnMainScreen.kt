@@ -285,7 +285,7 @@ fun VpnMainScreen(
 private fun screenTitle(state: VpnConnectionState): String = when (state) {
     VpnConnectionState.Disconnected -> "Защита выключена"
     VpnConnectionState.Connecting -> "Включаем защиту"
-    VpnConnectionState.Connected -> "Защита включена"
+    VpnConnectionState.Connected -> "Всё в порядке"
 }
 
 private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
