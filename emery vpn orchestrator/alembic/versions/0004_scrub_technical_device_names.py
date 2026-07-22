@@ -1,6 +1,6 @@
 """Replace technical device model strings with generic user-facing aliases.
 
-Revision ID: 0004_scrub_technical_device_names
+Revision ID: 0004_privacy_names
 Revises: 0003_node_ssh_keys
 """
 
@@ -8,7 +8,7 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0004_scrub_technical_device_names"
+revision: str = "0004_privacy_names"
 down_revision: Union[str, Sequence[str], None] = "0003_node_ssh_keys"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
