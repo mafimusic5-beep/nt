@@ -1,15 +1,20 @@
 import asyncio
+import hashlib
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from typing import Deque, Dict
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from checkout_routes import router as checkout_router
 from config import (
+    ADMIN_IDS,
     APP_UPDATE_MESSAGE,
+    BOT_TOKEN,
     DEFAULT_SERVER_CONFIG,
     DEFAULT_SERVER_NAME,
     DEFAULT_SERVER_REGION,
@@ -31,7 +36,10 @@ RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMIT_MAX_ATTEMPTS = 12
 CONFIG_SYNC_WAIT_SECONDS = 25.0
 CONFIG_SYNC_POLL_INTERVAL_SECONDS = 0.5
+CLIENT_ERROR_WINDOW_SECONDS = 600
+CLIENT_ERROR_MAX_PER_SIGNATURE = 2
 _attempts: Dict[str, Deque[float]] = defaultdict(deque)
+_client_error_attempts: Dict[str, Deque[float]] = defaultdict(deque)
 
 
 class DeviceRegisterRequest(BaseModel):
@@ -66,6 +74,16 @@ class ConfigSyncRequest(BaseModel):
     deviceId: str = Field(min_length=4, max_length=128)
     revision: int = Field(default=-1, ge=-1)
     appVersionCode: int = Field(default=0, ge=0)
+
+
+class ClientErrorReportRequest(BaseModel):
+    kind: str = Field(default='handled', min_length=1, max_length=16)
+    stage: str = Field(default='unknown_stage', min_length=1, max_length=80)
+    code: str = Field(default='unknown_error', min_length=1, max_length=120)
+    app_version: str = Field(default='', max_length=32)
+    app_version_code: int = Field(default=0, ge=0)
+    android_api: int = Field(default=0, ge=0, le=1000)
+    stack: list[str] = Field(default_factory=list, max_length=8)
 
 
 def upgrade_required(app_version_code: int) -> bool:
@@ -135,6 +153,109 @@ def _auth_error(error: DeviceAuthError):
             'error': error.reason,
         },
     )
+
+
+def _safe_report_token(value: str, fallback: str, limit: int) -> str:
+    normalized = ''.join(
+        char if (char.isalnum() or char in '._:/-') else '_'
+        for char in str(value or '').strip().lower()
+    )
+    while '__' in normalized:
+        normalized = normalized.replace('__', '_')
+    normalized = normalized.strip('_')[:limit]
+    return normalized or fallback
+
+
+def _safe_stack_line(value: str) -> str:
+    return ''.join(
+        char for char in str(value or '')
+        if char.isalnum() or char in '._:/-()$'
+    )[:180]
+
+
+def _normalized_client_error(payload: ClientErrorReportRequest) -> dict:
+    kind = _safe_report_token(payload.kind, 'handled', 16)
+    if kind not in {'handled', 'crash'}:
+        kind = 'handled'
+    return {
+        'kind': kind,
+        'stage': _safe_report_token(payload.stage, 'unknown_stage', 80),
+        'code': _safe_report_token(payload.code, 'unknown_error', 120),
+        'app_version': _safe_report_token(payload.app_version, 'unknown', 32),
+        'app_version_code': max(0, int(payload.app_version_code)),
+        'android_api': max(0, int(payload.android_api)),
+        'stack': [
+            safe
+            for safe in (_safe_stack_line(line) for line in payload.stack[:8])
+            if safe
+        ],
+    }
+
+
+def _client_error_rate_limited(report: dict) -> bool:
+    raw_signature = '|'.join(
+        (
+            report['kind'],
+            report['stage'],
+            report['code'],
+            str(report['app_version_code']),
+        )
+    )
+    signature = hashlib.sha256(raw_signature.encode('utf-8')).hexdigest()
+    now = time.time()
+    bucket = _client_error_attempts[signature]
+    while bucket and now - bucket[0] > CLIENT_ERROR_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= CLIENT_ERROR_MAX_PER_SIGNATURE:
+        return True
+    bucket.append(now)
+    return False
+
+
+def _client_error_message(report: dict) -> str:
+    title = '💥 Сбой приложения' if report['kind'] == 'crash' else '⚠️ Ошибка приложения'
+    lines = [
+        title,
+        '',
+        'Этап: ' + report['stage'],
+        'Код: ' + report['code'],
+        'Версия: ' + report['app_version'] + ' (' + str(report['app_version_code']) + ')',
+        'Android API: ' + str(report['android_api']),
+        'Время UTC: ' + datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+    ]
+    if report['stack']:
+        lines.extend(('', 'Стек:', *report['stack']))
+    lines.extend(
+        (
+            '',
+            'Без кода доступа, IP, идентификатора устройства, модели и VPN-конфигурации.',
+        )
+    )
+    return '\n'.join(lines)[:3900]
+
+
+async def _send_client_error_to_admins(report: dict) -> int:
+    if not BOT_TOKEN or not ADMIN_IDS:
+        return 0
+    endpoint = f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage'
+    message = _client_error_message(report)
+    delivered = 0
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        for admin_id in ADMIN_IDS:
+            try:
+                response = await client.post(
+                    endpoint,
+                    json={
+                        'chat_id': admin_id,
+                        'text': message,
+                        'disable_web_page_preview': True,
+                    },
+                )
+                if response.is_success:
+                    delivered += 1
+            except httpx.HTTPError:
+                continue
+    return delivered
 
 
 @app.middleware('http')
@@ -212,6 +333,34 @@ def device_profile(request: Request):
         )
     except DeviceAuthError as error:
         return _auth_error(error)
+
+
+@app.post('/api/client/error')
+async def client_error_report(payload: ClientErrorReportRequest, request: Request):
+    try:
+        authenticate_registered_device(
+            raw_code=_bearer_code(request),
+            method='POST',
+            path=request.url.path,
+            device_id=_header(request, 'x-emery-device-id'),
+            timestamp=_header(request, 'x-emery-timestamp'),
+            nonce=_header(request, 'x-emery-nonce'),
+            signature_base64=_header(request, 'x-emery-signature'),
+            signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+        )
+    except DeviceAuthError as error:
+        return _auth_error(error)
+
+    report = _normalized_client_error(payload)
+    if _client_error_rate_limited(report):
+        return {'ok': True, 'delivered': 0, 'deduplicated': True}
+
+    delivered = await _send_client_error_to_admins(report)
+    return {
+        'ok': True,
+        'delivered': delivered,
+        'configured': bool(BOT_TOKEN and ADMIN_IDS),
+    }
 
 
 @app.post('/api/activate')
