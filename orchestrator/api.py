@@ -1,9 +1,11 @@
 import asyncio
+import hashlib
+import logging
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,10 @@ from config import (
     MIN_SUPPORTED_APP_VERSION_CODE,
 )
 from storage import check_activation_access, get_server_snapshot, init_storage, save_server, validate_activation_code
+
+# Never write remote addresses through Uvicorn's access logger.
+logging.getLogger("uvicorn.access").disabled = True
+logging.getLogger("uvicorn.access").propagate = False
 
 app = FastAPI(title='Skryon Orchestrator API')
 app.include_router(checkout_router)
@@ -57,11 +63,10 @@ def upgrade_required_response() -> dict:
     }
 
 
-def client_key(request: Request, payload: ActivationRequest) -> str:
-    forwarded = request.headers.get('x-forwarded-for', '')
-    ip = forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else 'unknown')
-    device = payload.deviceId.strip()[:64]
-    return ip + ':' + device
+def client_key(payload: ActivationRequest) -> str:
+    """Return a short-lived rate-limit key without reading or retaining an IP address."""
+    material = f"{payload.code.strip().upper()}:{payload.deviceId.strip()}"
+    return hashlib.sha256(material.encode('utf-8')).hexdigest()
 
 
 def rate_limited(key: str) -> bool:
@@ -76,7 +81,7 @@ def rate_limited(key: str) -> bool:
 
 
 @app.middleware('http')
-async def security_headers(request: Request, call_next):
+async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
@@ -98,14 +103,14 @@ def health() -> dict:
 
 
 @app.post('/api/activate')
-def activate(payload: ActivationRequest, request: Request) -> dict:
+def activate(payload: ActivationRequest) -> dict:
     code = payload.code.strip()
     device_id = payload.deviceId.strip()
 
     if upgrade_required(payload.appVersionCode):
         return upgrade_required_response()
 
-    if rate_limited(client_key(request, payload)):
+    if rate_limited(client_key(payload)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
 
     result = validate_activation_code(code, device_id)
