@@ -2,9 +2,8 @@ package com.v2ray.ang.handler
 
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.security.EmeryDeviceIdentity
 
-private const val PREF_EMERY_DEVICE_ID_LOCAL = "pref_emery_device_id"
-private const val PREF_EMERY_DEVICE_NAME_LOCAL = "pref_emery_device_name"
 private const val PREF_EMERY_DEVICES_LIMIT_LOCAL = "pref_emery_devices_limit"
 
 data class EmeryAccessProfile(
@@ -28,7 +27,7 @@ object EmeryAccessManager {
         expiresAt = "2099-12-31T23:59:59Z",
         planName = "Development",
         deviceId = "dev-device",
-        deviceName = "Development device",
+        deviceName = "Android-устройство",
         devicesUsed = 1,
         devicesLimit = 5,
     )
@@ -51,8 +50,8 @@ object EmeryAccessManager {
             routerEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_EMERY_ROUTER_ENABLED, false),
             expiresAt = expires,
             planName = plan,
-            deviceId = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_ID_LOCAL).orEmpty(),
-            deviceName = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_NAME_LOCAL).orEmpty(),
+            deviceId = EmeryDeviceIdentity.deviceId(),
+            deviceName = EmeryDeviceIdentity.deviceName(),
             devicesUsed = MmkvManager.decodeSettingsInt(AppConfig.PREF_EMERY_DEVICES_USED, 0),
             devicesLimit = MmkvManager.decodeSettingsInt(PREF_EMERY_DEVICES_LIMIT_LOCAL, 5),
         )
@@ -64,11 +63,8 @@ object EmeryAccessManager {
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ROUTER_ENABLED, profile.routerEnabled)
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_EXPIRES_AT, profile.expiresAt)
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_PLAN_NAME, profile.planName)
-        if (profile.deviceId.isNotBlank()) {
-            MmkvManager.encodeSettings(PREF_EMERY_DEVICE_ID_LOCAL, profile.deviceId)
-        }
         if (profile.deviceName.isNotBlank()) {
-            MmkvManager.encodeSettings(PREF_EMERY_DEVICE_NAME_LOCAL, profile.deviceName)
+            EmeryDeviceIdentity.setDeviceName(profile.deviceName)
         }
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_DEVICES_USED, profile.devicesUsed)
         MmkvManager.encodeSettings(PREF_EMERY_DEVICES_LIMIT_LOCAL, profile.devicesLimit)
