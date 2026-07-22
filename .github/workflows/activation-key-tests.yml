@@ -1,0 +1,84 @@
+name: Activation key lifecycle tests
+
+on:
+  push:
+    paths:
+      - 'orchestrator/**'
+      - 'app/build.gradle.kts'
+      - 'app/src/main/java/com/v2ray/ang/AngApplication.kt'
+      - 'app/src/main/java/com/v2ray/ang/diagnostics/**'
+      - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnUiDebugLogger.kt'
+      - '.github/workflows/activation-key-tests.yml'
+  pull_request:
+    paths:
+      - 'orchestrator/**'
+      - 'app/build.gradle.kts'
+      - 'app/src/main/java/com/v2ray/ang/AngApplication.kt'
+      - 'app/src/main/java/com/v2ray/ang/diagnostics/**'
+      - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnUiDebugLogger.kt'
+      - '.github/workflows/activation-key-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  activation-keys:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: orchestrator/requirements.txt
+      - name: Install orchestrator dependencies
+        run: python -m pip install --quiet -r orchestrator/requirements.txt
+      - name: Compile orchestrator
+        run: python -m compileall -q orchestrator
+      - name: Run activation key tests
+        env:
+          PYTHONPATH: orchestrator
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s orchestrator/tests -v 2>&1 | tee /tmp/activation-key-tests.log
+      - name: Upload activation key test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: activation-key-test-report
+          path: /tmp/activation-key-tests.log
+          if-no-files-found: error
+          retention-days: 3
+
+  android-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+      - name: Verify signed protocol version
+        run: |
+          grep -F 'val appVersionCode = 717' app/build.gradle.kts
+          grep -F 'versionName = "2.0.17"' app/build.gradle.kts
+      - name: Assemble Playstore debug
+        run: ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
