@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 
 from src.backend.api.admin_codes_routes import router as admin_codes_router
@@ -9,6 +11,10 @@ from src.backend.core.logging import setup_logging
 from src.backend.middleware.rate_limit import RateLimitMiddleware
 from src.common.config import settings
 from src.common.db import SessionLocal
+
+# Disable address-bearing access records before the application accepts its first request.
+logging.getLogger("uvicorn.access").disabled = True
+logging.getLogger("uvicorn.access").propagate = False
 
 app = FastAPI(title="Emery VPN Orchestrator Backend", version="0.1.0")
 app.add_middleware(RateLimitMiddleware)
