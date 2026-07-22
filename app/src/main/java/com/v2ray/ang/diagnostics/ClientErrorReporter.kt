@@ -203,7 +203,7 @@ object ClientErrorReporter {
 
     private fun safeStackLine(value: String): String {
         return value
-            .filter { char -> char.isLetterOrDigit() || char in ".:_-/()$" }
+            .filter { char -> char.isLetterOrDigit() || char in ".:_-/()\$" }
             .take(180)
     }
 }
