@@ -5,27 +5,19 @@ on:
     paths:
       - 'orchestrator/**'
       - 'app/build.gradle.kts'
-      - 'app/src/main/java/com/v2ray/ang/AngApplication.kt'
-      - 'app/src/main/java/com/v2ray/ang/diagnostics/**'
       - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
-      - 'app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt'
-      - 'app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnUiDebugLogger.kt'
       - '.github/workflows/activation-key-tests.yml'
   pull_request:
     paths:
       - 'orchestrator/**'
       - 'app/build.gradle.kts'
-      - 'app/src/main/java/com/v2ray/ang/AngApplication.kt'
-      - 'app/src/main/java/com/v2ray/ang/diagnostics/**'
       - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
-      - 'app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt'
-      - 'app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnUiDebugLogger.kt'
       - '.github/workflows/activation-key-tests.yml'
 
 permissions:
