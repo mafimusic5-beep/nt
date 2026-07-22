@@ -3,6 +3,7 @@ package com.v2ray.ang.handler
 import android.content.Context
 import android.util.Log
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.security.EmeryDeviceIdentity
 import com.v2ray.ang.util.Utils
 import go.Seq
 import libv2ray.CoreCallbackHandler
@@ -30,8 +31,8 @@ object V2RayNativeManager {
             try {
                 Seq.setContext(context?.applicationContext)
                 val assetPath = Utils.userAssetPath(context)
-                val deviceId = Utils.getDeviceIdForXUDPBaseKey()
-                Libv2ray.initCoreEnv(assetPath, deviceId)
+                val localBaseKey = EmeryDeviceIdentity.xudpBaseKey()
+                Libv2ray.initCoreEnv(assetPath, localBaseKey)
                 Log.i(AppConfig.TAG, "V2Ray core environment initialized successfully")
             } catch (e: Exception) {
                 Log.e(AppConfig.TAG, "Failed to initialize V2Ray core environment", e)
