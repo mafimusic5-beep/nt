@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from src.backend.utils.privacy import sanitize_device_name
 
 
 class RedeemActivationCodeRequest(BaseModel):
@@ -9,6 +11,11 @@ class RedeemActivationCodeRequest(BaseModel):
     device_fingerprint: str = Field(min_length=6, max_length=128)
     platform: str = "android"
     device_name: str = ""
+
+    @field_validator("device_name")
+    @classmethod
+    def normalize_device_name(cls, value: str, info) -> str:
+        return sanitize_device_name(value, info.data.get("platform", "android"))
 
 
 class RedeemActivationCodeResponse(BaseModel):
@@ -32,6 +39,11 @@ class RegisterDeviceRequest(BaseModel):
     device_fingerprint: str = Field(min_length=6, max_length=128)
     platform: str = "android"
     device_name: str = ""
+
+    @field_validator("device_name")
+    @classmethod
+    def normalize_device_name(cls, value: str, info) -> str:
+        return sanitize_device_name(value, info.data.get("platform", "android"))
 
 
 class RegisterDeviceResponse(BaseModel):
@@ -78,6 +90,11 @@ class UserDeviceResponse(BaseModel):
     platform: str
     device_name: str
     last_seen_at: datetime | None = None
+
+    @field_validator("device_name")
+    @classmethod
+    def normalize_device_name(cls, value: str, info) -> str:
+        return sanitize_device_name(value, info.data.get("platform", "android"))
 
 
 class UserCodeResponse(BaseModel):
