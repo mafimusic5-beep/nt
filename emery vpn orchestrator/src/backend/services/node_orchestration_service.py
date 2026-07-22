@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
+from fractions import Fraction
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -51,21 +52,36 @@ class NodeOrchestrationService:
         )
 
     @staticmethod
-    def _node_sort_key(node) -> tuple[int, int, int, int]:
+    def _effective_current_clients(node, device: Device | None = None) -> int:
+        current_clients = max(int(node.current_clients), 0)
+        if device is not None and device.node_id == node.id and current_clients > 0:
+            return current_clients - 1
+        return current_clients
+
+    @classmethod
+    def _fill_ratio(cls, node, device: Device | None = None) -> Fraction:
+        capacity = max(int(node.capacity_clients), 1)
+        return Fraction(cls._effective_current_clients(node, device), capacity)
+
+    @classmethod
+    def _node_sort_key(cls, node, device: Device | None = None) -> tuple:
         return (
+            cls._fill_ratio(node, device),
             0 if node.health_status == "healthy" else 1,
             node.load_score,
             -node.priority,
             node.id,
         )
 
-    @staticmethod
-    def _region_display_sort_key(node) -> tuple[int, int, int, int, int]:
+    @classmethod
+    def _region_display_sort_key(cls, node) -> tuple:
         return (
             0 if node.status == "active" else 1,
             0 if node.health_status == "healthy" else 1 if node.health_status == "degraded" else 2,
             0 if node.current_clients < node.capacity_clients else 1,
+            cls._fill_ratio(node),
             node.load_score,
+            -node.priority,
             node.id,
         )
 
@@ -75,6 +91,12 @@ class NodeOrchestrationService:
             for n in self.repo.list_nodes(region_code)
             if self._is_connectable(n)
         ]
+
+    def _select_best_node(self, region_code: str, device: Device | None = None):
+        nodes = self._eligible_nodes(region_code)
+        if not nodes:
+            raise HTTPException(status_code=409, detail="server_unavailable")
+        return sorted(nodes, key=lambda node: self._node_sort_key(node, device))[0]
 
     def choose_best_moscow_node(self):
         node = self.repo.best_active_node("moscow")
@@ -90,7 +112,7 @@ class NodeOrchestrationService:
         if not nodes:
             raise HTTPException(status_code=404, detail="no_healthy_node")
 
-        node = sorted(nodes, key=self._node_sort_key)[0]
+        node = sorted(nodes, key=lambda candidate: self._node_sort_key(candidate, device))[0]
         if device:
             self.repo.assign_device_to_node(device, node)
 
@@ -165,25 +187,26 @@ class NodeOrchestrationService:
         subscription = self.repo.get_subscription(subscription_id)
         if not subscription:
             raise HTTPException(status_code=404, detail="subscription_not_found")
-        node = self.repo.get_node(node_id)
-        if not node:
+
+        requested_node = self.repo.get_node(node_id)
+        if not requested_node:
             raise HTTPException(status_code=404, detail="server_not_found")
-        if subscription.region_code and node.region_code != subscription.region_code:
-            raise HTTPException(status_code=409, detail="server_region_mismatch")
-        if not self._is_connectable(node):
-            agent_log(
-                hypothesis_id="H3",
-                location="node_orchestration_service.py:build_user_config_for_node",
-                message="server is not connectable",
-                data={
-                    "node_id": node_id,
-                    "status": node.status,
-                    "health_status": node.health_status,
-                    "current_clients": node.current_clients,
-                    "capacity_clients": node.capacity_clients,
-                },
-            )
-            raise HTTPException(status_code=409, detail="server_unavailable")
+
+        node = self._select_best_node(requested_node.region_code, device)
+        agent_log(
+            hypothesis_id="H3",
+            location="node_orchestration_service.py:build_user_config_for_node",
+            message="best regional server selected at connection time",
+            data={
+                "requested_node_id": node_id,
+                "selected_node_id": node.id,
+                "region_code": requested_node.region_code,
+                "current_clients": node.current_clients,
+                "capacity_clients": node.capacity_clients,
+                "fill_percent": int(self._fill_ratio(node, device) * 100),
+                "load_score": node.load_score,
+            },
+        )
 
         if device:
             self.repo.assign_device_to_node(device, node)
@@ -193,7 +216,7 @@ class NodeOrchestrationService:
                 hypothesis_id="H5",
                 location="node_orchestration_service.py:build_user_config_for_node",
                 message="server config unavailable",
-                data={"node_id": node_id},
+                data={"requested_node_id": node_id, "selected_node_id": node.id},
             )
             raise HTTPException(status_code=409, detail="server_config_unavailable")
         return {"node": node, "import_text": import_text}
