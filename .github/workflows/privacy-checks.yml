@@ -1,0 +1,53 @@
+name: Privacy checks
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'orchestrator/**'
+      - 'emery vpn orchestrator/**'
+      - 'docs/PRIVACY_DATA_MINIMIZATION.md'
+      - '.github/workflows/privacy-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            orchestrator/requirements.txt
+            emery vpn orchestrator/requirements.txt
+      - name: Validate sources
+        run: python -m compileall -q orchestrator 'emery vpn orchestrator/src'
+      - name: Test legacy orchestrator
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r orchestrator/requirements.txt pytest
+          pytest -q orchestrator/tests
+      - name: Test modern backend
+        run: |
+          pip install -r 'emery vpn orchestrator/requirements.txt'
+          cd 'emery vpn orchestrator'
+          pytest -q tests
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Compile Android Kotlin
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:compileDebugKotlin --stacktrace
