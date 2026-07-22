@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  python:
+  legacy-python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,21 +22,41 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: |
-            orchestrator/requirements.txt
-            emery vpn orchestrator/requirements.txt
-      - name: Validate sources
-        run: python -m compileall -q orchestrator 'emery vpn orchestrator/src'
-      - name: Test legacy orchestrator
+          cache-dependency-path: orchestrator/requirements.txt
+      - name: Validate and test legacy orchestrator
         run: |
+          python -m compileall -q orchestrator
           python -m pip install -q --upgrade pip
           pip install -q -r orchestrator/requirements.txt pytest
           pytest -q orchestrator/tests
-      - name: Test modern backend
+
+  modern-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: emery vpn orchestrator/requirements.txt
+      - name: Install modern backend dependencies
+        run: pip install -q -r 'emery vpn orchestrator/requirements.txt'
+      - name: Validate and test modern backend
+        id: modern-tests
         run: |
-          pip install -q -r 'emery vpn orchestrator/requirements.txt'
+          set +e
+          python -m compileall -q 'emery vpn orchestrator/src'
           cd 'emery vpn orchestrator'
-          pytest -q tests
+          pytest -q tests 2>&1 | tee ../modern-tests.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+      - name: Upload modern test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-test-log
+          path: modern-tests.log
+          if-no-files-found: error
 
   android:
     runs-on: ubuntu-latest
