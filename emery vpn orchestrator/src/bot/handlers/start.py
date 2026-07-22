@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="user_menu")
 client = BackendClient()
 
+
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     await message.answer(
@@ -126,10 +127,10 @@ async def my_devices_handler(callback: CallbackQuery) -> None:
         return
     lines = ["Мои устройства:"]
     for idx, dev in enumerate(devices[:20], start=1):
+        device_name = (dev.get("device_name") or "Устройство").strip()
         lines.append(
-            f"{idx}) {dev.get('platform', 'android')} | {dev.get('device_name', '-') or '-'}\n"
-            f"   fp: {dev.get('device_fingerprint', '')[:10]}...\n"
-            f"   heartbeat: {format_dt(dev.get('last_seen_at'))}"
+            f"{idx}) {device_name}\n"
+            f"   Последняя активность: {format_dt(dev.get('last_seen_at'))}"
         )
     await callback.message.edit_text("\n".join(lines), reply_markup=main_menu_keyboard())
     await callback.answer()
