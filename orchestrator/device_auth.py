@@ -4,6 +4,7 @@ import base64
 import hashlib
 import sqlite3
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -19,6 +20,7 @@ from storage import format_code, now_iso, parse_iso
 MAX_CLOCK_SKEW_SECONDS = 300
 NONCE_RETENTION_SECONDS = 24 * 60 * 60
 SUPPORTED_SIGNATURE_ALGORITHM = 'SHA256withECDSA'
+DEFAULT_DEVICE_NAME = 'Android-устройство'
 
 _PLAN_LIMITS = {
     'personal': 1,
@@ -36,6 +38,17 @@ _PLAN_TITLES = {
     2: 'Личный+',
     5: 'Семейный',
 }
+
+_TECHNICAL_DEVICE_NAME_MARKERS = (
+    'sdk_gphone',
+    'google sdk',
+    'android sdk built for',
+    'generic_x86',
+    'generic x86',
+    'x86_64',
+    'arm64-v8a',
+    'emulator',
+)
 
 
 @dataclass
@@ -278,6 +291,31 @@ def _consume_nonce(
         raise DeviceAuthError('device_replay_detected', 401) from exc
 
 
+def _public_device_name(value: str) -> str:
+    normalized = ' '.join(str(value or '').replace('\n', ' ').replace('\r', ' ').split())[:64]
+    if not normalized:
+        return DEFAULT_DEVICE_NAME
+    lowered = normalized.lower()
+    if any(marker in lowered for marker in _TECHNICAL_DEVICE_NAME_MARKERS):
+        return DEFAULT_DEVICE_NAME
+    return normalized
+
+
+def _looks_like_legacy_random_id(value: str) -> bool:
+    try:
+        return str(uuid.UUID(str(value).strip())) == str(value).strip().lower()
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _legacy_personal_slot_can_be_migrated(row: sqlite3.Row) -> bool:
+    device_id = str(row['device_id'] or '').strip()
+    device_name = str(row['device_name'] or '').strip().lower()
+    has_technical_name = any(marker in device_name for marker in _TECHNICAL_DEVICE_NAME_MARKERS)
+    missing_key = not str(row['public_key'] or '').strip()
+    return _looks_like_legacy_random_id(device_id) or has_technical_name or missing_key
+
+
 def _device_rows(con: sqlite3.Connection, code: str) -> list[sqlite3.Row]:
     return con.execute(
         '''
@@ -319,9 +357,9 @@ def _profile_payload(
     devices = [
         {
             'device_id': row['device_id'],
-            'device_name': row['device_name'] or 'Устройство',
-            'platform': row['platform'] or 'android',
-            'app_version': row['app_version'] or '',
+            'device_name': _public_device_name(str(row['device_name'] or '')),
+            'platform': 'android',
+            'app_version': '',
             'first_seen_at': row['first_seen_at'] or '',
             'last_seen_at': row['last_seen_at'] or '',
             'active': bool(row['active']),
@@ -333,7 +371,7 @@ def _profile_payload(
         'valid': True,
         'device_registered': True,
         'device_id': current_device_id,
-        'device_name': current['device_name'] or 'Устройство',
+        'device_name': _public_device_name(str(current['device_name'] or '')),
         'plan_name': plan_title,
         'plan_code': activation['plan'] or '',
         'devices_used': len(active_rows),
@@ -360,8 +398,8 @@ def register_device(
     app_version: str,
 ) -> Dict[str, Any]:
     safe_device_id = device_id.strip()[:128]
-    safe_device_name = device_name.strip().replace('\n', ' ').replace('\r', ' ')[:80]
-    if not safe_device_id or not safe_device_name:
+    signed_device_name = device_name.strip().replace('\n', ' ').replace('\r', ' ')[:80]
+    if not safe_device_id or not signed_device_name:
         raise DeviceAuthError('bad_request', 400)
     _check_timestamp(timestamp)
 
@@ -369,7 +407,7 @@ def register_device(
         path=path,
         raw_code=raw_code,
         device_id=safe_device_id,
-        device_name=safe_device_name,
+        device_name=signed_device_name,
         timestamp=timestamp,
         nonce=nonce,
     )
@@ -379,6 +417,7 @@ def register_device(
         canonical,
         signature_algorithm,
     )
+    safe_device_name = _public_device_name(signed_device_name)
 
     con = _connect()
     try:
@@ -412,11 +451,8 @@ def register_device(
 
         current_time = now_iso()
         if existing:
-            stored_fingerprint = str(existing['public_key_fingerprint'] or '')
-            # Reinstall keeps the stable Android ID but Android removes the old
-            # Keystore entry. Rotate the key in-place for that same device row;
-            # the UPDATE below replaces the fingerprint, so the previous key
-            # immediately stops authenticating and no extra tariff slot is used.
+            # Android removes the old Keystore entry during uninstall. For the
+            # same stable Android ID, rotate the key in-place and keep one slot.
             if not bool(existing['active']):
                 used = con.execute(
                     'SELECT COUNT(*) AS count FROM code_devices WHERE code = ? AND active = 1',
@@ -441,7 +477,7 @@ def register_device(
                     safe_device_name,
                     public_key_base64,
                     fingerprint,
-                    platform.strip()[:32] or 'android',
+                    'android',
                     app_version.strip()[:32],
                     current_time,
                     current_time,
@@ -449,12 +485,24 @@ def register_device(
                 ),
             )
         else:
-            used = con.execute(
-                'SELECT COUNT(*) AS count FROM code_devices WHERE code = ? AND active = 1',
+            active_rows = con.execute(
+                '''
+                SELECT id, device_id, device_name, public_key
+                FROM code_devices
+                WHERE code = ? AND active = 1
+                ORDER BY last_seen_at DESC, id ASC
+                ''',
                 (code,),
-            ).fetchone()['count']
-            if int(used) >= limit:
-                raise DeviceAuthError('device_limit_reached', 409)
+            ).fetchall()
+            if len(active_rows) >= limit:
+                # One-time migration for old Personal installations that used a
+                # random installation UUID or exposed an emulator/model name.
+                # Modern stable IDs are never silently replaced, so a second
+                # physical device still receives device_limit_reached.
+                if limit == 1 and len(active_rows) == 1 and _legacy_personal_slot_can_be_migrated(active_rows[0]):
+                    con.execute('DELETE FROM code_devices WHERE id = ?', (active_rows[0]['id'],))
+                else:
+                    raise DeviceAuthError('device_limit_reached', 409)
             con.execute(
                 '''
                 INSERT INTO code_devices(
@@ -479,7 +527,7 @@ def register_device(
                     safe_device_name,
                     public_key_base64,
                     fingerprint,
-                    platform.strip()[:32] or 'android',
+                    'android',
                     app_version.strip()[:32],
                     current_time,
                     current_time,
@@ -489,11 +537,11 @@ def register_device(
         con.execute(
             '''
             UPDATE activation_codes
-            SET device_id = COALESCE(device_id, ?),
+            SET device_id = CASE WHEN max_devices = 1 THEN ? ELSE COALESCE(device_id, ?) END,
                 used_at = COALESCE(used_at, ?)
             WHERE code = ?
             ''',
-            (safe_device_id, current_time, code),
+            (safe_device_id, safe_device_id, current_time, code),
         )
         payload = _profile_payload(
             con,
@@ -558,14 +606,14 @@ def authenticate_registered_device(
                 nonce=nonce,
             )
         else:
-            safe_name = device_name.strip().replace('\n', ' ').replace('\r', ' ')[:80]
-            if not safe_name:
-                safe_name = str(device['device_name'] or 'Android Device')
+            signed_name = device_name.strip().replace('\n', ' ').replace('\r', ' ')[:80]
+            if not signed_name:
+                signed_name = str(device['device_name'] or DEFAULT_DEVICE_NAME)
             canonical = _activation_canonical(
                 path=path,
                 raw_code=raw_code,
                 device_id=safe_device_id,
-                device_name=safe_name,
+                device_name=signed_name,
                 timestamp=timestamp,
                 nonce=nonce,
             )
