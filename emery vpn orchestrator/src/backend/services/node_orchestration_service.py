@@ -66,8 +66,8 @@ class NodeOrchestrationService:
     @classmethod
     def _node_sort_key(cls, node, device: Device | None = None) -> tuple:
         return (
-            0 if node.health_status == "healthy" else 1,
             cls._fill_ratio(node, device),
+            0 if node.health_status == "healthy" else 1,
             node.load_score,
             -node.priority,
             node.id,
