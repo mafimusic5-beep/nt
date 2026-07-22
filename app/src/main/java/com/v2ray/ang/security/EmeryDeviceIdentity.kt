@@ -149,7 +149,11 @@ object EmeryDeviceIdentity {
             return DEFAULT_DEVICE_NAME
         }
         val lower = normalized.lowercase(Locale.ROOT)
-        return if (technicalNameMarkers.any(lower::contains)) DEFAULT_DEVICE_NAME else normalized
+        return if (technicalNameMarkers.any { marker -> lower.contains(marker) }) {
+            DEFAULT_DEVICE_NAME
+        } else {
+            normalized
+        }
     }
 
     private fun publicKeyBase64(): String {
