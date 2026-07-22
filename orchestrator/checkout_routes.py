@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header
 from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
+import hashlib
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict, Optional
@@ -58,9 +59,10 @@ def limited(key: str) -> bool:
     return False
 
 
-def remote_ip(request: Request) -> str:
-    forwarded = request.headers.get('x-forwarded-for', '')
-    return forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else 'unknown')
+def privacy_rate_key(scope: str, *parts: object) -> str:
+    """Create an in-memory rate-limit key without reading or storing a remote IP."""
+    material = ':'.join([scope, *(str(part).strip().lower() for part in parts)])
+    return hashlib.sha256(material.encode('utf-8')).hexdigest()
 
 
 def plan_or_error(plan: str):
@@ -147,8 +149,8 @@ def plans():
 
 
 @router.post('/api/checkout/get-code')
-def get_code(payload: CheckoutRequest, request: Request):
-    if limited('checkout:' + remote_ip(request)):
+def get_code(payload: CheckoutRequest):
+    if limited(privacy_rate_key('checkout', payload.plan, payload.customer, payload.months)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
@@ -156,8 +158,8 @@ def get_code(payload: CheckoutRequest, request: Request):
 
 
 @router.post('/api/checkout/find-code')
-def find_code(payload: CodeLookupRequest, request: Request):
-    if limited('find-code:' + remote_ip(request)):
+def find_code(payload: CodeLookupRequest):
+    if limited(privacy_rate_key('find-code', payload.code)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     row = get_activation_code(payload.code)
     if not row:
@@ -166,8 +168,8 @@ def find_code(payload: CodeLookupRequest, request: Request):
 
 
 @router.post('/api/checkout/renew-code')
-def renew_code(payload: RenewCodeRequest, request: Request):
-    if limited('renew-code:' + remote_ip(request)):
+def renew_code(payload: RenewCodeRequest):
+    if limited(privacy_rate_key('renew-code', payload.code, payload.plan, payload.months)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
