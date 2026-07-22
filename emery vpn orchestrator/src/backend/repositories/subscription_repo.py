@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from src.backend.repositories.base import BaseRepository
+from src.backend.utils.privacy import sanitize_device_name
 from src.common.models import ActivationCode, Device, Subscription, User, VpnNode
 
 
@@ -49,6 +50,15 @@ class SubscriptionRepository(BaseRepository):
             )
         )
 
+    def find_active_device(self, subscription_id: int, fingerprint: str) -> Device | None:
+        return self.db.scalar(
+            select(Device).where(
+                Device.subscription_id == subscription_id,
+                Device.device_fingerprint == fingerprint,
+                Device.is_active.is_(True),
+            )
+        )
+
     def upsert_device(
         self,
         subscription_id: int,
@@ -57,18 +67,19 @@ class SubscriptionRepository(BaseRepository):
         device_name: str,
     ) -> Device:
         now = datetime.now(timezone.utc)
+        safe_name = sanitize_device_name(device_name, platform)
         device = self.find_device(subscription_id, fingerprint)
         if device:
             device.is_active = True
             device.last_seen_at = now
             device.platform = platform
-            device.device_name = device_name
+            device.device_name = safe_name
             return device
         device = Device(
             subscription_id=subscription_id,
             device_fingerprint=fingerprint,
             platform=platform,
-            device_name=device_name,
+            device_name=safe_name,
             last_seen_at=now,
             is_active=True,
         )
