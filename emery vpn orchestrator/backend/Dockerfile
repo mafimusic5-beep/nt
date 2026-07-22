@@ -13,4 +13,4 @@ RUN mkdir -p /app/data
 
 EXPOSE 9330
 
-CMD ["uvicorn", "src.backend.main:app", "--host", "0.0.0.0", "--port", "9330"]
+CMD ["uvicorn", "src.backend.main:app", "--host", "0.0.0.0", "--port", "9330", "--no-access-log", "--no-proxy-headers"]
