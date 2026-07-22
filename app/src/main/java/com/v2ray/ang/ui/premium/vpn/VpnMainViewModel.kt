@@ -556,20 +556,33 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         connectJob = viewModelScope.launch {
             val accessVerification = EmeryBackendClient.fetchProfile(
                 accessKey = currentState.activationKey,
-                requireDeviceInventory = true,
+                requireDeviceInventory = false,
             )
-            if (accessVerification.isFailure) {
-                val reason = accessVerification.exceptionOrNull()?.message.orEmpty()
-                setDisconnectedWithError(deviceAccessError(reason))
-                VpnUiDebugLogger.log(
-                    hypothesisId = "H12",
-                    location = "VpnMainViewModel.kt:onConnectClick",
-                    message = "registered device verification failed before VPN start",
-                    data = JSONObject().put("error", reason.ifBlank { "unknown" }),
-                )
-                return@launch
-            }
-            EmeryAccessManager.saveProfile(accessVerification.getOrThrow())
+            accessVerification.fold(
+                onSuccess = { profile ->
+                    EmeryAccessManager.saveProfile(profile)
+                },
+                onFailure = { error ->
+                    val reason = error.message.orEmpty()
+                    if (isBlockingAccessFailure(reason)) {
+                        setDisconnectedWithError(deviceAccessError(reason))
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H12",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "access denied before VPN start",
+                            data = JSONObject().put("error", reason.ifBlank { "unknown" }),
+                        )
+                        return@launch
+                    }
+
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H12",
+                        location = "VpnMainViewModel.kt:onConnectClick",
+                        message = "optional access refresh unavailable; continuing with activated configuration",
+                        data = JSONObject().put("error", reason.ifBlank { "unknown" }),
+                    )
+                },
+            )
 
             val policyAssets = RegionalPolicyManager.prepareForConnection(getApplication())
             if (policyAssets.isFailure) {
@@ -639,6 +652,20 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun isBlockingAccessFailure(reason: String): Boolean {
+        val normalized = reason.trim().lowercase()
+        return normalized in setOf(
+            "not_found",
+            "expired",
+            "banned",
+            "blocked",
+            "revoked",
+            "invalid_or_expired_key",
+            "vpn_disabled",
+            "upgrade_required",
+        )
+    }
+
     private fun deviceAccessError(reason: String): String {
         return when (reason) {
             "device_not_registered", "device_confirmation_missing" ->
@@ -649,8 +676,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 "Сервер не подтвердил список устройств"
             "plan_limit_mismatch" ->
                 "Лимит устройств не соответствует тарифу"
-            "invalid_or_expired_key" ->
+            "invalid_or_expired_key", "not_found", "expired", "banned", "blocked", "revoked" ->
                 "Код доступа недействителен или истёк"
+            "vpn_disabled" ->
+                "Доступ к VPN отключён"
+            "upgrade_required" ->
+                "Требуется обновить приложение"
             "network" ->
                 "Не удалось проверить устройство. Проверьте интернет"
             else -> "Не удалось подтвердить доступ этого устройства"
