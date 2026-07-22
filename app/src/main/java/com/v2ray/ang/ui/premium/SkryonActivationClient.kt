@@ -1,13 +1,14 @@
 package com.v2ray.ang.ui.premium
 
 import android.content.Context
-import android.provider.Settings
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.fmt.VlessFmt
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.security.EmeryDeviceIdentity
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -22,6 +23,7 @@ internal const val SKRYON_SERVER_ID_PREF = "SKRYON_SERVER_ID"
 internal const val SKRYON_CONFIG_REVISION_PREF = "SKRYON_CONFIG_REVISION"
 
 private const val SKRYON_WEBSITE_API_BASE_URL = "https://skryon.ru"
+private const val SYNC_DISABLED_RECHECK_DELAY_MS = 60_000L
 
 internal data class SkryonActivationResult(
     val ok: Boolean,
@@ -56,6 +58,10 @@ private val configSyncClient by lazy {
         .build()
 }
 
+internal fun isSkryonSyncEnabled(): Boolean =
+    MmkvManager.decodeSettingsBool(AppConfig.SUBSCRIPTION_AUTO_UPDATE, false)
+
+@Suppress("UNUSED_PARAMETER")
 internal suspend fun activateSkryonCode(
     context: Context,
     code: String,
@@ -64,7 +70,7 @@ internal suspend fun activateSkryonCode(
     try {
         val requestJson = JSONObject()
             .put("code", formattedCode)
-            .put("deviceId", stableDeviceId(context))
+            .put("deviceId", EmeryDeviceIdentity.deviceId())
             .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
             .toString()
         val request = Request.Builder()
@@ -106,15 +112,26 @@ internal suspend fun activateSkryonCode(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 internal suspend fun syncSkryonConfig(
     context: Context,
     code: String,
     revision: Long,
 ): SkryonConfigSyncResult = withContext(Dispatchers.IO) {
+    if (!isSkryonSyncEnabled()) {
+        // Synchronization is opt-in. Avoid network activity and keep the existing polling loop cheap.
+        delay(SYNC_DISABLED_RECHECK_DELAY_MS)
+        return@withContext SkryonConfigSyncResult(
+            ok = false,
+            revision = revision,
+            reason = "sync_disabled",
+        )
+    }
+
     try {
         val requestJson = JSONObject()
             .put("code", code)
-            .put("deviceId", stableDeviceId(context))
+            .put("deviceId", EmeryDeviceIdentity.deviceId())
             .put("revision", revision)
             .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
             .toString()
@@ -188,11 +205,6 @@ internal fun clearActivatedSkryonConfig() {
     MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, "")
     MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, "")
     MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, -1L)
-}
-
-private fun stableDeviceId(context: Context): String {
-    val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-    return androidId?.takeIf { it.isNotBlank() } ?: "android-device"
 }
 
 private fun activationReasonText(reason: String): String {
