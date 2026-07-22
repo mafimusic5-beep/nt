@@ -163,6 +163,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
+                locationsError = "",
             )
         }
     }
@@ -755,6 +756,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
+                locationsError = "",
             )
         }
         VpnUiDebugLogger.log(
