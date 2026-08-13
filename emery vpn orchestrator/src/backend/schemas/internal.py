@@ -3,7 +3,9 @@ from pydantic import BaseModel, Field
 
 class CreateOrderRequest(BaseModel):
     telegram_id: int
-    plan_code: str = Field(pattern=r"^warmup_(1m|3m|6m|12m)$")
+    plan_code: str = Field(
+        pattern=r"^(personal_1m|personal_plus_1m|family_1m|warmup_(1m|3m|6m|12m))$"
+    )
 
 
 class CreateOrderResponse(BaseModel):

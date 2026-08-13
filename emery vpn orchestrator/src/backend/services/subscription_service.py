@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 from datetime import datetime, timezone
 
@@ -7,6 +9,11 @@ from sqlalchemy.orm import Session
 from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.repositories.subscription_repo import SubscriptionRepository
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
+from src.backend.services.pool_assignment_service import PoolAssignmentService
+from src.backend.schemas.pool_bridge import (
+    PoolReservationConfirmRequest,
+    PoolReservationPrepareRequest,
+)
 from src.backend.utils.debug_log import agent_log
 from src.backend.schemas.subscription import (
     HeartbeatRequest,
@@ -24,6 +31,8 @@ from src.backend.schemas.subscription import (
     VpnServerItemResponse,
 )
 from src.backend.utils.security import hash_activation_code
+from src.common.config import settings
+from src.common.models import VpnNode
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +43,62 @@ class SubscriptionService:
         self.repo = SubscriptionRepository(db)
         self.audit = AuditRepository(db)
         self.node_orchestrator = NodeOrchestrationService(db)
+
+    @staticmethod
+    def _unique_assignment_enabled() -> bool:
+        return PoolAssignmentService._required_features_enabled()
+
+    @staticmethod
+    def _native_hmac(namespace: str, *parts: str) -> str:
+        message = "\0".join((namespace, *parts))
+        return hmac.new(
+            settings.pool_bridge_api_key.encode("utf-8"),
+            message.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _build_unique_device_config(self, sub, device, region_code: str) -> dict:
+        service = PoolAssignmentService(self.db)
+        expires_at = sub.ends_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        subject_key = self._native_hmac(
+            "native-device-v1",
+            str(sub.id),
+            str(device.id),
+            device.device_fingerprint,
+        )
+        entitlement_hash = self._native_hmac(
+            "native-entitlement-v1",
+            str(sub.id),
+            sub.plan_code,
+            expires_at.isoformat(),
+        )
+        prepared = service.prepare(
+            PoolReservationPrepareRequest(
+                subject_type="native_device",
+                subject_key=subject_key,
+                entitlement_hash=entitlement_hash,
+                entitlement_expires_at=expires_at,
+                region_code=region_code,
+            )
+        )
+        if region_code != "auto" and prepared.region_code != region_code:
+            raise HTTPException(status_code=409, detail="device_assignment_region_locked")
+        if prepared.confirmation_required:
+            service.confirm(
+                PoolReservationConfirmRequest(
+                    assignment_id=prepared.assignment_id,
+                    confirmation_token=prepared.confirmation_token,
+                )
+            )
+        return {
+            "node_id": prepared.node_id,
+            "node_name": prepared.node_name,
+            "region_code": prepared.region_code,
+            "import_text": prepared.config,
+            "node_health_status": "healthy",
+        }
 
     def redeem_code(self, req: RedeemActivationCodeRequest) -> RedeemActivationCodeResponse:
         user = self.repo.get_or_create_user(req.telegram_id)
@@ -98,7 +163,28 @@ class SubscriptionService:
             used = self.repo.count_active_devices(subscription_id)
             if used >= sub.devices_limit:
                 raise HTTPException(status_code=409, detail="device_limit_reached")
-        return self.repo.upsert_device(subscription_id, fingerprint, platform, device_name)
+        device = self.repo.upsert_device(
+            subscription_id,
+            fingerprint,
+            platform,
+            device_name,
+            sub.devices_limit,
+        )
+        if device is None:
+            raise HTTPException(status_code=409, detail="device_limit_reached")
+        self.db.flush()
+        if self._unique_assignment_enabled():
+            try:
+                self._build_unique_device_config(sub, device, "auto")
+            except HTTPException:
+                if existing is None:
+                    # Pool prepare can commit while installing the remote
+                    # credential.  Remove the just-created native device if
+                    # assignment ultimately failed, matching legacy rollback.
+                    self.db.delete(device)
+                    self.db.commit()
+                raise
+        return device
 
     def _resolve_device_for_subscription(self, subscription_id: int, device_fingerprint: str | None):
         devices = self.repo.list_devices(subscription_id)
@@ -124,14 +210,7 @@ class SubscriptionService:
         self.db.commit()
 
     def unbind(self, telegram_id: int, fingerprint: str) -> None:
-        user = self.repo.get_or_create_user(telegram_id)
-        sub = self.repo.get_active_subscription(user.id)
-        if not sub:
-            raise HTTPException(status_code=403, detail="subscription_inactive")
-        if not self.repo.unbind_device(sub.id, fingerprint):
-            raise HTTPException(status_code=404, detail="device_not_found")
-        self.audit.write("user", str(user.id), "device_unbind", "subscription", str(sub.id))
-        self.db.commit()
+        raise HTTPException(status_code=403, detail="device_unbind_disabled")
 
     def get_vpn_config(self, telegram_id: int, device_fingerprint: str | None = None) -> VpnConfigResponse:
         agent_log(
@@ -152,7 +231,10 @@ class SubscriptionService:
             return VpnConfigResponse(error="subscription_inactive")
         try:
             device = self._resolve_device_for_subscription(sub.id, device_fingerprint)
-            cfg = self.node_orchestrator.build_user_config(sub.id, device)
+            if self._unique_assignment_enabled():
+                cfg = self._build_unique_device_config(sub, device, sub.region_code)
+            else:
+                cfg = self.node_orchestrator.build_user_config(sub.id, device)
         except HTTPException as exc:
             agent_log(
                 hypothesis_id="H2",
@@ -179,6 +261,8 @@ class SubscriptionService:
         code, sub = self.resolve_subscription_by_access_key(access_key)
         if not code or not sub:
             raise HTTPException(status_code=401, detail="invalid_or_expired_key")
+        if self._unique_assignment_enabled():
+            raise HTTPException(status_code=409, detail="per_device_region_selection_required")
         import_text = self.node_orchestrator.build_pool_import_text(sub.id)
         if not import_text.strip():
             raise HTTPException(status_code=404, detail="no_pool_config")
@@ -254,7 +338,17 @@ class SubscriptionService:
             raise HTTPException(status_code=401, detail="invalid_or_expired_key")
 
         device = self._resolve_device_for_subscription(sub.id, device_fingerprint)
-        cfg = self.node_orchestrator.build_user_config_for_node(sub.id, server_id, device)
+        if self._unique_assignment_enabled():
+            requested_node = self.db.get(VpnNode, server_id)
+            if requested_node is None:
+                raise HTTPException(status_code=404, detail="server_not_found")
+            unique = self._build_unique_device_config(sub, device, requested_node.region_code)
+            selected_node = self.db.get(VpnNode, unique["node_id"])
+            if selected_node is None:
+                raise HTTPException(status_code=409, detail="assigned_node_missing")
+            cfg = {"node": selected_node, "import_text": unique["import_text"]}
+        else:
+            cfg = self.node_orchestrator.build_user_config_for_node(sub.id, server_id, device)
         self.audit.write("user", str(code.user_id), "vpn_connect_requested", "vpn_node", str(server_id))
         self.db.commit()
         agent_log(
@@ -264,7 +358,7 @@ class SubscriptionService:
             data={"server_id": server_id, "region_code": cfg["node"].region_code, "import_len": len(cfg["import_text"])},
         )
         return {
-            "server_id": server_id,
+            "server_id": cfg["node"].id,
             "city": cfg["node"].region_code,
             "region_code": cfg["node"].region_code,
             "import_text": cfg["import_text"],

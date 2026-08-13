@@ -18,7 +18,7 @@ class ServerPoolSyncTest(unittest.IsolatedAsyncioTestCase):
             'name': 'Germany',
             'region': 'AUTO',
             'config': (
-                'vless://00000000-0000-0000-0000-000000000000@1.2.3.4:443'
+                'vless://00000000-0000-0000-0000-000000000000@203.0.113.10:443'
                 '?security=reality&pbk=key&sid=abcd&type=tcp#Germany'
             ),
             'pool_node_id': None,
@@ -33,8 +33,11 @@ class ServerPoolSyncTest(unittest.IsolatedAsyncioTestCase):
         create_call = request.await_args_list[1]
         self.assertEqual(create_call.args[:2], ('POST', '/api/v1/admin/nodes'))
         self.assertEqual(create_call.kwargs['payload']['provider'], 'skryon-legacy')
-        self.assertEqual(create_call.kwargs['payload']['region_code'], 'legacy-7')
-        self.assertEqual(create_call.kwargs['payload']['endpoint'], '1.2.3.4')
+        self.assertEqual(create_call.kwargs['payload']['region_code'], 'de')
+        self.assertEqual(create_call.kwargs['payload']['endpoint'], '203.0.113.10')
+        self.assertEqual(create_call.kwargs['payload']['capacity_clients'], 20)
+        self.assertEqual(create_call.kwargs['payload']['bandwidth_limit_mbps'], 600)
+        self.assertEqual(create_call.kwargs['payload']['per_device_speed_limit_mbps'], 30)
 
     async def test_publish_reenables_an_existing_disabled_node(self) -> None:
         self.server['pool_node_id'] = 31

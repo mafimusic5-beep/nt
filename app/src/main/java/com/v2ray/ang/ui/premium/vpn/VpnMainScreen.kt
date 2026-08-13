@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -57,6 +58,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -66,6 +69,8 @@ import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
+import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
+import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import kotlinx.coroutines.launch
 
 @Composable
@@ -87,6 +92,7 @@ fun VpnMainRoute(
             }
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
+        onActivationCodeSubmit = viewModel::activateReplacementCode,
         modifier = modifier,
     )
 }
@@ -98,6 +104,7 @@ fun VpnMainScreen(
     onLocationSelected: (String) -> Unit,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
+    onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -263,6 +270,8 @@ fun VpnMainScreen(
                         autoConnectEnabled = enabled
                         MmkvManager.encodeStartOnBoot(enabled)
                     },
+                    connectionState = uiState.connectionState,
+                    onActivationCodeSubmit = onActivationCodeSubmit,
                     compact = compact,
                     tight = tight,
                     modifier = Modifier
@@ -660,6 +669,8 @@ private fun AdvancedPage(
     onRegionalPolicyConfirmed: (RegionalPolicyMode) -> Unit,
     autoConnectEnabled: Boolean,
     onAutoConnectChange: (Boolean) -> Unit,
+    connectionState: VpnConnectionState,
+    onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     compact: Boolean,
     tight: Boolean,
     modifier: Modifier = Modifier,
@@ -705,6 +716,15 @@ private fun AdvancedPage(
 
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
+        SubscriptionCodeCard(
+            connectionState = connectionState,
+            onActivationCodeSubmit = onActivationCodeSubmit,
+            compact = compact,
+            tight = tight,
+        )
+
+        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+
         AutoConnectCard(
             enabled = autoConnectEnabled,
             compact = compact,
@@ -731,6 +751,103 @@ private fun AdvancedPage(
         )
 
         Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
+    }
+}
+
+@Composable
+private fun SubscriptionCodeCard(
+    connectionState: VpnConnectionState,
+    onActivationCodeSubmit: suspend (String) -> Result<Unit>,
+    compact: Boolean,
+    tight: Boolean,
+) {
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf("") }
+    var statusText by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    val disconnected = connectionState == VpnConnectionState.Disconnected
+    val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.96f))
+            .border(1.dp, AppUiColors.Border, shape)
+            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (tight) 14.dp else 18.dp),
+    ) {
+        Text(
+            text = "Активировать другой тариф",
+            style = MaterialTheme.typography.titleMedium,
+            color = AppUiColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Введите код после покупки. Текущий доступ заменится только после успешной проверки нового кода.",
+            style = MaterialTheme.typography.bodySmall,
+            color = AppUiColors.TextSecondary,
+        )
+        Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
+        OutlinedTextField(
+            value = code,
+            onValueChange = {
+                code = sanitizeSkryonActivationCode(it)
+                statusText = ""
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading,
+            singleLine = true,
+            label = { Text("Новый код") },
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
+                keyboardType = KeyboardType.Ascii,
+            ),
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = {
+                if (isLoading) return@Button
+                if (!disconnected) {
+                    statusText = "Сначала отключите VPN"
+                    return@Button
+                }
+                if (code.length != SKRYON_ACTIVATION_CODE_LENGTH) {
+                    statusText = "Введите код полностью"
+                    return@Button
+                }
+                scope.launch {
+                    isLoading = true
+                    statusText = ""
+                    onActivationCodeSubmit(code).fold(
+                        onSuccess = {
+                            code = ""
+                            statusText = "Новый тариф активирован"
+                        },
+                        onFailure = { error ->
+                            statusText = error.message.orEmpty().ifBlank { "Ошибка активации" }
+                        },
+                    )
+                    isLoading = false
+                }
+            },
+            enabled = !isLoading,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = AppUiColors.TextPrimary,
+                contentColor = Color.White,
+            ),
+        ) {
+            Text(if (isLoading) "Проверка..." else "Активировать код")
+        }
+        if (statusText.isNotBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextSecondary,
+            )
+        }
     }
 }
 

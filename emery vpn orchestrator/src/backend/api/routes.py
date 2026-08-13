@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.backend.deps.auth import require_admin_api_key, require_internal_api_key
+from src.backend.deps.auth import (
+    require_admin_api_key,
+    require_internal_api_key,
+    require_pool_bridge_api_key,
+)
 from src.backend.deps.db import get_db
 from src.backend.schemas.admin import (
     AdminStatsResponse,
@@ -17,6 +21,13 @@ from src.backend.schemas.admin import (
     VpnNodeUpsertRequest,
 )
 from src.backend.schemas.internal import ConfirmPaymentRequest, ConfirmPaymentResponse, CreateOrderRequest, CreateOrderResponse
+from src.backend.schemas.pool_bridge import (
+    PoolAssignmentMaintenanceResponse,
+    PoolReservationConfirmRequest,
+    PoolReservationConfirmResponse,
+    PoolReservationPrepareRequest,
+    PoolReservationResponse,
+)
 from src.backend.utils.debug_log import agent_log
 from src.backend.schemas.subscription import (
     HeartbeatRequest,
@@ -36,6 +47,8 @@ from src.backend.schemas.subscription import (
 from src.backend.services.admin_service import AdminService
 from src.backend.services.capacity_service import CapacityService
 from src.backend.services.order_service import OrderService
+from src.backend.services.pool_assignment_service import PoolAssignmentService
+from src.backend.services.renewal_planner_service import RenewalPlannerService
 from src.backend.services.subscription_service import SubscriptionService
 from src.backend.utils.app_version import (
     APP_VERSION_HEADER,
@@ -80,12 +93,17 @@ def heartbeat_device(payload: HeartbeatRequest, db: Session = Depends(get_db)):
 
 @router.post("/device/unbind")
 def unbind_device(payload: UnbindDeviceRequest, db: Session = Depends(get_db)):
-    SubscriptionService(db).unbind(payload.telegram_id, payload.device_fingerprint)
-    return {"status": "ok"}
+    # Keep the route for old clients, but fail closed: paid device slots are
+    # permanent and cannot be recycled by the user.
+    raise HTTPException(status_code=403, detail="device_unbind_disabled")
 
 
 @router.get("/vpn/config", response_model=VpnConfigResponse)
-def get_vpn_config(telegram_id: int, db: Session = Depends(get_db)):
+def get_vpn_config(
+    telegram_id: int,
+    x_emery_device_id: str = Header(default="", alias="X-Emery-Device-Id"),
+    db: Session = Depends(get_db),
+):
     # #region agent log
     agent_log(
         hypothesis_id="H2",
@@ -94,7 +112,7 @@ def get_vpn_config(telegram_id: int, db: Session = Depends(get_db)):
         data={"telegram_id": telegram_id},
     )
     # #endregion
-    return SubscriptionService(db).get_vpn_config(telegram_id)
+    return SubscriptionService(db).get_vpn_config(telegram_id, x_emery_device_id or None)
 
 
 @router.get("/vpn/servers", response_model=list[VpnServerItemResponse])
@@ -113,8 +131,16 @@ def get_vpn_pool_config(access_key: str, db: Session = Depends(get_db)):
 
 
 @router.post("/vpn/connect", response_model=VpnConnectResponse)
-def connect_vpn_server(payload: VpnConnectRequest, db: Session = Depends(get_db)):
-    return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id)
+def connect_vpn_server(
+    payload: VpnConnectRequest,
+    x_emery_device_id: str = Header(default="", alias="X-Emery-Device-Id"),
+    db: Session = Depends(get_db),
+):
+    return SubscriptionService(db).connect_to_server(
+        payload.access_key,
+        payload.server_id,
+        x_emery_device_id or None,
+    )
 
 
 @router.get("/user/devices", response_model=list[UserDeviceResponse])
@@ -153,6 +179,39 @@ def internal_confirm_payment(payload: ConfirmPaymentRequest, db: Session = Depen
     return OrderService(db).confirm_payment(payload)
 
 
+@router.post(
+    "/internal/pool/assignments/prepare",
+    response_model=PoolReservationResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_prepare_pool_assignment(
+    payload: PoolReservationPrepareRequest,
+    db: Session = Depends(get_db),
+):
+    return PoolAssignmentService(db).prepare(payload)
+
+
+@router.post(
+    "/internal/pool/assignments/confirm",
+    response_model=PoolReservationConfirmResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_confirm_pool_assignment(
+    payload: PoolReservationConfirmRequest,
+    db: Session = Depends(get_db),
+):
+    return PoolAssignmentService(db).confirm(payload)
+
+
+@router.post(
+    "/internal/pool/assignments/maintenance",
+    response_model=PoolAssignmentMaintenanceResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_run_pool_assignment_maintenance(db: Session = Depends(get_db)):
+    return PoolAssignmentService(db).run_maintenance()
+
+
 @router.post("/admin/subscription/grant", response_model=GrantSubscriptionResponse, dependencies=[Depends(require_admin_api_key)])
 def admin_grant_subscription(payload: GrantSubscriptionRequest, db: Session = Depends(get_db)):
     return AdminService(db).grant_subscription(payload)
@@ -176,6 +235,16 @@ def admin_capacity(db: Session = Depends(get_db)):
 @router.get("/admin/capacity/alert", dependencies=[Depends(require_admin_api_key)])
 def admin_capacity_alert(db: Session = Depends(get_db)):
     return {"text": CapacityService(db).alert_text()}
+
+
+@router.get("/admin/renewals/plan", dependencies=[Depends(require_admin_api_key)])
+def admin_renewal_plan(db: Session = Depends(get_db)):
+    return RenewalPlannerService(db).preview()
+
+
+@router.post("/admin/renewals/plan/apply", dependencies=[Depends(require_admin_api_key)])
+def admin_apply_renewal_plan(db: Session = Depends(get_db)):
+    return RenewalPlannerService(db).apply()
 
 
 @router.get("/admin/stats", response_model=AdminStatsResponse, dependencies=[Depends(require_admin_api_key)])

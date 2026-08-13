@@ -26,23 +26,31 @@ def upgrade() -> None:
     op.add_column("vpn_nodes", sa.Column("current_clients", sa.Integer(), nullable=False, server_default="0"))
     op.add_column("vpn_nodes", sa.Column("per_device_speed_limit_mbps", sa.Integer(), nullable=False, server_default="100"))
     op.add_column("vpn_nodes", sa.Column("firstvds_vps_id", sa.String(length=64), nullable=False, server_default=""))
-    op.add_column("devices", sa.Column("node_id", sa.Integer(), nullable=True))
+    # SQLite requires the copy-and-move batch strategy for a new foreign key.
+    with op.batch_alter_table("devices") as batch_op:
+        batch_op.add_column(sa.Column("node_id", sa.Integer(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_devices_node_id",
+            "vpn_nodes",
+            ["node_id"],
+            ["id"],
+        )
 
     op.create_index("ix_vpn_nodes_health_status", "vpn_nodes", ["health_status"], unique=False)
     op.create_index("ix_vpn_nodes_load_score", "vpn_nodes", ["load_score"], unique=False)
     op.create_index("ix_vpn_nodes_priority", "vpn_nodes", ["priority"], unique=False)
     op.create_index("ix_devices_node_id", "devices", ["node_id"], unique=False)
-    op.create_foreign_key("fk_devices_node_id", "devices", "vpn_nodes", ["node_id"], ["id"])
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_devices_node_id", "devices", type_="foreignkey")
     op.drop_index("ix_devices_node_id", table_name="devices")
     op.drop_index("ix_vpn_nodes_priority", table_name="vpn_nodes")
     op.drop_index("ix_vpn_nodes_load_score", table_name="vpn_nodes")
     op.drop_index("ix_vpn_nodes_health_status", table_name="vpn_nodes")
 
-    op.drop_column("devices", "node_id")
+    with op.batch_alter_table("devices") as batch_op:
+        batch_op.drop_constraint("fk_devices_node_id", type_="foreignkey")
+        batch_op.drop_column("node_id")
     op.drop_column("vpn_nodes", "firstvds_vps_id")
     op.drop_column("vpn_nodes", "per_device_speed_limit_mbps")
     op.drop_column("vpn_nodes", "current_clients")

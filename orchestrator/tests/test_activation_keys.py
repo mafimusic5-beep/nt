@@ -367,6 +367,26 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
             storage.parse_iso(before['expires_at']),
         )
 
+    def test_checkout_marks_refund_ineligible_after_first_use(self) -> None:
+        external_id = 'refund-' + uuid.uuid4().hex
+        created = storage.create_checkout_code(
+            plan='personal',
+            max_devices=1,
+            days=30,
+            customer='tests',
+            external_id=external_id,
+        )
+
+        unused = checkout_routes.order(external_id)
+        self.assertFalse(unused['usageStarted'])
+        self.assertTrue(unused['refundEligible'])
+
+        self.register(code=created['code'], device_id='used-device')
+        used = checkout_routes.order(external_id)
+        self.assertTrue(used['usageStarted'])
+        self.assertFalse(used['refundEligible'])
+        self.assertTrue(used['usedAt'])
+
 
 if __name__ == '__main__':
     unittest.main()

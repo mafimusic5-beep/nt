@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 
 from src.backend.repositories.base import BaseRepository
 from src.common.models import ActivationCode, Device, Subscription, User, VpnNode
@@ -37,7 +38,10 @@ class SubscriptionRepository(BaseRepository):
     def count_active_devices(self, subscription_id: int) -> int:
         return len(
             self.db.scalars(
-                select(Device).where(Device.subscription_id == subscription_id, Device.is_active.is_(True))
+                select(Device).where(
+                    Device.subscription_id == subscription_id,
+                    or_(Device.slot_index.is_not(None), Device.is_active.is_(True)),
+                )
             ).all()
         )
 
@@ -55,26 +59,51 @@ class SubscriptionRepository(BaseRepository):
         fingerprint: str,
         platform: str,
         device_name: str,
-    ) -> Device:
+        devices_limit: int,
+    ) -> Device | None:
         now = datetime.now(timezone.utc)
         device = self.find_device(subscription_id, fingerprint)
-        if device:
+        if device and device.slot_index is not None:
             device.is_active = True
             device.last_seen_at = now
             device.platform = platform
             device.device_name = device_name
             return device
-        device = Device(
-            subscription_id=subscription_id,
-            device_fingerprint=fingerprint,
-            platform=platform,
-            device_name=device_name,
-            last_seen_at=now,
-            is_active=True,
-        )
-        self.db.add(device)
-        self.db.flush()
-        return device
+
+        # A unique (subscription, slot_index) constraint is the final admission
+        # gate. Concurrent workers may race on the same free slot, but only one
+        # can commit it; losers try the next allowed slot and can never exceed
+        # the immutable tariff limit.
+        for slot_index in range(1, max(int(devices_limit), 0) + 1):
+            candidate = device or Device(
+                subscription_id=subscription_id,
+                device_fingerprint=fingerprint,
+                platform=platform,
+                device_name=device_name,
+                last_seen_at=now,
+                is_active=True,
+            )
+            try:
+                with self.db.begin_nested():
+                    candidate.slot_index = slot_index
+                    candidate.is_active = True
+                    candidate.last_seen_at = now
+                    candidate.platform = platform
+                    candidate.device_name = device_name
+                    self.db.add(candidate)
+                    self.db.flush()
+                return candidate
+            except IntegrityError:
+                self.db.expire_all()
+                concurrent = self.find_device(subscription_id, fingerprint)
+                if concurrent and concurrent.slot_index is not None:
+                    concurrent.is_active = True
+                    concurrent.last_seen_at = now
+                    concurrent.platform = platform
+                    concurrent.device_name = device_name
+                    return concurrent
+                device = concurrent
+        return None
 
     def heartbeat(self, subscription_id: int, fingerprint: str) -> bool:
         device = self.find_device(subscription_id, fingerprint)

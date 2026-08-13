@@ -48,7 +48,14 @@ class OrderRepository(BaseRepository):
         self.db.flush()
         return payment
 
-    def create_or_extend_subscription(self, user_id: int, months: int, max_devices: int, region_code: str) -> Subscription:
+    def create_or_extend_subscription(
+        self,
+        user_id: int,
+        months: int,
+        max_devices: int,
+        region_code: str,
+        plan_code: str = "warmup",
+    ) -> Subscription:
         now = datetime.now(timezone.utc)
         current = self.db.scalar(
             select(Subscription).where(
@@ -59,10 +66,12 @@ class OrderRepository(BaseRepository):
         )
         if current:
             current.ends_at = current.ends_at + relativedelta(months=months)
+            current.plan_code = plan_code
+            current.devices_limit = max_devices
             return current
         sub = Subscription(
             user_id=user_id,
-            plan_code="warmup",
+            plan_code=plan_code,
             region_code=region_code,
             status="active",
             devices_limit=max_devices,

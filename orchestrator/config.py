@@ -34,6 +34,13 @@ def _split_admin_ids(raw: str) -> List[int]:
     return result
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 ADMIN_IDS = _split_admin_ids(os.getenv('ADMIN_IDS', ''))
 API_HOST = os.getenv('API_HOST', '0.0.0.0')
@@ -58,6 +65,24 @@ SERVER_POOL_SYNC_ADMIN_KEY = (
     or os.getenv('ADMIN_API_KEY', '').strip()
     or _shared_emery_value('ADMIN_API_KEY')
 )
+POOL_BRIDGE_URL = (
+    os.getenv('POOL_BRIDGE_URL', '').strip()
+    or SERVER_POOL_SYNC_URL
+).rstrip('/')
+POOL_BRIDGE_API_KEY = (
+    os.getenv('POOL_BRIDGE_API_KEY', '').strip()
+    or _shared_emery_value('POOL_BRIDGE_API_KEY')
+)
+POOL_BRIDGE_PSEUDONYM_KEY = (
+    os.getenv('POOL_BRIDGE_PSEUDONYM_KEY', '').strip()
+    or POOL_BRIDGE_API_KEY
+)
+POOL_BRIDGE_ENABLED = _env_bool(
+    'POOL_BRIDGE_ENABLED',
+    bool(POOL_BRIDGE_URL and POOL_BRIDGE_API_KEY and POOL_BRIDGE_PSEUDONYM_KEY),
+)
+POOL_BRIDGE_REGION_CODE = os.getenv('POOL_BRIDGE_REGION_CODE', 'auto').strip().lower() or 'auto'
+POOL_BRIDGE_TIMEOUT_SECONDS = max(float(os.getenv('POOL_BRIDGE_TIMEOUT_SECONDS', '100')), 10.0)
 
 # Builds before 717 do not implement the signed device protocol and must be upgraded.
 SIGNED_DEVICE_PROTOCOL_VERSION_CODE = 717

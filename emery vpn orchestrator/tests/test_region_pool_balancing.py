@@ -127,3 +127,9 @@ def test_reconnect_does_not_penalize_device_already_on_node():
     )[0]
 
     assert selected.id == current_node.id
+
+
+def test_full_node_is_not_connectable():
+    full = _node(30, "de", current=20, capacity=20)
+
+    assert NodeOrchestrationService._is_connectable(full) is False

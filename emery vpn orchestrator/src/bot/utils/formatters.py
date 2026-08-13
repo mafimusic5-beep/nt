@@ -2,6 +2,9 @@ from datetime import datetime
 
 
 PLAN_NAMES = {
+    "personal_1m": "Личный",
+    "personal_plus_1m": "Личный+",
+    "family_1m": "Семейный",
     "warmup_1m": "Прогрев 1 месяц",
     "warmup_3m": "Прогрев 3 месяца",
     "warmup_6m": "Прогрев 6 месяцев",
