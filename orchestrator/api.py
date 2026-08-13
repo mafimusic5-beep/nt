@@ -21,6 +21,11 @@ from device_auth import (
     ensure_device_auth_storage,
     register_device,
 )
+from pool_reservation_bridge import (
+    PoolBridgeError,
+    is_enabled as pool_bridge_enabled,
+    refresh_stored_assignment,
+)
 from storage import get_server_snapshot, init_storage, save_server
 
 
@@ -137,6 +142,15 @@ def _auth_error(error: DeviceAuthError):
     )
 
 
+def _pool_assignment_server(assignment: dict) -> dict:
+    return {
+        'id': int(assignment.get('pool_node_id') or 0),
+        'name': str(assignment.get('pool_node_name') or 'VPN'),
+        'region': str(assignment.get('pool_region') or ''),
+        'config': str(assignment.get('pool_config') or ''),
+    }
+
+
 @app.middleware('http')
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -250,15 +264,23 @@ def activate(payload: ActivationRequest, request: Request):
     except DeviceAuthError as error:
         return _auth_error(error)
 
-    snapshot = get_server_snapshot()
-    server = snapshot['server']
-    if not server:
-        return {'ok': False, 'reason': 'no_server'}
+    if pool_bridge_enabled():
+        assignment = access.get('vpn_assignment')
+        if not isinstance(assignment, dict) or assignment.get('pool_status') != 'active':
+            return JSONResponse(status_code=503, content={'ok': False, 'reason': 'pool_assignment_unconfirmed'})
+        server = _pool_assignment_server(assignment)
+        revision = int(assignment.get('pool_config_revision') or 0)
+    else:
+        snapshot = get_server_snapshot()
+        server = snapshot['server']
+        if not server:
+            return {'ok': False, 'reason': 'no_server'}
+        revision = snapshot['revision']
 
     return {
         'ok': True,
         'code': payload.code.strip(),
-        'revision': snapshot['revision'],
+        'revision': revision,
         'serverId': server['id'],
         'serverName': server['name'],
         'region': server['region'],
@@ -292,6 +314,26 @@ async def sync_config(payload: ConfigSyncRequest, request: Request):
         )
     except DeviceAuthError as error:
         return _auth_error(error)
+
+    if pool_bridge_enabled():
+        try:
+            assignment = await asyncio.to_thread(
+                refresh_stored_assignment,
+                payload.code,
+                header_device_id,
+            )
+        except PoolBridgeError as error:
+            return JSONResponse(
+                status_code=error.status_code,
+                content={'ok': False, 'reason': error.reason},
+            )
+        revision = int(assignment.get('pool_config_revision') or 0)
+        return {
+            'ok': True,
+            'changed': revision != payload.revision,
+            'revision': revision,
+            'server': _pool_assignment_server(assignment),
+        }
 
     deadline = time.monotonic() + CONFIG_SYNC_WAIT_SECONDS
     snapshot = get_server_snapshot()

@@ -24,13 +24,21 @@ class VpnNodeUpsertRequest(BaseModel):
     health_status: str = "unknown"
     load_score: int = 1000
     priority: int = 0
-    capacity_clients: int = 100
-    bandwidth_limit_mbps: int = 1000
+    capacity_clients: int = 20
+    bandwidth_limit_mbps: int = 600
     current_clients: int = 0
-    per_device_speed_limit_mbps: int = 100
+    per_device_speed_limit_mbps: int = 30
     firstvds_vps_id: str = ""
+    provider_server_id: str = ""
+    contract_id: str = ""
+    paid_until: datetime | None = None
+    renewal_price_eur_cents: int = 0
+    auto_renew: bool = True
+    renewal_status: str = "renew"
+    do_not_renew_reason: str = ""
     ssh_key_fingerprint: str = ""
     ssh_key_status: str = "missing"
+    ssh_host_key: str = ""
 
 
 class VpnNodeResponse(BaseModel):
@@ -47,9 +55,24 @@ class VpnNodeResponse(BaseModel):
     current_clients: int
     bandwidth_limit_mbps: int
     per_device_speed_limit_mbps: int
+    provider_server_id: str = ""
+    contract_id: str = ""
+    paid_until: datetime | None = None
+    renewal_price_eur_cents: int = 0
+    auto_renew: bool = True
+    renewal_status: str = "renew"
+    do_not_renew_reason: str = ""
     ssh_key_fingerprint: str
     ssh_key_status: str
+    ssh_host_key_pinned: bool = False
     has_valid_config: bool = False
+    consecutive_health_failures: int = 0
+    recovery_status: str = "idle"
+    recovery_lock_until: datetime | None = None
+    last_healthy_at: datetime | None = None
+    last_recovery_at: datetime | None = None
+    last_recovery_action: str = ""
+    last_recovery_error: str = ""
 
 
 class AdminStatsResponse(BaseModel):

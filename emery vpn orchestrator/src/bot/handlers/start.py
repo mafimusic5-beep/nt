@@ -35,7 +35,7 @@ async def menu_back_handler(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "menu_buy")
 async def buy_handler(callback: CallbackQuery) -> None:
     await callback.message.edit_text(
-        "Выберите тариф для продукта «Прогрев».",
+        "Выберите тариф VPN на один месяц.",
         reply_markup=plans_keyboard(),
     )
     try:
@@ -159,7 +159,7 @@ async def my_codes_handler(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("buy_warmup_"))
+@router.callback_query(F.data.startswith("buy_"))
 async def plan_selected_handler(callback: CallbackQuery) -> None:
     telegram_id = callback.from_user.id
     plan_code = callback.data.replace("buy_", "", 1)

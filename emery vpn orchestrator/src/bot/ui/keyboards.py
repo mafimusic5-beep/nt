@@ -17,10 +17,9 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
 
 def plans_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="1 месяц — 600 руб", callback_data="buy_warmup_1m")
-    kb.button(text="3 месяца — 1500 руб", callback_data="buy_warmup_3m")
-    kb.button(text="6 месяцев — 2700 руб", callback_data="buy_warmup_6m")
-    kb.button(text="12 месяцев — 4800 руб", callback_data="buy_warmup_12m")
+    kb.button(text="Личный · 1 устройство — 200 руб", callback_data="buy_personal_1m")
+    kb.button(text="Личный+ · 2 устройства — 260 руб", callback_data="buy_personal_plus_1m")
+    kb.button(text="Семейный · 5 устройств — 500 руб", callback_data="buy_family_1m")
     kb.button(text="Назад в меню", callback_data="menu_back")
     kb.adjust(1)
     return kb.as_markup()

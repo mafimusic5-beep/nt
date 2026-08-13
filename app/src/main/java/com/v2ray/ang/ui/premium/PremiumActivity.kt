@@ -76,12 +76,9 @@ import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
-import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-
-private const val ACTIVATION_CODE_LENGTH = 11
 
 private enum class EmeryRoute { Splash, Activation, RegionalPolicy, Home }
 
@@ -167,7 +164,7 @@ private fun EmeryApp(
             composable(EmeryRoute.Activation.name) {
                 ActivationScreen(
                     onActivated = { code ->
-                        val formattedCode = formatActivationCode(code)
+                        val formattedCode = formatSkryonActivationCode(code)
                         val result = activateSkryonCode(context, code, formattedCode)
                         if (result.ok) {
                             val guid = saveActivatedSkryonConfig(result.config)
@@ -611,7 +608,7 @@ private fun ActivationScreen(
                     if (isLoading) {
                         return@Button
                     }
-                    if (code.length < ACTIVATION_CODE_LENGTH) {
+                    if (code.length < SKRYON_ACTIVATION_CODE_LENGTH) {
                         error = "Введите код полностью"
                     } else {
                         scope.launch {
@@ -658,7 +655,7 @@ private fun ActivationCodeInput(
     BasicTextField(
         value = code,
         onValueChange = { value ->
-            onCodeChange(sanitizeActivationCode(value))
+            onCodeChange(sanitizeSkryonActivationCode(value))
         },
         singleLine = true,
         textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
@@ -773,21 +770,4 @@ private fun CodeCharacterSlot(
             )
         }
     }
-}
-
-private fun sanitizeActivationCode(value: String): String {
-    return value
-        .uppercase(Locale.ROOT)
-        .filter { it.isLetterOrDigit() }
-        .take(ACTIVATION_CODE_LENGTH)
-}
-
-private fun formatActivationCode(rawCode: String): String {
-    val groups = listOf(1, 3, 2, 2, 2, 1)
-    var index = 0
-    return groups.mapNotNull { size ->
-        val part = rawCode.drop(index).take(size)
-        index += size
-        part.takeIf { it.isNotBlank() }
-    }.joinToString("-")
 }

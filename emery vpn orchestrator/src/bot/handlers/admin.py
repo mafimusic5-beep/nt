@@ -31,7 +31,7 @@ async def _show_admin_panel(message: Message) -> None:
         "Быстрые команды:\n"
         "/capacity — какого региона не хватает\n"
         "/add_config <VLESS Reality ссылка> — определить локацию и добавить сервер в общий пул\n"
-        "/add_config region=nl name=\"Netherlands 1\" capacity=50 config=<VLESS Reality ссылка>\n"
+        "/add_config region=nl name=\"Netherlands 1\" capacity=20 config=<VLESS Reality ссылка>\n"
         "/delconfig ID — убрать сервер из синхронизированных приложений\n"
         "/servers — список узлов",
         reply_markup=admin_menu_keyboard(),
@@ -85,7 +85,7 @@ async def add_config_command_handler(message: Message) -> None:
     explicit_region = (args.get("region") or args.get("region_code") or "").strip().lower()
     explicit_name = (args.get("name") or args.get("title") or "").strip()
     provider = (args.get("provider") or "manual").strip().lower()
-    max_users_raw = args.get("max_users") or args.get("capacity") or "50"
+    max_users_raw = args.get("max_users") or args.get("capacity") or "20"
 
     if not link:
         await message.answer(

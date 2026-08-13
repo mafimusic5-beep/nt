@@ -39,7 +39,7 @@ class NodeOrchestrationService:
 
     @staticmethod
     def _default_provisioning() -> NodeProvisioningService:
-        if settings.firstvds_enabled:
+        if settings.auto_provision_provider.strip().lower() == "firstvds" and settings.firstvds_enabled:
             return FirstVdsBillManagerProvisioningService()
         return ShellScriptNodeProvisioningService()
 
@@ -226,11 +226,18 @@ class NodeOrchestrationService:
         if not node:
             raise HTTPException(status_code=404, detail="node_not_found")
         logger.info("provision_node invoked for node_id=%s", node.id)
+        node.status = "provisioning"
+        node.health_status = "unknown"
+        self.db.commit()
         result = self.provisioning.provision_node(node)
         self.audit.write("admin", "api", "node_provision_requested", "vpn_node", str(node.id), result)
         if result.get("status") == "ok":
             node.status = "active"
             node.health_status = "healthy"
+            node.provisioning_lock_key = None
+        else:
+            node.status = "provision_failed"
+            node.health_status = "down"
         self.db.commit()
         return {"node_id": node.id, **result}
 
@@ -238,11 +245,11 @@ class NodeOrchestrationService:
         node = self.repo.get_node(node_id)
         if not node:
             raise HTTPException(status_code=404, detail="node_not_found")
-        result = self.provisioning.deprovision_node(node)
+        result = {
+            "status": "blocked",
+            "detail": "destructive_deprovision_disabled_use_renewal_plan",
+        }
         self.audit.write("admin", "api", "node_deprovision_requested", "vpn_node", str(node.id), result)
-        if result.get("status") == "ok":
-            node.status = "maintenance"
-            node.health_status = "down"
         self.db.commit()
         return {"node_id": node.id, **result}
 

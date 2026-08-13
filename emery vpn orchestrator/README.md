@@ -9,6 +9,9 @@ Backend + Telegram bot for subscription sales and VPN access management.
 - SQLAlchemy + Alembic migrations
 - VPN node orchestration layer (FirstVDS BILLmanager + script fallback)
 - Healthcheck scheduler and API health endpoints
+- Kubernetes recovery agent for every active public VLESS node
+- Two-phase legacy-to-pool reservation bridge with one UUID per device
+- Non-destructive contract renewal planner
 - Example Xray/VLESS/Reality config placeholders
 - Deployment examples (`systemd`, `nginx`, FirstVDS guide)
 
@@ -21,6 +24,7 @@ Backend + Telegram bot for subscription sales and VPN access management.
 - `tests` - pytest scenarios for critical business logic
 - `deploy/systemd` - example unit files
 - `deploy/nginx` - example reverse proxy config
+- `deploy/kubernetes/recovery-agent.yaml` - continuous public-node recovery worker
 - `docs/DEPLOY_FIRSTVDS.md` - deployment guide
 - `docs/PRODUCTION_NOTES.md` - production hardening notes
 
@@ -35,6 +39,7 @@ Copy `.env.example` to `.env` and set required values:
 - `BACKEND_BASE_URL`
 - `MIN_SUPPORTED_APP_VERSION_CODE=716`
 - `APP_UPDATE_MESSAGE=Версия приложения устарела. Обновите приложение.`
+- `POOL_BRIDGE_API_KEY=<same secret in both backends>`
 
 Новые клиенты передают `X-Skryon-App-Version-Code`. Если переданная версия ниже минимальной, backend возвращает сообщение об обновлении вместо профиля/списка серверов. Отсутствие заголовка сохраняет старые совместимые контракты для legacy polling/event/pool-клиентов. APK, который после активации вообще не выходит в сеть, удалённо показать сообщение не сможет.
 
@@ -59,6 +64,7 @@ pip install -r requirements.txt
 alembic upgrade head
 uvicorn src.backend.main:app --host 0.0.0.0 --port 9330
 python -m src.bot.main
+python -m src.backend.recovery_agent
 ```
 
 ### Docker run
@@ -89,6 +95,14 @@ pytest -q tests/test_redeem_flow.py
 
 - Liveness: `GET /api/v1/health`
 - Readiness (DB check): `GET /api/v1/ready`
+- Public VPN nodes: `python -m src.backend.recovery_agent` probes every active
+  VLESS listener in parallel. After three failed checks it restarts Xray on the
+  same VPS, then reboots that same VPS if necessary.
+
+The Kubernetes deployment example is in
+`deploy/kubernetes/recovery-agent.yaml`. It must use the backend's same external
+database and an SSH `known_hosts` secret; see
+`docs/IONOS_PUBLIC_POOL_AUTOSCALING.md` before deployment.
 
 ## API overview
 
@@ -97,7 +111,7 @@ pytest -q tests/test_redeem_flow.py
 - `GET /api/v1/subscription/status`
 - `POST /api/v1/device/register`
 - `POST /api/v1/device/heartbeat`
-- `POST /api/v1/device/unbind`
+- `POST /api/v1/device/unbind` — сохранён для совместимости и всегда возвращает `403 device_unbind_disabled`
 - `GET /api/v1/vpn/config`
 - `GET /api/v1/user/devices`
 - `GET /api/v1/user/codes`
@@ -105,6 +119,9 @@ pytest -q tests/test_redeem_flow.py
 ### Internal
 - `POST /api/v1/internal/orders`
 - `POST /api/v1/internal/payments/confirm`
+- `POST /api/v1/internal/pool/assignments/prepare`
+- `POST /api/v1/internal/pool/assignments/confirm`
+- `POST /api/v1/internal/pool/assignments/maintenance`
 
 ### Admin
 - `POST /api/v1/admin/subscription/grant`
@@ -113,20 +130,25 @@ pytest -q tests/test_redeem_flow.py
 - `POST /api/v1/admin/nodes`
 - `GET /api/v1/admin/nodes/best-moscow`
 - `POST /api/v1/admin/nodes/{node_id}/provision`
-- `POST /api/v1/admin/nodes/{node_id}/deprovision`
+- `POST /api/v1/admin/nodes/{node_id}/deprovision` — всегда блокирует удаление VPS
 - `POST /api/v1/admin/nodes/{node_id}/disable`
 - `POST /api/v1/admin/nodes/{node_id}/enable`
 - `POST /api/v1/admin/nodes/healthcheck/run`
 - `POST /api/v1/admin/codes/generate`
 - `GET /api/v1/admin/activations/problems`
+- `GET /api/v1/admin/renewals/plan`
+- `POST /api/v1/admin/renewals/plan/apply`
 
 ## Business logic coverage
 
-- Product: Warmup (`3m/6m/12m`, `1500/2700/4800 RUB`)
+- VPN plans: Personal (`1 device / 200 RUB`), Personal+ (`2 / 260 RUB`),
+  Family (`5 / 500 RUB`) per month; legacy Warmup plans remain readable
 - Order creation + payment confirmation
 - Subscription creation/extension on paid order
 - One-time activation code display; hash-only storage
-- Device registration limit (max 5) via backend checks
+- Exact tariff limits (1/2/5) and immutable registered-device slots
+- Unique VLESS UUID and dedicated port per device; hard 30 Mbit/s nftables cap
+- Capacity gate at 20 devices and pre-emptive scale request after device 16
 - Idempotent payment confirmation (`idempotency_key`)
 - Audit logging for critical actions
 - Node selection in `moscow` by `health_status -> load_score -> priority`
@@ -147,3 +169,6 @@ See `docs/PRODUCTION_NOTES.md` for:
 - backups
 - monitoring/alerts
 - scaling gaps and next steps
+
+The agreed public-pool capacity, IONOS constraints, margin calculation and
+rollout blockers are documented in `docs/IONOS_PUBLIC_POOL_AUTOSCALING.md`.

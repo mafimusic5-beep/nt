@@ -67,6 +67,144 @@ def init_storage() -> None:
         _add_column_if_missing(con, 'activation_codes', 'max_devices', 'INTEGER NOT NULL DEFAULT 1')
         _add_column_if_missing(con, 'activation_codes', 'plan', 'TEXT NOT NULL DEFAULT "manual"')
         _add_column_if_missing(con, 'servers', 'pool_node_id', 'INTEGER')
+        _ensure_pool_assignment_columns(con)
+
+
+def _ensure_pool_assignment_columns(con: sqlite3.Connection) -> None:
+    additions = {
+        'pool_assignment_id': 'INTEGER',
+        'pool_status': 'TEXT NOT NULL DEFAULT ""',
+        'pool_confirmation_token': 'TEXT NOT NULL DEFAULT ""',
+        'pool_node_id': 'INTEGER',
+        'pool_node_name': 'TEXT NOT NULL DEFAULT ""',
+        'pool_region': 'TEXT NOT NULL DEFAULT ""',
+        'pool_config': 'TEXT NOT NULL DEFAULT ""',
+        'pool_config_revision': 'INTEGER NOT NULL DEFAULT 0',
+        'pool_speed_limit_mbps': 'INTEGER NOT NULL DEFAULT 0',
+        'pool_entitlement_hash': 'TEXT NOT NULL DEFAULT ""',
+        'pool_entitlement_expires_at': 'TEXT NOT NULL DEFAULT ""',
+        'pool_updated_at': 'TEXT',
+    }
+    for column, definition in additions.items():
+        _add_column_if_missing(con, 'code_devices', column, definition)
+    con.execute(
+        '''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_code_devices_pool_assignment
+        ON code_devices(pool_assignment_id)
+        WHERE pool_assignment_id IS NOT NULL
+        '''
+    )
+
+
+def save_device_pool_assignment_in_connection(
+    con: sqlite3.Connection,
+    code: str,
+    device_id: str,
+    assignment: Dict[str, Any],
+) -> None:
+    cursor = con.execute(
+        '''
+        UPDATE code_devices
+        SET pool_assignment_id = ?,
+            pool_status = ?,
+            pool_confirmation_token = ?,
+            pool_node_id = ?,
+            pool_node_name = ?,
+            pool_region = ?,
+            pool_config = ?,
+            pool_config_revision = ?,
+            pool_speed_limit_mbps = ?,
+            pool_entitlement_hash = ?,
+            pool_entitlement_expires_at = ?,
+            pool_updated_at = ?
+        WHERE code = ? AND device_id = ?
+        ''',
+        (
+            int(assignment.get('pool_assignment_id') or 0) or None,
+            str(assignment.get('pool_status') or '')[:32],
+            str(assignment.get('pool_confirmation_token') or '')[:256],
+            int(assignment.get('pool_node_id') or 0) or None,
+            str(assignment.get('pool_node_name') or '')[:128],
+            str(assignment.get('pool_region') or '')[:32],
+            str(assignment.get('pool_config') or ''),
+            int(assignment.get('pool_config_revision') or 0),
+            int(assignment.get('pool_speed_limit_mbps') or 0),
+            str(assignment.get('pool_entitlement_hash') or '')[:128],
+            str(assignment.get('pool_entitlement_expires_at') or '')[:64],
+            now_iso(),
+            format_code(code),
+            device_id.strip()[:128],
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError('device_pool_assignment_target_missing')
+
+
+def save_device_pool_assignment(code: str, device_id: str, assignment: Dict[str, Any]) -> None:
+    with connect() as con:
+        _ensure_pool_assignment_columns(con)
+        save_device_pool_assignment_in_connection(con, code, device_id, assignment)
+
+
+def get_device_pool_assignment(code: str, device_id: str) -> Optional[Dict[str, Any]]:
+    with connect() as con:
+        _ensure_pool_assignment_columns(con)
+        row = con.execute(
+            '''
+            SELECT pool_assignment_id,
+                   pool_status,
+                   pool_confirmation_token,
+                   pool_node_id,
+                   pool_node_name,
+                   pool_region,
+                   pool_config,
+                   pool_config_revision,
+                   pool_speed_limit_mbps,
+                   pool_entitlement_hash,
+                   pool_entitlement_expires_at,
+                   pool_updated_at
+            FROM code_devices
+            WHERE code = ? AND device_id = ? AND active = 1
+            ''',
+            (format_code(code), device_id.strip()[:128]),
+        ).fetchone()
+    if not row or not row['pool_assignment_id'] or not str(row['pool_config'] or '').strip():
+        return None
+    return dict(row)
+
+
+def get_device_pool_entitlement(code: str, device_id: str) -> Optional[Dict[str, Any]]:
+    with connect() as con:
+        row = con.execute(
+            '''
+            SELECT activation_codes.code,
+                   activation_codes.plan,
+                   activation_codes.expires_at
+            FROM activation_codes
+            JOIN code_devices ON code_devices.code = activation_codes.code
+            WHERE activation_codes.code = ?
+              AND activation_codes.status = 'active'
+              AND code_devices.device_id = ?
+              AND code_devices.active = 1
+            ''',
+            (format_code(code), device_id.strip()[:128]),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def mark_device_pool_assignment_confirmed(assignment_id: int) -> None:
+    with connect() as con:
+        _ensure_pool_assignment_columns(con)
+        con.execute(
+            '''
+            UPDATE code_devices
+            SET pool_status = 'active',
+                pool_confirmation_token = '',
+                pool_updated_at = ?
+            WHERE pool_assignment_id = ?
+            ''',
+            (now_iso(), int(assignment_id)),
+        )
 
 
 def _bump_server_revision(con: sqlite3.Connection) -> None:
@@ -210,7 +348,7 @@ def renew_activation_code(code: str, plan: str, max_devices: int, days: int = 30
 def get_checkout_order(external_id: str) -> Optional[Dict[str, Any]]:
     with connect() as con:
         row = con.execute(
-            'SELECT checkout_orders.external_id, checkout_orders.plan, checkout_orders.customer, checkout_orders.code, checkout_orders.status, checkout_orders.created_at, activation_codes.max_devices, activation_codes.expires_at FROM checkout_orders JOIN activation_codes ON activation_codes.code = checkout_orders.code WHERE checkout_orders.external_id = ?',
+            'SELECT checkout_orders.external_id, checkout_orders.plan, checkout_orders.customer, checkout_orders.code, checkout_orders.status, checkout_orders.created_at, activation_codes.max_devices, activation_codes.expires_at, activation_codes.used_at FROM checkout_orders JOIN activation_codes ON activation_codes.code = checkout_orders.code WHERE checkout_orders.external_id = ?',
             (external_id,),
         ).fetchone()
     return dict(row) if row else None

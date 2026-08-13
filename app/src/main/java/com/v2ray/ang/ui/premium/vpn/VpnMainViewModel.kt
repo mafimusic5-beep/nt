@@ -22,8 +22,12 @@ import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CONFIG_PREF
 import com.v2ray.ang.ui.premium.SKRYON_CONFIG_REVISION_PREF
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_GUID_PREF
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
+import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
+import com.v2ray.ang.ui.premium.activateSkryonCode
 import com.v2ray.ang.ui.premium.clearActivatedSkryonConfig
+import com.v2ray.ang.ui.premium.formatSkryonActivationCode
 import com.v2ray.ang.ui.premium.saveActivatedSkryonConfig
+import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.ui.premium.syncSkryonConfig
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
@@ -493,6 +497,63 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    suspend fun activateReplacementCode(rawCode: String): Result<Unit> {
+        if (_uiState.value.connectionState != VpnConnectionState.Disconnected) {
+            return Result.failure(IllegalStateException("Сначала отключите VPN"))
+        }
+
+        val normalized = sanitizeSkryonActivationCode(rawCode)
+        if (normalized.length != SKRYON_ACTIVATION_CODE_LENGTH) {
+            return Result.failure(IllegalArgumentException("Введите код полностью"))
+        }
+        val formatted = formatSkryonActivationCode(normalized)
+        val activation = activateSkryonCode(
+            context = getApplication(),
+            code = normalized,
+            formattedCode = formatted,
+        )
+        if (!activation.ok) {
+            return Result.failure(
+                IllegalStateException(activation.error.ifBlank { "Ошибка активации" }),
+            )
+        }
+
+        return runCatching {
+            val guid = saveActivatedSkryonConfig(activation.config)
+            val confirmedCode = activation.code.ifBlank { formatted }
+            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CODE_PREF, confirmedCode)
+            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, activation.config)
+            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
+            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, activation.serverId)
+            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, activation.revision)
+
+            val location = VpnLocationOption(
+                id = "skryon-activated",
+                title = titleFromConfigLink(activation.config, 1),
+                importText = activation.config,
+            )
+            _uiState.update { state ->
+                state.copy(
+                    activationKey = confirmedCode,
+                    locations = listOf(location),
+                    selectedLocation = location,
+                    locationsLoading = false,
+                    locationsError = "",
+                )
+            }
+            // Cancel an outstanding long-poll authenticated with the old code;
+            // otherwise its late response could restore the previous profile.
+            startSkryonConfigSync()
+        }.onFailure { error ->
+            VpnUiDebugLogger.log(
+                hypothesisId = "H13",
+                location = "VpnMainViewModel.kt:activateReplacementCode",
+                message = "replacement activation failed locally",
+                data = JSONObject().put("error", error.message ?: "unknown"),
+            )
+        }
+    }
+
     fun onLocationSelected(location: String) {
         val selected = _uiState.value.locations.firstOrNull {
             it.id == location || it.title == location
@@ -641,7 +702,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     scheduleServiceStateRecheck()
                 },
                 onFailure = { error ->
-                    setDisconnectedWithError("Не удалось подключиться к серверу")
+                    setDisconnectedWithError(vpnConnectError(error.message.orEmpty()))
                     VpnUiDebugLogger.log(
                         hypothesisId = "H7",
                         location = "VpnMainViewModel.kt:onConnectClick",
@@ -688,6 +749,20 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             "network" ->
                 "Не удалось проверить устройство. Проверьте интернет"
             else -> "Не удалось подтвердить доступ этого устройства"
+        }
+    }
+
+    private fun vpnConnectError(reason: String): String {
+        return when (reason) {
+            "server_capacity_unavailable" ->
+                "В этом регионе пока нет свободных мест. Новый сервер уже подготавливается"
+            "device_assignment_region_locked" ->
+                "Для устройства уже подготовлен другой сервер. Выберите регион из активированного профиля"
+            "assignment_install_in_progress", "assignment_maintenance_in_progress", "assignment_state_changed_retry" ->
+                "Персональный доступ обновляется. Повторите через несколько секунд"
+            "credential_install_failed", "pool_backend_unreachable" ->
+                "Сервер подготавливает персональный доступ. Попробуйте немного позже"
+            else -> "Не удалось подключиться к серверу"
         }
     }
 

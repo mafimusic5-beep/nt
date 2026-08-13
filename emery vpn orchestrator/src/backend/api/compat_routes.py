@@ -121,13 +121,22 @@ def profile(
 
 
 @compat_router.get("/vpn/config")
-def vpn_config(access_key: str = Depends(_bearer_key), db: Session = Depends(get_db)):
+def vpn_config(
+    access_key: str = Depends(_bearer_key),
+    x_emery_device_id: str = Header(default="", alias="X-Emery-Device-Id"),
+    db: Session = Depends(get_db),
+):
     code, sub = _resolve_subscription_by_key(db, access_key)
     if not code or not sub:
         return {"error": "invalid_or_expired_key"}
+    service = SubscriptionService(db)
     orchestrator = NodeOrchestrationService(db)
     try:
-        cfg = orchestrator.build_user_config(sub.id, device=None)
+        if service._unique_assignment_enabled():
+            device = service._resolve_device_for_subscription(sub.id, x_emery_device_id or None)
+            cfg = service._build_unique_device_config(sub, device, sub.region_code)
+        else:
+            cfg = orchestrator.build_user_config(sub.id, device=None)
         return {"import_text": cfg.get("import_text"), "error": None}
     except HTTPException as exc:
         if exc.detail in {"no_healthy_node", "node_not_found"}:
@@ -176,9 +185,17 @@ async def vpn_regions_events(
 
 
 @compat_router.post("/vpn/connect")
-def vpn_connect(payload: VpnConnectRequestBody, db: Session = Depends(get_db)):
+def vpn_connect(
+    payload: VpnConnectRequestBody,
+    x_emery_device_id: str = Header(default="", alias="X-Emery-Device-Id"),
+    db: Session = Depends(get_db),
+):
     try:
-        return SubscriptionService(db).connect_to_server(payload.access_key, payload.server_id)
+        return SubscriptionService(db).connect_to_server(
+            payload.access_key,
+            payload.server_id,
+            x_emery_device_id or None,
+        )
     except HTTPException as exc:
         if exc.detail == "server_config_unavailable":
             return {"error": "server_config_unavailable"}

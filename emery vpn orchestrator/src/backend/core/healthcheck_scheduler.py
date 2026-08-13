@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import suppress
 
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
+from src.backend.services.order_service import OrderService
+from src.backend.services.pool_assignment_service import PoolAssignmentService
+from src.backend.services.renewal_planner_service import RenewalPlannerService
 from src.common.config import settings
 from src.common.db import SessionLocal
 
@@ -29,12 +33,58 @@ _task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
 
 
+def _with_session(callback):
+    db = SessionLocal()
+    try:
+        return callback(db)
+    finally:
+        db.close()
+
+
+def _healthcheck_tick():
+    return _with_session(lambda db: NodeOrchestrationService(db).run_healthcheck())
+
+
+def _capacity_tick():
+    return _with_session(lambda db: OrderService(db).ensure_capacity_allocation())
+
+
+def _assignment_maintenance_tick():
+    return _with_session(lambda db: PoolAssignmentService(db).run_maintenance())
+
+
+def _renewal_tick():
+    return _with_session(lambda db: RenewalPlannerService(db).apply())
+
+
 async def _runner() -> None:
+    next_assignment_maintenance = 0.0
+    next_renewal_plan = 0.0
     while _stop_event and not _stop_event.is_set():
-        db = SessionLocal()
         try:
-            result = await asyncio.to_thread(NodeOrchestrationService(db).run_healthcheck)
+            result = await asyncio.to_thread(_healthcheck_tick)
             logger.debug("scheduled healthcheck tick completed: checked=%s", result.get("checked", 0))
+            allocation = await asyncio.to_thread(_capacity_tick)
+            logger.debug(
+                "scheduled capacity tick completed: status=%s reason=%s",
+                allocation.get("status"),
+                allocation.get("reason", ""),
+            )
+            monotonic_now = time.monotonic()
+            if monotonic_now >= next_assignment_maintenance:
+                maintenance = await asyncio.to_thread(_assignment_maintenance_tick)
+                logger.debug("assignment maintenance completed: %s", maintenance)
+                next_assignment_maintenance = monotonic_now + max(
+                    int(settings.pool_assignment_maintenance_interval_seconds),
+                    30,
+                )
+            if settings.auto_renewal_actions_enabled and monotonic_now >= next_renewal_plan:
+                renewal = await asyncio.to_thread(_renewal_tick)
+                logger.info("renewal plan applied: actions=%s", len(renewal.get("results", [])))
+                next_renewal_plan = monotonic_now + max(
+                    int(settings.renewal_planning_interval_seconds),
+                    3600,
+                )
             # #region agent log
             _debug_log("H1", "healthcheck_scheduler.py:_runner", "tick_ok", {"checked": result.get("checked", 0)})
             # #endregion
@@ -43,8 +93,6 @@ async def _runner() -> None:
             # #region agent log
             _debug_log("H1", "healthcheck_scheduler.py:_runner", "tick_failed", {"error": f"{type(exc).__name__}: {exc}"})
             # #endregion
-        finally:
-            db.close()
         await asyncio.sleep(max(settings.healthcheck_interval_seconds, 10))
 
 

@@ -35,6 +35,22 @@ class Settings(BaseSettings):
     default_region_code: str = "moscow"
     default_region_name: str = "Moscow"
     max_devices_per_subscription: int = 5
+    pool_node_capacity_devices: int = 20
+    pool_family_headroom_devices: int = 5
+    pool_node_bandwidth_mbps: int = 600
+    pool_per_device_speed_limit_mbps: int = 30
+    pool_accounting_bridge_enabled: bool = False
+    unique_device_credentials_enabled: bool = False
+    per_device_rate_limit_enforced: bool = False
+    smtp_abuse_protection_enabled: bool = False
+    pool_bridge_api_key: str = ""
+    pool_assignment_prepare_ttl_seconds: int = 300
+    pool_assignment_maintenance_interval_seconds: int = 60
+    xray_config_path: str = "/usr/local/etc/xray/config.json"
+    xray_client_port_start: int = 20000
+    xray_client_port_end: int = 20199
+    xray_credential_script: str = ""
+    xray_credential_timeout_seconds: int = 90
     rate_limit_per_minute: int = 60
     min_supported_app_version_code: int = 716
     app_update_message: str = (
@@ -42,8 +58,43 @@ class Settings(BaseSettings):
     )
     healthcheck_interval_seconds: int = 30
     node_provision_script: str = ""
+    node_provision_script_timeout_seconds: int = 900
     node_deprovision_script: str = ""
     node_healthcheck_script: str = ""
+    node_renewal_script: str = ""
+    auto_renewal_actions_enabled: bool = False
+    renewal_planning_horizon_days: int = 14
+    renewal_planning_interval_seconds: int = 21600
+
+    # Dedicated recovery-agent. It probes the current VLESS listener and first
+    # repairs the existing VPS; replacement capacity is a later fallback.
+    recovery_probe_interval_seconds: int = 15
+    recovery_max_parallel_nodes: int = 32
+    recovery_probe_timeout_seconds: float = 3.0
+    recovery_failure_threshold: int = 3
+    recovery_restart_grace_seconds: int = 10
+    recovery_reboot_grace_seconds: int = 45
+    recovery_reboot_probe_interval_seconds: int = 10
+    recovery_reboot_probe_attempts: int = 12
+    recovery_lock_seconds: int = 600
+    recovery_cooldown_seconds: int = 300
+    recovery_ssh_user: str = "root"
+    recovery_ssh_private_key_path: str = ""
+    recovery_ssh_connect_timeout_seconds: int = 10
+    recovery_ssh_known_hosts_path: str = ""
+    recovery_allow_unknown_host_keys: bool = False
+    recovery_provider_reboot_script: str = ""
+    recovery_heartbeat_file: str = "/tmp/emery-recovery-agent.heartbeat"
+
+    # Scale-out guardrails. Automatic purchases stay disabled until a provider
+    # contract and a real, documented ordering API are configured.
+    auto_provision_enabled: bool = False
+    auto_provision_provider: str = "unconfigured"
+    auto_provision_server_monthly_cost_eur: int = 0
+    auto_provision_max_servers_per_hour: int = 1
+    auto_provision_max_servers_per_day: int = 2
+    auto_provision_monthly_budget_eur: int = 0
+    auto_provision_retry_seconds: int = 300
 
     # Legacy placeholders kept for compatibility.
     firstvds_api_url: str = "https://api.firstvds.ru"

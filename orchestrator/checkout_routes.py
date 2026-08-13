@@ -250,6 +250,7 @@ def order(order_id: str):
     row = get_checkout_order(order_id)
     if not row:
         return {'ok': False, 'reason': 'not_found'}
+    usage_started = bool(row.get('used_at'))
     return {
         'ok': True,
         'orderId': row['external_id'],
@@ -258,4 +259,9 @@ def order(order_id: str):
         'maxDevices': row['max_devices'],
         'expiresAt': row['expires_at'],
         'status': row['status'],
+        'usageStarted': usage_started,
+        'usedAt': row.get('used_at'),
+        # This is a technical eligibility flag for the payment/support flow.
+        # The final legal decision still belongs to the merchant policy.
+        'refundEligible': not usage_started,
     }

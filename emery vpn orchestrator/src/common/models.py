@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.common.db import Base
 
@@ -31,6 +31,7 @@ class Plan(Base):
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     duration_months: Mapped[int] = mapped_column(Integer, nullable=False)
     price_rub: Mapped[int] = mapped_column(Integer, nullable=False)
+    devices_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
@@ -50,15 +51,31 @@ class VpnNode(Base):
     health_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", index=True)
     load_score: Mapped[int] = mapped_column(Integer, nullable=False, default=1000, index=True)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
-    capacity_clients: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
-    bandwidth_limit_mbps: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    capacity_clients: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    bandwidth_limit_mbps: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
     current_clients: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    per_device_speed_limit_mbps: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    per_device_speed_limit_mbps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     firstvds_vps_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    provider_server_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    contract_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    paid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    renewal_price_eur_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    auto_renew: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    renewal_status: Mapped[str] = mapped_column(String(32), nullable=False, default="renew")
+    do_not_renew_reason: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     ssh_private_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ssh_public_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ssh_key_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     ssh_key_status: Mapped[str] = mapped_column(String(32), nullable=False, default="missing")
+    ssh_host_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    provisioning_lock_key: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
+    consecutive_health_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    recovery_status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
+    recovery_lock_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_healthy_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_recovery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_recovery_action: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    last_recovery_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     def __repr__(self) -> str:
         return (
@@ -84,11 +101,15 @@ class Subscription(Base):
 
 class Device(Base):
     __tablename__ = "devices"
-    __table_args__ = (UniqueConstraint("subscription_id", "device_fingerprint", name="uq_subscription_device"),)
+    __table_args__ = (
+        UniqueConstraint("subscription_id", "device_fingerprint", name="uq_subscription_device"),
+        UniqueConstraint("subscription_id", "slot_index", name="uq_subscription_device_slot"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     subscription_id: Mapped[int] = mapped_column(ForeignKey("subscriptions.id"), nullable=False, index=True)
     device_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    slot_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     platform: Mapped[str] = mapped_column(String(32), nullable=False)
     device_name: Mapped[str] = mapped_column(String(128), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -96,6 +117,33 @@ class Device(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     node_id: Mapped[int | None] = mapped_column(ForeignKey("vpn_nodes.id"), nullable=True, index=True)
+
+
+class VpnAssignment(Base):
+    __tablename__ = "vpn_assignments"
+    __table_args__ = (
+        UniqueConstraint("subject_type", "subject_key", name="uq_vpn_assignment_subject"),
+        UniqueConstraint("node_id", "client_port", name="uq_vpn_assignment_node_port"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    subject_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    subject_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    entitlement_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    entitlement_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    node_id: Mapped[int] = mapped_column(ForeignKey("vpn_nodes.id"), nullable=False, index=True)
+    client_uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    client_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    speed_limit_mbps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="installing", index=True)
+    config_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    confirmation_token_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    prepare_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    installed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
 class Order(Base):
@@ -110,6 +158,7 @@ class Order(Base):
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    subscription: Mapped[Subscription | None] = relationship()
 
 
 class Payment(Base):

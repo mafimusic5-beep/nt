@@ -10,6 +10,7 @@ import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from src.backend.services.firstvds_billmanager import (
     BillManagerAuthError,
@@ -47,7 +48,7 @@ class ShellScriptNodeProvisioningService(NodeProvisioningService):
     Uses external scripts because no official/public FirstVDS provisioning API is assumed.
     """
 
-    def _run_script(self, script_path: str, payload: dict) -> dict:
+    def _run_script(self, script_path: str, payload: dict, *, timeout_seconds: int = 120) -> dict:
         if not script_path:
             return {"status": "stub", "detail": "script_path_not_configured"}
         try:
@@ -56,6 +57,7 @@ class ShellScriptNodeProvisioningService(NodeProvisioningService):
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=max(int(timeout_seconds), 10),
             )
             return {
                 "status": "ok" if result.returncode == 0 else "failed",
@@ -66,18 +68,112 @@ class ShellScriptNodeProvisioningService(NodeProvisioningService):
             }
         except FileNotFoundError:
             return {"status": "failed", "detail": "script_not_found"}
+        except subprocess.TimeoutExpired:
+            return {"status": "failed", "detail": "script_timeout"}
+
+    @staticmethod
+    def _parse_script_json(out: dict) -> dict | None:
+        try:
+            payload = json.loads(str(out.get("stdout") or "{}"))
+        except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def provision_node(self, node: VpnNode) -> dict:
-        payload = {"node_id": node.id, "name": node.name, "region_code": node.region_code}
-        out = self._run_script(settings.node_provision_script, payload)
+        payload = {
+            "action": "order_and_bootstrap_server",
+            "idempotency_key": f"emery-node-{node.id}",
+            "node_id": node.id,
+            "name": node.name,
+            "region_code": node.region_code,
+            "provider": settings.auto_provision_provider.strip().lower(),
+            "capacity_devices": node.capacity_clients,
+            "required_bandwidth_mbps": node.bandwidth_limit_mbps,
+            "per_device_speed_limit_mbps": node.per_device_speed_limit_mbps,
+            "dedicated_port_range": [settings.xray_client_port_start, settings.xray_client_port_end],
+            "destructive_actions_allowed": False,
+        }
+        out = self._run_script(
+            settings.node_provision_script,
+            payload,
+            timeout_seconds=settings.node_provision_script_timeout_seconds,
+        )
+        if out.get("status") != "ok":
+            logger.info("provision_node node_id=%s result=%s", node.id, out.get("status"))
+            # Provider stdout may contain credentials or an import link. Do
+            # not copy it into the audit log on an adapter failure.
+            safe_detail = str(out.get("detail") or "provider_script_failed")
+            if out.get("returncode") is not None:
+                safe_detail = f"provider_script_exit_{out['returncode']}"
+            return {"status": "failed", "detail": safe_detail[:120]}
+        response = self._parse_script_json(out)
+        if not response or response.get("ok") is not True:
+            return {"status": "failed", "detail": "invalid_provider_script_response"}
+
+        provider_server_id = str(response.get("provider_server_id") or "").strip()
+        endpoint = str(response.get("endpoint") or "").strip()
+        config_payload = str(response.get("config_payload") or "").strip()
+        contract_id = str(response.get("contract_id") or "").strip()
+        required_attestations = (
+            "bootstrap_verified",
+            "credential_transport_ready",
+            "dedicated_port_range_open",
+            "rate_limit_ready",
+            "smtp_block_enforced",
+            "shared_credential_disabled",
+        )
+        missing_attestations = [name for name in required_attestations if response.get(name) is not True]
+        try:
+            parsed = urlsplit(config_payload.splitlines()[0].strip())
+        except (ValueError, IndexError):
+            parsed = None
+        if not provider_server_id:
+            return {"status": "failed", "detail": "provider_server_id_missing"}
+        normalized_endpoint = endpoint.strip("[]").casefold()
+        parsed_hostname = (parsed.hostname or "").casefold() if parsed is not None else ""
+        if not normalized_endpoint or not parsed_hostname or parsed_hostname != normalized_endpoint:
+            return {"status": "failed", "detail": "provider_endpoint_mismatch"}
+        if not FirstVdsBillManagerProvisioningService.is_config_payload_valid(config_payload):
+            return {"status": "failed", "detail": "provider_config_invalid"}
+        if missing_attestations:
+            return {
+                "status": "failed",
+                "detail": "provider_safety_attestation_missing",
+                "missing": missing_attestations,
+            }
+        provider = settings.auto_provision_provider.strip().lower()
+        if provider == "ionos_vps_plus" and not contract_id:
+            return {"status": "failed", "detail": "ionos_contract_id_missing"}
+
+        paid_until = None
+        raw_paid_until = str(response.get("paid_until") or "").strip()
+        if raw_paid_until:
+            try:
+                paid_until = datetime.fromisoformat(raw_paid_until.replace("Z", "+00:00"))
+            except ValueError:
+                return {"status": "failed", "detail": "provider_paid_until_invalid"}
+
+        node.provider = provider or "script"
+        node.provider_server_id = provider_server_id
+        node.endpoint = endpoint
+        node.config_payload = config_payload
+        node.contract_id = contract_id
+        node.paid_until = paid_until
+        node.renewal_price_eur_cents = max(int(response.get("renewal_price_eur_cents") or 0), 0)
+        node.auto_renew = bool(response.get("auto_renew", True))
+        node.renewal_status = "renew" if node.auto_renew else "do_not_renew"
+        node.ssh_key_status = str(response.get("ssh_key_status") or node.ssh_key_status)[:32]
         logger.info("provision_node node_id=%s result=%s", node.id, out.get("status"))
-        return out
+        return {
+            "status": "ok",
+            "detail": "provider_order_and_bootstrap_verified",
+            "provider_server_id": provider_server_id,
+            "endpoint": endpoint,
+            "contract_id": contract_id,
+        }
 
     def deprovision_node(self, node: VpnNode) -> dict:
-        payload = {"node_id": node.id, "name": node.name, "region_code": node.region_code}
-        out = self._run_script(settings.node_deprovision_script, payload)
-        logger.info("deprovision_node node_id=%s result=%s", node.id, out.get("status"))
-        return out
+        return {"status": "blocked", "detail": "destructive_deprovision_disabled"}
 
     def healthcheck_nodes(self, nodes: list[VpnNode]) -> list[dict]:
         results: list[dict] = []
@@ -88,7 +184,10 @@ class ShellScriptNodeProvisioningService(NodeProvisioningService):
             if out.get("status") == "ok":
                 health = "healthy"
             elif out.get("status") == "stub":
-                health = "unknown"
+                # The Kubernetes recovery-agent is authoritative when no
+                # secondary healthcheck adapter is configured. Preserve its
+                # latest status instead of overwriting it every scheduler tick.
+                health = node.health_status
             else:
                 health = "down"
             results.append({"node_id": node.id, "health_status": health, "load_score": node.load_score})
@@ -107,6 +206,30 @@ class FirstVdsBillManagerProvisioningService(NodeProvisioningService):
             return {"status": "failed", "detail": "firstvds_order_profile_incomplete"}
         domain = self._node_domain(node)
         self._ensure_node_ssh_keypair(node)
+        if node.firstvds_vps_id and node.endpoint:
+            bootstrap_result = self._bootstrap_xray(node)
+            config_payload = str(bootstrap_result.get("config_payload") or "").strip()
+            if bootstrap_result.get("status") == "ok" and self.is_config_payload_valid(config_payload):
+                node.provider = "firstvds"
+                node.provider_server_id = node.firstvds_vps_id
+                node.config_payload = config_payload
+                node.ssh_key_status = "installed" if node.ssh_public_key else node.ssh_key_status
+                return {
+                    "status": "ok",
+                    "detail": "existing_order_bootstrap_verified",
+                    "firstvds_vps_id": node.firstvds_vps_id,
+                    "endpoint": node.endpoint,
+                    "domain": domain,
+                    "bootstrap": bootstrap_result,
+                }
+            return {
+                "status": "failed",
+                "detail": f"existing_order_bootstrap_failed:{bootstrap_result.get('detail', 'unknown')}",
+                "firstvds_vps_id": node.firstvds_vps_id,
+                "endpoint": node.endpoint,
+                "domain": domain,
+                "bootstrap": bootstrap_result,
+            }
         try:
             ordered = self.client.order_vds(
                 domain=domain,
@@ -121,13 +244,31 @@ class FirstVdsBillManagerProvisioningService(NodeProvisioningService):
             )
             if ordered.vps_id:
                 node.firstvds_vps_id = ordered.vps_id
+                node.provider_server_id = ordered.vps_id
             if ordered.endpoint:
                 node.endpoint = ordered.endpoint
             node.provider = "firstvds"
+            if not node.provider_server_id or not node.endpoint:
+                return {
+                    "status": "failed",
+                    "detail": "provider_order_response_incomplete",
+                    "firstvds_vps_id": ordered.vps_id,
+                    "endpoint": ordered.endpoint,
+                    "domain": domain,
+                }
             bootstrap_result = self._bootstrap_xray(node)
-            if bootstrap_result.get("status") == "ok":
-                node.config_payload = bootstrap_result.get("config_payload", "")
-                node.ssh_key_status = "installed" if node.ssh_public_key else node.ssh_key_status
+            config_payload = str(bootstrap_result.get("config_payload") or "").strip()
+            if bootstrap_result.get("status") != "ok" or not self.is_config_payload_valid(config_payload):
+                return {
+                    "status": "failed",
+                    "detail": f"xray_bootstrap_not_verified:{bootstrap_result.get('detail', 'unknown')}",
+                    "firstvds_vps_id": ordered.vps_id,
+                    "endpoint": ordered.endpoint,
+                    "domain": domain,
+                    "bootstrap": bootstrap_result,
+                }
+            node.config_payload = config_payload
+            node.ssh_key_status = "installed" if node.ssh_public_key else node.ssh_key_status
             return {
                 "status": "ok",
                 "detail": "ordered_via_billmanager",
@@ -146,15 +287,13 @@ class FirstVdsBillManagerProvisioningService(NodeProvisioningService):
             return {"status": "failed", "detail": str(exc), "domain": domain}
 
     def deprovision_node(self, node: VpnNode) -> dict:
-        if not settings.firstvds_enabled:
-            return {"status": "failed", "detail": "firstvds_credentials_not_configured"}
-        if not node.firstvds_vps_id:
-            return {"status": "failed", "detail": "node_has_no_firstvds_vps_id"}
-        try:
-            self.client.delete_vds(node.firstvds_vps_id)
-            return {"status": "ok", "detail": "deleted_via_billmanager", "firstvds_vps_id": node.firstvds_vps_id}
-        except BillManagerError as exc:
-            return {"status": "failed", "detail": str(exc), "firstvds_vps_id": node.firstvds_vps_id}
+        # Paid servers are never deleted automatically.  Capacity retirement is
+        # expressed only as a provider auto-renewal change by RenewalPlanner.
+        return {
+            "status": "blocked",
+            "detail": "destructive_deprovision_disabled_use_do_not_renew",
+            "firstvds_vps_id": node.firstvds_vps_id,
+        }
 
     def healthcheck_nodes(self, nodes: list[VpnNode]) -> list[dict]:
         # #region agent log
@@ -315,7 +454,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -y
-  apt-get install -y curl unzip openssl ca-certificates
+  apt-get install -y curl unzip openssl ca-certificates nftables python3
 fi
 {authorized_keys_block}
 bash <(curl -Ls https://github.com/XTLS/Xray-install/raw/main/install-release.sh) install
@@ -351,7 +490,16 @@ cat >/usr/local/etc/xray/config.json <<EOF
       }}
     }}
   ],
-  \"outbounds\": [{{\"protocol\": \"freedom\"}}]
+  \"outbounds\": [
+    {{\"tag\": \"direct\", \"protocol\": \"freedom\"}},
+    {{\"tag\": \"emery-blocked\", \"protocol\": \"blackhole\"}}
+  ],
+  \"routing\": {{
+    \"rules\": [
+      {{\"type\": \"field\", \"port\": \"25,465,587\", \"outboundTag\": \"emery-blocked\"}},
+      {{\"type\": \"field\", \"ip\": [\"geoip:private\"], \"outboundTag\": \"emery-blocked\"}}
+    ]
+  }}
 }}
 EOF
 systemctl enable xray >/dev/null 2>&1 || true
@@ -395,18 +543,20 @@ printf 'XRAY_SHORT_ID=%s\n' \"$SHORT_ID\"
         stripped = payload.strip()
         if not stripped:
             return False
+        found_vless = False
         for line in stripped.splitlines():
             line = line.strip()
             if not line:
                 continue
             if not line.startswith("vless://"):
                 continue
+            found_vless = True
             if _PLACEHOLDER_MARKERS.search(line):
                 return False
             required = ("security=reality", "pbk=", "sid=", "type=tcp")
             if not all(tok in line for tok in required):
                 return False
-        return True
+        return found_vless
 
     def _bootstrap_xray(self, node: VpnNode) -> dict:
         if not settings.firstvds_auto_configure_xray:
@@ -464,6 +614,9 @@ printf 'XRAY_SHORT_ID=%s\n' \"$SHORT_ID\"
             f"&fp=chrome&pbk={values['XRAY_PUBLIC_KEY']}&sid={values['XRAY_SHORT_ID']}&type=tcp#{tag}"
         )
         node.ssh_key_status = "installed" if node.ssh_public_key else node.ssh_key_status
+        pinned_host_key = self._capture_ssh_host_key(endpoint, node.ssh_private_key)
+        if pinned_host_key:
+            node.ssh_host_key = pinned_host_key
         logger.info(
             "bootstrap_xray node=%s OK auth=%s config_valid=%s",
             node.id, result.get("auth_strategy"),
@@ -474,7 +627,41 @@ printf 'XRAY_SHORT_ID=%s\n' \"$SHORT_ID\"
             "detail": "xray_bootstrapped",
             "auth_strategy": result.get("auth_strategy"),
             "config_payload": config_payload,
+            "ssh_host_key_pinned": bool(node.ssh_host_key),
         }
+
+    def _capture_ssh_host_key(self, endpoint: str, private_key_data: str) -> str:
+        """Pin the host key after the provider bootstrap installed our node key."""
+        try:
+            import paramiko  # type: ignore
+        except ImportError:
+            return ""
+        pkey = self._load_private_key(private_key_data)
+        if pkey is None:
+            return ""
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(
+                hostname=endpoint,
+                username=settings.firstvds_ssh_user,
+                pkey=pkey,
+                timeout=settings.firstvds_ssh_connect_timeout_seconds,
+                banner_timeout=settings.firstvds_ssh_connect_timeout_seconds,
+                auth_timeout=settings.firstvds_ssh_connect_timeout_seconds,
+                look_for_keys=False,
+                allow_agent=False,
+            )
+            transport = client.get_transport()
+            if transport is None or not transport.is_active():
+                return ""
+            host_key = transport.get_remote_server_key()
+            return f"{host_key.get_name()} {host_key.get_base64()}"
+        except Exception:  # noqa: BLE001
+            logger.warning("could not pin SSH host key for node endpoint=%s", endpoint)
+            return ""
+        finally:
+            client.close()
 
     @staticmethod
     def _probe_tcp(endpoint: str, port: int) -> bool:

@@ -50,9 +50,24 @@ class AdminService:
             current_clients=n.current_clients,
             bandwidth_limit_mbps=n.bandwidth_limit_mbps,
             per_device_speed_limit_mbps=n.per_device_speed_limit_mbps,
+            provider_server_id=n.provider_server_id,
+            contract_id=n.contract_id,
+            paid_until=n.paid_until,
+            renewal_price_eur_cents=n.renewal_price_eur_cents,
+            auto_renew=n.auto_renew,
+            renewal_status=n.renewal_status,
+            do_not_renew_reason=n.do_not_renew_reason,
             ssh_key_fingerprint=n.ssh_key_fingerprint,
             ssh_key_status=n.ssh_key_status,
+            ssh_host_key_pinned=bool(n.ssh_host_key),
             has_valid_config=FirstVdsBillManagerProvisioningService.is_config_payload_valid(n.config_payload or ""),
+            consecutive_health_failures=n.consecutive_health_failures,
+            recovery_status=n.recovery_status,
+            recovery_lock_until=n.recovery_lock_until,
+            last_healthy_at=n.last_healthy_at,
+            last_recovery_at=n.last_recovery_at,
+            last_recovery_action=n.last_recovery_action,
+            last_recovery_error=n.last_recovery_error,
         )
 
     def create_node(self, req: VpnNodeUpsertRequest) -> VpnNodeResponse:
@@ -79,6 +94,14 @@ class AdminService:
             req.ssh_key_fingerprint,
             req.ssh_key_status,
             req.provider,
+            req.ssh_host_key,
+            req.provider_server_id,
+            req.contract_id,
+            req.paid_until,
+            req.renewal_price_eur_cents,
+            req.auto_renew,
+            req.renewal_status,
+            req.do_not_renew_reason,
         )
         self.audit_repo.write("admin", "api", "create_node", "vpn_node", str(node.id), {"region": node.region_code, "provider": node.provider})
         self.db.commit()
@@ -143,6 +166,8 @@ class AdminService:
             raise HTTPException(status_code=404, detail="node_not_found")
         node.status = "active" if enabled else "maintenance"
         node.health_status = "healthy" if enabled else "down"
+        if enabled:
+            node.provisioning_lock_key = None
         action = "enable_node" if enabled else "disable_node"
         self.audit_repo.write("admin", "api", action, "vpn_node", str(node.id))
         self.db.commit()

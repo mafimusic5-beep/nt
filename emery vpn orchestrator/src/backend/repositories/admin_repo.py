@@ -29,6 +29,14 @@ class AdminRepository(BaseRepository):
         ssh_key_fingerprint: str,
         ssh_key_status: str,
         provider: str = "manual",
+        ssh_host_key: str = "",
+        provider_server_id: str = "",
+        contract_id: str = "",
+        paid_until=None,
+        renewal_price_eur_cents: int = 0,
+        auto_renew: bool = True,
+        renewal_status: str = "renew",
+        do_not_renew_reason: str = "",
     ) -> VpnNode:
         node = VpnNode(
             name=name,
@@ -45,8 +53,16 @@ class AdminRepository(BaseRepository):
             current_clients=current_clients,
             per_device_speed_limit_mbps=per_device_speed_limit_mbps,
             firstvds_vps_id=firstvds_vps_id,
+            provider_server_id=provider_server_id or firstvds_vps_id,
+            contract_id=contract_id,
+            paid_until=paid_until,
+            renewal_price_eur_cents=max(int(renewal_price_eur_cents), 0),
+            auto_renew=auto_renew,
+            renewal_status=renewal_status,
+            do_not_renew_reason=do_not_renew_reason,
             ssh_key_fingerprint=ssh_key_fingerprint,
             ssh_key_status=ssh_key_status,
+            ssh_host_key=ssh_host_key,
         )
         self.db.add(node)
         self.db.flush()

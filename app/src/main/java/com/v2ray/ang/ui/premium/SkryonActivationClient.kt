@@ -13,6 +13,7 @@ import com.v2ray.ang.security.EmeryDeviceIdentity
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -29,6 +30,7 @@ internal const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
 internal const val SKRYON_SERVER_GUID_PREF = "SKRYON_SERVER_GUID"
 internal const val SKRYON_SERVER_ID_PREF = "SKRYON_SERVER_ID"
 internal const val SKRYON_CONFIG_REVISION_PREF = "SKRYON_CONFIG_REVISION"
+internal const val SKRYON_ACTIVATION_CODE_LENGTH = 11
 
 private const val SKRYON_WEBSITE_API_BASE_URL = "https://skryon.ru"
 
@@ -344,15 +346,36 @@ internal suspend fun syncSkryonConfig(
 }
 
 internal fun saveActivatedSkryonConfig(config: String): String {
-    val oldGuid = MmkvManager.decodeSettingsString(SKRYON_SERVER_GUID_PREF, "")?.trim().orEmpty()
-    if (oldGuid.isNotBlank()) {
-        MmkvManager.removeServer(oldGuid)
-    }
+    // Build and select the replacement before deleting the previous profile.
+    // A malformed link or a failed local write must leave the working profile
+    // available for the caller to retry.
     val profile = requireNotNull(VlessFmt.parse(config)) { "Invalid VLESS config" }
+    val oldGuid = MmkvManager.decodeSettingsString(SKRYON_SERVER_GUID_PREF, "")?.trim().orEmpty()
     val guid = MmkvManager.encodeServerConfig("", profile)
     MmkvManager.encodeServerRaw(guid, config)
     MmkvManager.setSelectServer(guid)
+    if (oldGuid.isNotBlank() && oldGuid != guid) {
+        MmkvManager.removeServer(oldGuid)
+    }
     return guid
+}
+
+internal fun sanitizeSkryonActivationCode(value: String): String {
+    return value
+        .uppercase(Locale.ROOT)
+        .filter { it.isLetterOrDigit() }
+        .take(SKRYON_ACTIVATION_CODE_LENGTH)
+}
+
+internal fun formatSkryonActivationCode(rawCode: String): String {
+    val normalized = sanitizeSkryonActivationCode(rawCode)
+    val groups = listOf(1, 3, 2, 2, 2, 1)
+    var index = 0
+    return groups.mapNotNull { size ->
+        val part = normalized.drop(index).take(size)
+        index += size
+        part.takeIf { it.isNotBlank() }
+    }.joinToString("-")
 }
 
 internal fun clearActivatedSkryonConfig() {
@@ -490,6 +513,12 @@ private fun activationReasonText(reason: String): String {
         "plan_limit_mismatch" -> "Лимит устройств не соответствует выбранному тарифу"
         "activation_code_mismatch" -> "Сервер вернул конфигурацию для другого кода"
         "no_server" -> "Сервер ещё не добавлен"
+        "server_capacity_unavailable" -> "Свободных мест сейчас нет. Новый сервер уже подготавливается — попробуйте немного позже"
+        "credential_install_failed" -> "Сервер подготавливает персональный доступ. Попробуйте ещё раз позже"
+        "pool_backend_unreachable", "pool_confirmation_failed", "pool_assignment_unconfirmed" ->
+            "Не удалось подтвердить место на VPN-сервере. Попробуйте ещё раз"
+        "assignment_install_in_progress", "assignment_maintenance_in_progress", "assignment_state_changed_retry" ->
+            "Персональный доступ обновляется. Повторите через несколько секунд"
         "too_many_attempts" -> "Слишком много попыток. Попробуйте позже"
         "upgrade_required" -> "Версия приложения устарела. Обновите приложение."
         "network" -> "Нет соединения с сервером регистрации"

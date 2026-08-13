@@ -14,7 +14,18 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from config import DATABASE_PATH
-from storage import format_code, now_iso, parse_iso
+from pool_reservation_bridge import (
+    PoolBridgeError,
+    confirm_persisted_assignment,
+    is_enabled as pool_bridge_enabled,
+    prepare_assignment,
+)
+from storage import (
+    format_code,
+    now_iso,
+    parse_iso,
+    save_device_pool_assignment_in_connection,
+)
 
 
 MAX_CLOCK_SKEW_SECONDS = 300
@@ -84,6 +95,18 @@ def ensure_device_auth_storage() -> None:
             'first_seen_at': 'TEXT',
             'last_seen_at': 'TEXT',
             'active': 'INTEGER NOT NULL DEFAULT 1',
+            'pool_assignment_id': 'INTEGER',
+            'pool_status': 'TEXT NOT NULL DEFAULT ""',
+            'pool_confirmation_token': 'TEXT NOT NULL DEFAULT ""',
+            'pool_node_id': 'INTEGER',
+            'pool_node_name': 'TEXT NOT NULL DEFAULT ""',
+            'pool_region': 'TEXT NOT NULL DEFAULT ""',
+            'pool_config': 'TEXT NOT NULL DEFAULT ""',
+            'pool_config_revision': 'INTEGER NOT NULL DEFAULT 0',
+            'pool_speed_limit_mbps': 'INTEGER NOT NULL DEFAULT 0',
+            'pool_entitlement_hash': 'TEXT NOT NULL DEFAULT ""',
+            'pool_entitlement_expires_at': 'TEXT NOT NULL DEFAULT ""',
+            'pool_updated_at': 'TEXT',
         }
         for column, definition in additions.items():
             if column not in columns:
@@ -106,6 +129,13 @@ def ensure_device_auth_storage() -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_code_devices_key_fingerprint
             ON code_devices(code, public_key_fingerprint)
             WHERE public_key_fingerprint <> ''
+            '''
+        )
+        con.execute(
+            '''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_code_devices_pool_assignment
+            ON code_devices(pool_assignment_id)
+            WHERE pool_assignment_id IS NOT NULL
             '''
         )
         con.execute(
@@ -420,6 +450,7 @@ def register_device(
     safe_device_name = _public_device_name(signed_device_name)
 
     con = _connect()
+    pool_assignment: Dict[str, Any] | None = None
     try:
         con.execute('BEGIN IMMEDIATE')
         activation = _activation_row(con, raw_code)
@@ -495,14 +526,9 @@ def register_device(
                 (code,),
             ).fetchall()
             if len(active_rows) >= limit:
-                # One-time migration for old Personal installations that used a
-                # random installation UUID or exposed an emulator/model name.
-                # Modern stable IDs are never silently replaced, so a second
-                # physical device still receives device_limit_reached.
-                if limit == 1 and len(active_rows) == 1 and _legacy_personal_slot_can_be_migrated(active_rows[0]):
-                    con.execute('DELETE FROM code_devices WHERE id = ?', (active_rows[0]['id'],))
-                else:
-                    raise DeviceAuthError('device_limit_reached', 409)
+                # Paid slots are immutable: neither a user action nor a new
+                # installation silently replaces an already registered device.
+                raise DeviceAuthError('device_limit_reached', 409)
             con.execute(
                 '''
                 INSERT INTO code_devices(
@@ -548,7 +574,32 @@ def register_device(
             activation=activation,
             current_device_id=safe_device_id,
         )
+        if pool_bridge_enabled():
+            expires_at = str(activation['expires_at'] or '').strip()
+            if not expires_at:
+                raise DeviceAuthError('entitlement_expiry_missing', 503)
+            try:
+                pool_assignment = prepare_assignment(
+                    formatted_code=code,
+                    device_id=safe_device_id,
+                    plan=str(activation['plan'] or ''),
+                    expires_at=expires_at,
+                )
+            except PoolBridgeError as error:
+                raise DeviceAuthError(error.reason, error.status_code) from error
+            save_device_pool_assignment_in_connection(
+                con,
+                code,
+                safe_device_id,
+                pool_assignment,
+            )
+            payload['vpn_assignment'] = pool_assignment
         con.commit()
+        if pool_assignment is not None:
+            try:
+                payload['vpn_assignment'] = confirm_persisted_assignment(pool_assignment)
+            except PoolBridgeError as error:
+                raise DeviceAuthError(error.reason, error.status_code) from error
         return payload
     except DeviceAuthError as error:
         if error.reason == 'expired':

@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'orchestrator/**'
+      - 'emery vpn orchestrator/**'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/**'
       - 'app/build.gradle.kts'
       - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
@@ -13,6 +15,8 @@ on:
   pull_request:
     paths:
       - 'orchestrator/**'
+      - 'emery vpn orchestrator/**'
+      - 'app/src/main/java/com/v2ray/ang/ui/premium/**'
       - 'app/build.gradle.kts'
       - 'app/src/main/java/com/v2ray/ang/security/EmeryDeviceIdentity.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
@@ -24,6 +28,34 @@ permissions:
   contents: read
 
 jobs:
+  modern-backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: emery vpn orchestrator
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: emery vpn orchestrator/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install --quiet -r requirements.txt
+      - name: Compile backend
+        run: python -m compileall -q src tests alembic
+      - name: Run backend tests
+        run: python -m pytest -q
+      - name: Verify migrations from an empty database
+        env:
+          DB_URL: sqlite:////tmp/emery-migrations.db
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+
   activation-keys:
     runs-on: ubuntu-latest
     steps:
@@ -36,7 +68,7 @@ jobs:
           cache: pip
           cache-dependency-path: orchestrator/requirements.txt
       - name: Install orchestrator dependencies
-        run: python -m pip install --quiet -r orchestrator/requirements.txt
+        run: python -m pip install --quiet -r orchestrator/requirements.txt pytest==8.4.2
       - name: Compile orchestrator
         run: python -m compileall -q orchestrator
       - name: Run activation key tests
@@ -45,7 +77,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m unittest discover -s orchestrator/tests -v 2>&1 | tee /tmp/activation-key-tests.log
+          python -m pytest -q orchestrator/tests 2>&1 | tee /tmp/activation-key-tests.log
       - name: Upload activation key test report
         if: always()
         uses: actions/upload-artifact@v4
