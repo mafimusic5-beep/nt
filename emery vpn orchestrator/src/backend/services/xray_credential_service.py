@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Protocol
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from src.backend.services.node_recovery_service import SshAndProviderRecoveryTransport
 from src.common.config import settings
 from src.common.models import VpnAssignment, VpnNode
 
 logger = logging.getLogger(__name__)
+_GATE_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{1,255}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +23,8 @@ class CredentialMutationResult:
     rate_limit_enforced: bool = False
     smtp_block_enforced: bool = False
     shared_credential_disabled: bool = False
+    direct_ingress_blocked: bool = False
+    device_gate_ready: bool = False
 
 
 class XrayCredentialTransport(Protocol):
@@ -30,6 +34,31 @@ class XrayCredentialTransport(Protocol):
 
 
 class VlessDeviceConfigBuilder:
+    @staticmethod
+    def gate_endpoint(node: VpnNode) -> tuple[str, int, str, str, int] | None:
+        gate_host = (node.device_gate_host or "").strip().lower()
+        gate_server_name = (node.device_gate_server_name or "").strip().lower()
+        gate_spki_sha256 = (node.device_gate_spki_sha256 or "").strip().lower()
+        gate_port = int(node.device_gate_port or 0)
+        local_port = int(settings.device_gate_client_loopback_port)
+        if (
+            not gate_host
+            or not gate_server_name
+            or not re.fullmatch(r"[a-f0-9]{64}", gate_spki_sha256)
+            or not _GATE_NAME_RE.fullmatch(gate_host)
+            or not _GATE_NAME_RE.fullmatch(gate_server_name)
+            or gate_host.startswith(".")
+            or gate_host.endswith(".")
+            or gate_server_name.startswith(".")
+            or gate_server_name.endswith(".")
+            or gate_port < 1
+            or gate_port > 65535
+            or local_port < 1024
+            or local_port > 65535
+        ):
+            return None
+        return gate_host, gate_port, gate_server_name, gate_spki_sha256, local_port
+
     @staticmethod
     def build(node: VpnNode, assignment: VpnAssignment) -> str:
         source = next(
@@ -48,10 +77,30 @@ class VlessDeviceConfigBuilder:
             return ""
         if not parsed.hostname:
             return ""
-        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-        netloc = f"{assignment.client_uuid}@{host}:{assignment.client_port}"
+        if not settings.device_bound_gate_enabled:
+            return ""
+        gate_endpoint = VlessDeviceConfigBuilder.gate_endpoint(node)
+        if gate_endpoint is None:
+            return ""
+        gate_host, gate_port, gate_server_name, gate_spki_sha256, local_port = gate_endpoint
+        # The distributable URI deliberately points at the app-local proxy.
+        # Gate routing metadata is public; possession of it cannot authorize a
+        # connection because the gateway requires a fresh Keystore signature.
+        netloc = f"{assignment.client_uuid}@127.0.0.1:{local_port}"
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query.update(
+            {
+                "eg_v": "1",
+                "eg_host": gate_host,
+                "eg_port": str(gate_port),
+                "eg_sni": gate_server_name,
+                "eg_spki": gate_spki_sha256,
+                "eg_assignment": str(assignment.id),
+                "eg_node": str(node.id),
+            }
+        )
         fragment = parsed.fragment or f"{node.region_code}-{node.id}"
-        return urlunsplit(("vless", netloc, parsed.path, parsed.query, fragment))
+        return urlunsplit(("vless", netloc, parsed.path, urlencode(query), fragment))
 
 
 class ScriptOrSshXrayCredentialTransport:
@@ -73,6 +122,9 @@ class ScriptOrSshXrayCredentialTransport:
             "client_uuid": assignment.client_uuid,
             "client_port": assignment.client_port,
             "speed_limit_mbps": assignment.speed_limit_mbps,
+            "listen_host": "127.0.0.1",
+            "device_gate_required": True,
+            "device_gate_service_name": settings.device_gate_service_name,
         }
 
     def _external(
@@ -105,6 +157,8 @@ class ScriptOrSshXrayCredentialTransport:
             rate_limit_enforced=bool(payload.get("rate_limit_enforced")),
             smtp_block_enforced=bool(payload.get("smtp_block_enforced")),
             shared_credential_disabled=bool(payload.get("shared_credential_disabled")),
+            direct_ingress_blocked=bool(payload.get("direct_ingress_blocked")),
+            device_gate_ready=bool(payload.get("device_gate_ready")),
         )
 
     @staticmethod
@@ -148,6 +202,9 @@ if DATA["action"] == "upsert_client":
     dedicated = copy.deepcopy(base)
     dedicated["tag"] = tag
     dedicated["port"] = int(DATA["client_port"])
+    # UUID-bearing listeners are never exposed on a public interface. Only the
+    # authenticated gateway may reach them through loopback.
+    dedicated["listen"] = "127.0.0.1"
     settings_block = dedicated.setdefault("settings", {})
     base_clients = list(settings_block.get("clients") or [])
     flow = str(base_clients[0].get("flow", "xtls-rprx-vision")) if base_clients else "xtls-rprx-vision"
@@ -233,6 +290,8 @@ try:
     os.replace(candidate_path, path)
     subprocess.run(["systemctl", "restart", "xray"], check=True, capture_output=True, text=True)
     subprocess.run(["systemctl", "is-active", "--quiet", "xray"], check=True)
+    if DATA["action"] == "upsert_client":
+        subprocess.run(["systemctl", "is-active", "--quiet", __EMERY_GATE_SERVICE__], check=True)
 except Exception:
     try:
         with open(path, "w", encoding="utf-8") as handle:
@@ -245,9 +304,15 @@ except Exception:
             os.unlink(candidate_path)
         raise
 
-print(json.dumps({"ok": True, "rate_limit_enforced": True, "smtp_block_enforced": True, "shared_credential_disabled": True}))
+print(json.dumps({"ok": True, "rate_limit_enforced": True, "smtp_block_enforced": True, "shared_credential_disabled": True, "direct_ingress_blocked": True, "device_gate_ready": True}))
 '''
-        return template.replace("__EMERY_PAYLOAD__", encoded)
+        return (
+            template.replace("__EMERY_PAYLOAD__", encoded)
+            .replace(
+                "__EMERY_GATE_SERVICE__",
+                json.dumps(settings.device_gate_service_name),
+            )
+        )
 
     def _ssh(
         self,
@@ -279,6 +344,8 @@ print(json.dumps({"ok": True, "rate_limit_enforced": True, "smtp_block_enforced"
                 rate_limit_enforced=bool(payload.get("rate_limit_enforced")),
                 smtp_block_enforced=bool(payload.get("smtp_block_enforced")),
                 shared_credential_disabled=bool(payload.get("shared_credential_disabled")),
+                direct_ingress_blocked=bool(payload.get("direct_ingress_blocked")),
+                device_gate_ready=bool(payload.get("device_gate_ready")),
             )
         except Exception as exc:  # noqa: BLE001
             return CredentialMutationResult(False, f"credential_ssh_failed:{type(exc).__name__}:{exc}")
@@ -301,6 +368,10 @@ print(json.dumps({"ok": True, "rate_limit_enforced": True, "smtp_block_enforced"
                 return CredentialMutationResult(False, "smtp_block_not_enforced")
             if not result.shared_credential_disabled:
                 return CredentialMutationResult(False, "shared_credential_not_disabled")
+            if not result.direct_ingress_blocked:
+                return CredentialMutationResult(False, "direct_ingress_not_blocked")
+            if not result.device_gate_ready:
+                return CredentialMutationResult(False, "device_gate_not_ready")
         return result
 
     def install(self, node: VpnNode, assignment: VpnAssignment) -> CredentialMutationResult:

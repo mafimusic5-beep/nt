@@ -13,7 +13,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from config import DATABASE_PATH
+from config import DATABASE_PATH, DEVICE_GATE_AUTH_MAX_SKEW_SECONDS
 from pool_reservation_bridge import (
     PoolBridgeError,
     confirm_persisted_assignment,
@@ -104,6 +104,11 @@ def ensure_device_auth_storage() -> None:
             'pool_config': 'TEXT NOT NULL DEFAULT ""',
             'pool_config_revision': 'INTEGER NOT NULL DEFAULT 0',
             'pool_speed_limit_mbps': 'INTEGER NOT NULL DEFAULT 0',
+            'pool_client_port': 'INTEGER',
+            'pool_gate_host': 'TEXT NOT NULL DEFAULT ""',
+            'pool_gate_port': 'INTEGER',
+            'pool_gate_server_name': 'TEXT NOT NULL DEFAULT ""',
+            'pool_gate_spki_sha256': 'TEXT NOT NULL DEFAULT ""',
             'pool_entitlement_hash': 'TEXT NOT NULL DEFAULT ""',
             'pool_entitlement_expires_at': 'TEXT NOT NULL DEFAULT ""',
             'pool_updated_at': 'TEXT',
@@ -210,8 +215,12 @@ def _timestamp_seconds(value: str) -> int:
 
 
 def _check_timestamp(value: str) -> None:
+    _check_timestamp_with_skew(value, MAX_CLOCK_SKEW_SECONDS)
+
+
+def _check_timestamp_with_skew(value: str, max_skew_seconds: int) -> None:
     timestamp = _timestamp_seconds(value)
-    if abs(int(time.time()) - timestamp) > MAX_CLOCK_SKEW_SECONDS:
+    if abs(int(time.time()) - timestamp) > max_skew_seconds:
         raise DeviceAuthError('device_timestamp_invalid', 401)
 
 
@@ -290,6 +299,34 @@ def _request_canonical(
             f'timestamp={timestamp}',
             f'nonce={nonce}',
             f'auth_sha256={_auth_hash(raw_code)}',
+        )
+    )
+
+
+def _gateway_canonical(
+    *,
+    assignment_id: int,
+    node_id: int,
+    gate_server_name: str,
+    gate_spki_sha256: str,
+    device_id: str,
+    server_issued_at: str,
+    timestamp: str,
+    server_nonce: str,
+    client_nonce: str,
+) -> str:
+    return '\n'.join(
+        (
+            'protocol=emery-device-gate-v1',
+            f'assignment_id={assignment_id}',
+            f'node_id={node_id}',
+            f'gate_server_name={gate_server_name}',
+            f'gate_spki_sha256={gate_spki_sha256}',
+            f'device_id={device_id}',
+            f'server_issued_at={server_issued_at}',
+            f'timestamp={timestamp}',
+            f'server_nonce={server_nonce}',
+            f'client_nonce={client_nonce}',
         )
     )
 
@@ -463,7 +500,7 @@ def register_device(
 
         existing = con.execute(
             '''
-            SELECT id, public_key_fingerprint, active
+            SELECT id, public_key, public_key_fingerprint, active
             FROM code_devices
             WHERE code = ? AND device_id = ?
             ''',
@@ -482,15 +519,22 @@ def register_device(
 
         current_time = now_iso()
         if existing:
-            # Android removes the old Keystore entry during uninstall. For the
-            # same stable Android ID, rotate the key in-place and keep one slot.
             if not bool(existing['active']):
-                used = con.execute(
-                    'SELECT COUNT(*) AS count FROM code_devices WHERE code = ? AND active = 1',
-                    (code,),
-                ).fetchone()['count']
-                if int(used) >= limit:
-                    raise DeviceAuthError('device_limit_reached', 409)
+                raise DeviceAuthError('device_revoked', 403)
+            stored_public_key = str(existing['public_key'] or '').strip()
+            stored_fingerprint = str(existing['public_key_fingerprint'] or '').strip()
+            if stored_public_key:
+                try:
+                    _, decoded_fingerprint = _decode_public_key(stored_public_key)
+                except DeviceAuthError as exc:
+                    raise DeviceAuthError('device_key_binding_invalid', 409) from exc
+                expected_fingerprint = stored_fingerprint or decoded_fingerprint
+                if expected_fingerprint != fingerprint:
+                    # Device ID and activation code are not sufficient to
+                    # replace a registered key. A reinstall therefore needs an
+                    # explicit support/admin reset instead of silently handing
+                    # the existing VLESS assignment to a new private key.
+                    raise DeviceAuthError('device_key_rotation_requires_reset', 409)
             con.execute(
                 '''
                 UPDATE code_devices
@@ -694,6 +738,156 @@ def authenticate_registered_device(
             con.commit()
         else:
             con.rollback()
+        raise
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def authorize_gateway_connection(
+    *,
+    assignment_id: int,
+    node_id: int,
+    gate_server_name: str,
+    gate_spki_sha256: str,
+    device_id: str,
+    server_issued_at: str,
+    timestamp: str,
+    server_nonce: str,
+    client_nonce: str,
+    signature_base64: str,
+    signature_algorithm: str,
+) -> Dict[str, Any]:
+    """Authorize one TCP connection using the registered device key.
+
+    The VLESS UUID is deliberately not accepted as authorization here. The
+    client must prove possession of the Android Keystore key registered for
+    this exact active pool assignment.
+    """
+    safe_device_id = device_id.strip()
+    safe_gate_server_name = gate_server_name.strip().lower()
+    safe_gate_spki_sha256 = gate_spki_sha256.strip().lower()
+    safe_server_nonce = server_nonce.strip()
+    safe_client_nonce = client_nonce.strip()
+    if (
+        assignment_id <= 0
+        or node_id <= 0
+        or len(safe_gate_server_name) < 1
+        or len(safe_gate_server_name) > 255
+        or any(char in safe_gate_server_name for char in ('\n', '\r'))
+        or len(safe_gate_spki_sha256) != 64
+        or any(char not in '0123456789abcdef' for char in safe_gate_spki_sha256)
+        or len(safe_device_id) < 4
+        or len(safe_device_id) > 128
+        or any(char in safe_device_id for char in ('\n', '\r'))
+        or len(safe_server_nonce) < 16
+        or len(safe_server_nonce) > 128
+        or len(safe_client_nonce) < 16
+        or len(safe_client_nonce) > 128
+        or any(char in safe_server_nonce for char in ('\n', '\r'))
+        or any(char in safe_client_nonce for char in ('\n', '\r'))
+    ):
+        raise DeviceAuthError('device_gate_proof_invalid', 401)
+
+    _check_timestamp_with_skew(server_issued_at, DEVICE_GATE_AUTH_MAX_SKEW_SECONDS)
+    _check_timestamp_with_skew(timestamp, DEVICE_GATE_AUTH_MAX_SKEW_SECONDS)
+    canonical = _gateway_canonical(
+        assignment_id=assignment_id,
+        node_id=node_id,
+        gate_server_name=safe_gate_server_name,
+        gate_spki_sha256=safe_gate_spki_sha256,
+        device_id=safe_device_id,
+        server_issued_at=server_issued_at,
+        timestamp=timestamp,
+        server_nonce=safe_server_nonce,
+        client_nonce=safe_client_nonce,
+    )
+
+    con = _connect()
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        row = con.execute(
+            '''
+            SELECT
+                d.id AS device_row_id,
+                d.code,
+                d.public_key,
+                d.active AS device_active,
+                d.pool_status,
+                d.pool_node_id,
+                d.pool_client_port,
+                d.pool_gate_server_name,
+                d.pool_gate_spki_sha256,
+                c.status AS code_status,
+                c.expires_at,
+                c.max_devices,
+                c.plan
+            FROM code_devices AS d
+            JOIN activation_codes AS c ON c.code = d.code
+            WHERE d.pool_assignment_id = ? AND d.device_id = ?
+            ''',
+            (assignment_id, safe_device_id),
+        ).fetchone()
+        if not row:
+            raise DeviceAuthError('device_gate_not_authorized', 403)
+        if (
+            not bool(row['device_active'])
+            or str(row['code_status'] or '') != 'active'
+            or str(row['pool_status'] or '') != 'active'
+            or int(row['pool_node_id'] or 0) != node_id
+            or str(row['pool_gate_server_name'] or '').strip().lower()
+            != safe_gate_server_name
+            or str(row['pool_gate_spki_sha256'] or '').strip().lower()
+            != safe_gate_spki_sha256
+            or not str(row['public_key'] or '').strip()
+        ):
+            raise DeviceAuthError('device_gate_not_authorized', 403)
+
+        expires_at = parse_iso(row['expires_at'])
+        if not expires_at or expires_at <= datetime.now(timezone.utc):
+            if expires_at:
+                con.execute(
+                    'UPDATE activation_codes SET status = ? WHERE code = ?',
+                    ('expired', str(row['code'])),
+                )
+            raise DeviceAuthError('device_gate_not_authorized', 403)
+        _plan_limit_and_title(str(row['plan'] or ''), int(row['max_devices'] or 1))
+
+        target_port = int(row['pool_client_port'] or 0)
+        if target_port < 1 or target_port > 65535:
+            raise DeviceAuthError('device_gate_target_unavailable', 503)
+
+        _verify_signature(
+            str(row['public_key']),
+            signature_base64,
+            canonical,
+            signature_algorithm,
+        )
+        replay_nonce = 'gate-' + hashlib.sha256(
+            (safe_server_nonce + '\0' + safe_client_nonce).encode('utf-8')
+        ).hexdigest()
+        _consume_nonce(
+            con,
+            code=str(row['code']),
+            device_id=safe_device_id,
+            nonce=replay_nonce,
+        )
+        con.execute(
+            'UPDATE code_devices SET last_seen_at = ? WHERE id = ?',
+            (now_iso(), int(row['device_row_id'])),
+        )
+        con.commit()
+        return {
+            'allowed': True,
+            'target_host': '127.0.0.1',
+            'target_port': target_port,
+            'assignment_id': assignment_id,
+            'node_id': node_id,
+        }
+    except DeviceAuthError:
+        con.rollback()
         raise
     except Exception:
         con.rollback()

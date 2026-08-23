@@ -4,6 +4,7 @@ import android.content.Context
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.fmt.VlessFmt
+import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryDeviceRecord
@@ -349,10 +350,11 @@ internal fun saveActivatedSkryonConfig(config: String): String {
     // Build and select the replacement before deleting the previous profile.
     // A malformed link or a failed local write must leave the working profile
     // available for the caller to retry.
-    val profile = requireNotNull(VlessFmt.parse(config)) { "Invalid VLESS config" }
+    val preparedConfig = EmeryDeviceGateConfig.prepareVlessUri(config)
+    val profile = requireNotNull(VlessFmt.parse(preparedConfig)) { "Invalid VLESS config" }
     val oldGuid = MmkvManager.decodeSettingsString(SKRYON_SERVER_GUID_PREF, "")?.trim().orEmpty()
     val guid = MmkvManager.encodeServerConfig("", profile)
-    MmkvManager.encodeServerRaw(guid, config)
+    MmkvManager.encodeServerRaw(guid, preparedConfig)
     MmkvManager.setSelectServer(guid)
     if (oldGuid.isNotBlank() && oldGuid != guid) {
         MmkvManager.removeServer(oldGuid)
@@ -506,6 +508,9 @@ private fun activationReasonText(reason: String): String {
         "already_bound" -> "Код уже активирован на другом устройстве"
         "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
         "device_signature_invalid", "device_signature_missing" -> "Не удалось подтвердить подлинность устройства"
+        "device_key_rotation_requires_reset" ->
+            "Ключ этого устройства уже зарегистрирован. После переустановки обратитесь в поддержку для безопасного сброса"
+        "device_revoked" -> "Доступ этого устройства отозван"
         "device_not_registered", "device_confirmation_missing" -> "Сервер не подтвердил регистрацию устройства"
         "device_mismatch", "device_inventory_mismatch" -> "Сервер вернул другое устройство"
         "device_inventory_missing" -> "Сервер не вернул таблицу зарегистрированных устройств"

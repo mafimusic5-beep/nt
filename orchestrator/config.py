@@ -83,9 +83,17 @@ POOL_BRIDGE_ENABLED = _env_bool(
 )
 POOL_BRIDGE_REGION_CODE = os.getenv('POOL_BRIDGE_REGION_CODE', 'auto').strip().lower() or 'auto'
 POOL_BRIDGE_TIMEOUT_SECONDS = max(float(os.getenv('POOL_BRIDGE_TIMEOUT_SECONDS', '100')), 10.0)
+DEVICE_GATE_API_KEY = (
+    os.getenv('DEVICE_GATE_API_KEY', '').strip()
+    or _shared_emery_value('DEVICE_GATE_API_KEY')
+)
+DEVICE_GATE_AUTH_MAX_SKEW_SECONDS = max(
+    min(int(os.getenv('DEVICE_GATE_AUTH_MAX_SKEW_SECONDS', '30')), 120),
+    5,
+)
 
-# Builds before 717 do not implement the signed device protocol and must be upgraded.
-SIGNED_DEVICE_PROTOCOL_VERSION_CODE = 717
+# Builds before 718 do not implement the device-bound connection protocol.
+SIGNED_DEVICE_PROTOCOL_VERSION_CODE = 718
 MIN_SUPPORTED_APP_VERSION_CODE = max(
     int(os.getenv('MIN_SUPPORTED_APP_VERSION_CODE', str(SIGNED_DEVICE_PROTOCOL_VERSION_CODE))),
     SIGNED_DEVICE_PROTOCOL_VERSION_CODE,

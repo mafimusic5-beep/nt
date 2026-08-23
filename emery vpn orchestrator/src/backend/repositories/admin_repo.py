@@ -37,6 +37,10 @@ class AdminRepository(BaseRepository):
         auto_renew: bool = True,
         renewal_status: str = "renew",
         do_not_renew_reason: str = "",
+        device_gate_host: str = "",
+        device_gate_port: int = 24443,
+        device_gate_server_name: str = "",
+        device_gate_spki_sha256: str = "",
     ) -> VpnNode:
         node = VpnNode(
             name=name,
@@ -63,6 +67,10 @@ class AdminRepository(BaseRepository):
             ssh_key_fingerprint=ssh_key_fingerprint,
             ssh_key_status=ssh_key_status,
             ssh_host_key=ssh_host_key,
+            device_gate_host=device_gate_host,
+            device_gate_port=device_gate_port,
+            device_gate_server_name=device_gate_server_name,
+            device_gate_spki_sha256=device_gate_spki_sha256,
         )
         self.db.add(node)
         self.db.flush()

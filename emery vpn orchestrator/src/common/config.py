@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     unique_device_credentials_enabled: bool = False
     per_device_rate_limit_enforced: bool = False
     smtp_abuse_protection_enabled: bool = False
+    # A VLESS UUID is a bearer credential. Unique-device mode is only allowed
+    # when every connection is forced through the proof-of-possession gateway;
+    # otherwise a copied vless:// URI would still be usable by another client.
+    device_bound_gate_enabled: bool = False
+    device_gate_client_loopback_port: int = 17890
+    device_gate_service_name: str = "emery-device-gate"
     pool_bridge_api_key: str = ""
     pool_assignment_prepare_ttl_seconds: int = 300
     pool_assignment_maintenance_interval_seconds: int = 60
@@ -52,7 +58,7 @@ class Settings(BaseSettings):
     xray_credential_script: str = ""
     xray_credential_timeout_seconds: int = 90
     rate_limit_per_minute: int = 60
-    min_supported_app_version_code: int = 716
+    min_supported_app_version_code: int = 718
     app_update_message: str = (
         "Версия приложения устарела. Обновите приложение."
     )

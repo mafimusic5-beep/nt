@@ -54,11 +54,19 @@ object EmeryDeviceIdentity {
         val signatureAlgorithm: String = SIGNATURE_ALGORITHM,
     )
 
+    data class GatewayProof(
+        val deviceId: String,
+        val timestampMillis: String,
+        val clientNonce: String,
+        val signatureBase64: String,
+        val signatureAlgorithm: String = SIGNATURE_ALGORITHM,
+    )
+
     /**
      * Android 8+ keeps this value stable for the same device, Android user and app
-     * signing key across an ordinary reinstall. That lets the backend rotate the
-     * Android Keystore key in the existing tariff slot instead of registering a
-     * second device.
+     * signing key across an ordinary reinstall. The Keystore private key itself
+     * is removed by uninstall; the backend deliberately requires an explicit
+     * recovery reset before accepting a replacement key for the same device ID.
      */
     fun deviceId(): String {
         val androidId = runCatching {
@@ -135,6 +143,39 @@ object EmeryDeviceIdentity {
             deviceId = resolvedDeviceId,
             timestampMillis = timestamp,
             nonce = nonce,
+            signatureBase64 = signCanonical(canonical),
+        )
+    }
+
+    fun buildGatewayProof(
+        assignmentId: Long,
+        nodeId: Long,
+        gateServerName: String,
+        gateSpkiSha256: String,
+        serverIssuedAt: String,
+        serverNonce: String,
+    ): GatewayProof {
+        require(assignmentId > 0 && nodeId > 0) { "Invalid device-gate assignment" }
+        val resolvedDeviceId = deviceId()
+        val normalizedServerName = gateServerName.trim().lowercase(Locale.ROOT)
+        val timestamp = System.currentTimeMillis().toString()
+        val clientNonce = randomNonce()
+        val canonical = listOf(
+            "protocol=emery-device-gate-v1",
+            "assignment_id=$assignmentId",
+            "node_id=$nodeId",
+            "gate_server_name=$normalizedServerName",
+            "gate_spki_sha256=${gateSpkiSha256.trim().lowercase(Locale.ROOT)}",
+            "device_id=$resolvedDeviceId",
+            "server_issued_at=$serverIssuedAt",
+            "timestamp=$timestamp",
+            "server_nonce=$serverNonce",
+            "client_nonce=$clientNonce",
+        ).joinToString(separator = "\n")
+        return GatewayProof(
+            deviceId = resolvedDeviceId,
+            timestampMillis = timestamp,
+            clientNonce = clientNonce,
             signatureBase64 = signCanonical(canonical),
         )
     }

@@ -1,4 +1,5 @@
 import asyncio
+import secrets
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict
@@ -13,11 +14,13 @@ from config import (
     DEFAULT_SERVER_CONFIG,
     DEFAULT_SERVER_NAME,
     DEFAULT_SERVER_REGION,
+    DEVICE_GATE_API_KEY,
     MIN_SUPPORTED_APP_VERSION_CODE,
 )
 from device_auth import (
     DeviceAuthError,
     authenticate_registered_device,
+    authorize_gateway_connection,
     ensure_device_auth_storage,
     register_device,
 )
@@ -71,6 +74,20 @@ class ConfigSyncRequest(BaseModel):
     deviceId: str = Field(min_length=4, max_length=128)
     revision: int = Field(default=-1, ge=-1)
     appVersionCode: int = Field(default=0, ge=0)
+
+
+class DeviceGateAuthorizeRequest(BaseModel):
+    assignment_id: int = Field(gt=0)
+    node_id: int = Field(gt=0)
+    gate_server_name: str = Field(min_length=1, max_length=255)
+    gate_spki_sha256: str = Field(pattern=r'^[a-fA-F0-9]{64}$')
+    device_id: str = Field(min_length=4, max_length=128)
+    server_issued_at: str = Field(min_length=1, max_length=32)
+    timestamp: str = Field(min_length=1, max_length=32)
+    server_nonce: str = Field(min_length=16, max_length=128)
+    client_nonce: str = Field(min_length=16, max_length=128)
+    signature: str = Field(min_length=16, max_length=2048)
+    signature_algorithm: str = Field(default='SHA256withECDSA', max_length=64)
 
 
 def upgrade_required(app_version_code: int) -> bool:
@@ -172,6 +189,33 @@ def on_startup() -> None:
 @app.get('/health')
 def health() -> dict:
     return {'ok': True}
+
+
+@app.post('/internal/device-gate/authorize')
+def device_gate_authorize(payload: DeviceGateAuthorizeRequest, request: Request):
+    supplied_key = request.headers.get('x-device-gate-key', '').strip()
+    if (
+        len(DEVICE_GATE_API_KEY) < 32
+        or not supplied_key
+        or not secrets.compare_digest(supplied_key, DEVICE_GATE_API_KEY)
+    ):
+        return _auth_error(DeviceAuthError('device_gate_forbidden', 403))
+    try:
+        return authorize_gateway_connection(
+            assignment_id=payload.assignment_id,
+            node_id=payload.node_id,
+            gate_server_name=payload.gate_server_name,
+            gate_spki_sha256=payload.gate_spki_sha256,
+            device_id=payload.device_id,
+            server_issued_at=payload.server_issued_at,
+            timestamp=payload.timestamp,
+            server_nonce=payload.server_nonce,
+            client_nonce=payload.client_nonce,
+            signature_base64=payload.signature,
+            signature_algorithm=payload.signature_algorithm,
+        )
+    except DeviceAuthError as error:
+        return _auth_error(error)
 
 
 @app.post('/api/device/register')

@@ -58,6 +58,12 @@ class SubscriptionService:
         ).hexdigest()
 
     def _build_unique_device_config(self, sub, device, region_code: str) -> dict:
+        if settings.device_bound_gate_enabled:
+            # This legacy native contract stores only a caller-supplied device
+            # fingerprint and has no verified public key. Never issue a gated
+            # URI that the gateway cannot bind cryptographically. The signed
+            # activation/bridge flow is the supported device-bound path.
+            raise HTTPException(status_code=503, detail="native_device_key_binding_required")
         service = PoolAssignmentService(self.db)
         expires_at = sub.ends_at
         if expires_at.tzinfo is None:

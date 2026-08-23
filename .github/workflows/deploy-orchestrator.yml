@@ -26,7 +26,7 @@ jobs:
         id: validate
         run: |
           set -euo pipefail
-          python3 -m compileall -q orchestrator 'emery vpn orchestrator/src'
+          python3 -m compileall -q orchestrator 'emery vpn orchestrator/src' 'emery vpn orchestrator/deploy/device-gate'
 
       - name: Build deployment archive
         id: package
@@ -305,9 +305,14 @@ jobs:
           values = dotenv_values(Path('/opt/nt/emery vpn orchestrator/.env'))
           if not values.get('ADMIN_API_KEY'):
               raise SystemExit(1)
+          gate_enabled = str(values.get('DEVICE_BOUND_GATE_ENABLED') or '').lower() in {
+              '1', 'true', 'yes', 'on'
+          }
+          if gate_enabled and not values.get('DEVICE_GATE_API_KEY'):
+              raise SystemExit(2)
           PY
           then
-            echo 'ADMIN_API_KEY is missing from the Emery environment; restoring previous code.'
+            echo 'A required Emery API key is missing; restoring previous code.'
             tar -xzf "$backup/code-before-deploy.tgz" -C "$repo"
             exit 70
           fi

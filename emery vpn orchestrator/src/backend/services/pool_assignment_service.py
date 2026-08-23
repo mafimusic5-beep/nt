@@ -21,6 +21,7 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationResponse,
 )
 from src.backend.services.xray_credential_service import (
+    CredentialMutationResult,
     ScriptOrSshXrayCredentialTransport,
     VlessDeviceConfigBuilder,
     XrayCredentialTransport,
@@ -76,6 +77,7 @@ class PoolAssignmentService:
                 settings.unique_device_credentials_enabled,
                 settings.per_device_rate_limit_enforced,
                 settings.smtp_abuse_protection_enabled,
+                settings.device_bound_gate_enabled,
                 bool(settings.pool_bridge_api_key.strip()),
             )
         )
@@ -112,6 +114,12 @@ class PoolAssignmentService:
         if region_code != "auto":
             stmt = stmt.where(VpnNode.region_code == region_code)
         nodes = self.db.scalars(stmt).all()
+        if settings.device_bound_gate_enabled:
+            nodes = [
+                node
+                for node in nodes
+                if VlessDeviceConfigBuilder.gate_endpoint(node) is not None
+            ]
         return sorted(nodes, key=self._node_sort_key)
 
     def _free_port(self, node_id: int) -> int | None:
@@ -208,6 +216,7 @@ class PoolAssignmentService:
             assignment.confirmation_token_hash = ""
             assignment.confirmed_at = None
             assignment.installed_at = None
+            assignment.device_gate_enforced = False
             assignment.last_error = ""
             assignment.prepare_expires_at = self._now() + timedelta(
                 seconds=max(int(settings.pool_assignment_prepare_ttl_seconds), 30)
@@ -267,6 +276,12 @@ class PoolAssignmentService:
             node_name=node.name,
             region_code=node.region_code,
             config=config,
+            client_port=assignment.client_port,
+            device_gate_required=True,
+            device_gate_host=node.device_gate_host,
+            device_gate_port=node.device_gate_port,
+            device_gate_server_name=node.device_gate_server_name,
+            device_gate_spki_sha256=node.device_gate_spki_sha256,
             config_revision=assignment.config_revision,
             speed_limit_mbps=assignment.speed_limit_mbps,
             entitlement_expires_at=assignment.entitlement_expires_at,
@@ -289,9 +304,15 @@ class PoolAssignmentService:
             if entitlement_expires_at >= stored_expiry:
                 assignment.entitlement_hash = req.entitlement_hash
                 assignment.entitlement_expires_at = req.entitlement_expires_at
-            if assignment.status == "active":
+            if assignment.status == "active" and assignment.device_gate_enforced:
                 self.db.commit()
                 return self._response(assignment)
+            if assignment.status == "active":
+                # Rows created before device-gate rollout are untrusted until
+                # Xray has been rewritten to loopback and the gateway service
+                # has attested readiness. Rotate the visible revision so every
+                # client refreshes its local-only URI.
+                assignment.config_revision += 1
             if (
                 assignment.status == "install_claimed"
                 and assignment.prepare_expires_at is not None
@@ -341,6 +362,8 @@ class PoolAssignmentService:
             or not result.rate_limit_enforced
             or not result.smtp_block_enforced
             or not result.shared_credential_disabled
+            or not result.direct_ingress_blocked
+            or not result.device_gate_ready
         ):
             detail = result.detail
             if result.ok and not result.rate_limit_enforced:
@@ -349,12 +372,17 @@ class PoolAssignmentService:
                 detail = "smtp_block_not_enforced"
             elif result.ok and not result.shared_credential_disabled:
                 detail = "shared_credential_not_disabled"
+            elif result.ok and not result.direct_ingress_blocked:
+                detail = "direct_ingress_not_blocked"
+            elif result.ok and not result.device_gate_ready:
+                detail = "device_gate_not_ready"
             self._release_failed_install(assignment, detail)
             raise HTTPException(status_code=503, detail="credential_install_failed")
 
         confirmation_token = secrets.token_urlsafe(32)
         assignment.status = "pending"
         assignment.installed_at = now
+        assignment.device_gate_enforced = True
         assignment.confirmation_token_hash = hashlib.sha256(
             confirmation_token.encode("utf-8")
         ).hexdigest()
@@ -390,6 +418,8 @@ class PoolAssignmentService:
             )
         if assignment.status != "pending":
             raise HTTPException(status_code=409, detail="assignment_not_pending")
+        if not assignment.device_gate_enforced:
+            raise HTTPException(status_code=409, detail="device_gate_not_enforced")
         if assignment.prepare_expires_at is None or self._as_utc(assignment.prepare_expires_at) <= self._now():
             raise HTTPException(status_code=409, detail="assignment_confirmation_expired")
 
@@ -411,16 +441,94 @@ class PoolAssignmentService:
             confirmed_at=assignment.confirmed_at,
         )
 
+    def _migrate_unprotected_assignments(self) -> tuple[int, int, int]:
+        if not self._required_features_enabled():
+            return 0, 0, 0
+        rows = self.db.scalars(
+            select(VpnAssignment).where(
+                VpnAssignment.status == "active",
+                VpnAssignment.device_gate_enforced.is_(False),
+            )
+        ).all()
+        checked = migrated = failed = 0
+        for assignment in rows:
+            checked += 1
+            claimed = self.db.execute(
+                update(VpnAssignment)
+                .where(
+                    VpnAssignment.id == assignment.id,
+                    VpnAssignment.status == "active",
+                    VpnAssignment.device_gate_enforced.is_(False),
+                )
+                .values(
+                    status="install_claimed",
+                    prepare_expires_at=self._now()
+                    + timedelta(
+                        seconds=max(
+                            int(settings.pool_assignment_prepare_ttl_seconds),
+                            60,
+                        )
+                    ),
+                )
+            )
+            self.db.commit()
+            if claimed.rowcount != 1:
+                continue
+            self.db.refresh(assignment)
+            node = self.db.get(VpnNode, assignment.node_id)
+            if node is None or not VlessDeviceConfigBuilder.build(node, assignment):
+                self._release_failed_install(assignment, "device_gate_migration_node_invalid")
+                failed += 1
+                continue
+            try:
+                result = self.transport.install(node, assignment)
+            except Exception as exc:  # noqa: BLE001
+                result = CredentialMutationResult(
+                    False,
+                    f"device_gate_migration_failed:{type(exc).__name__}",
+                )
+            if not (
+                result.ok
+                and result.rate_limit_enforced
+                and result.smtp_block_enforced
+                and result.shared_credential_disabled
+                and result.direct_ingress_blocked
+                and result.device_gate_ready
+            ):
+                self._release_failed_install(assignment, result.detail)
+                failed += 1
+                continue
+            assignment.status = "active"
+            assignment.device_gate_enforced = True
+            assignment.config_revision += 1
+            assignment.installed_at = self._now()
+            assignment.prepare_expires_at = None
+            assignment.last_error = ""
+            self.audit.write(
+                "system",
+                "pool_maintenance",
+                "vpn_assignment_device_gate_migrated",
+                "vpn_assignment",
+                str(assignment.id),
+                {"node_id": node.id},
+            )
+            self.db.commit()
+            migrated += 1
+        return checked, migrated, failed
+
     def run_maintenance(self) -> dict[str, int]:
         """Revoke expired or abandoned assignments without reassigning users."""
 
         now = self._now()
+        gate_checked, migrated, gate_failed = self._migrate_unprotected_assignments()
         rows = self.db.scalars(
             select(VpnAssignment).where(
                 VpnAssignment.status.in_(tuple(self.COUNTED_STATUSES)),
             )
         ).all()
-        checked = revoked = failed = 0
+        checked = gate_checked
+        revoked = 0
+        failed = gate_failed
         for assignment in rows:
             expired_entitlement = self._as_utc(assignment.entitlement_expires_at) <= now
             abandoned_prepare = (
@@ -497,4 +605,9 @@ class PoolAssignmentService:
             )
             revoked += 1
         self.db.commit()
-        return {"checked": checked, "revoked": revoked, "failed": failed}
+        return {
+            "checked": checked,
+            "migrated": migrated,
+            "revoked": revoked,
+            "failed": failed,
+        }

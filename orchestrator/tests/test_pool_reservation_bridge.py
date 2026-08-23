@@ -17,9 +17,14 @@ import pool_reservation_bridge as bridge
 import storage
 
 
+GATE_SPKI_SHA256 = "a" * 64
+
 DEVICE_CONFIG = (
-    "vless://14aec1f1-bf97-47d0-896c-c553a18e2282@203.0.113.10:20000"
-    "?type=tcp&security=reality&pbk=public-key&sid=0123456789abcdef#Germany"
+    "vless://14aec1f1-bf97-47d0-896c-c553a18e2282@127.0.0.1:17890"
+    "?type=tcp&security=reality&pbk=public-key&sid=0123456789abcdef"
+    "&eg_v=1&eg_host=203.0.113.10&eg_port=24443&eg_sni=gate.example.com"
+    f"&eg_spki={GATE_SPKI_SHA256}"
+    "&eg_assignment=17&eg_node=4#Germany"
 )
 
 
@@ -100,6 +105,12 @@ def test_bridge_sends_only_hmac_pseudonyms(monkeypatch):
                 'node_name': 'Germany 1',
                 'region_code': 'de',
                 'config': DEVICE_CONFIG,
+                'client_port': 20000,
+                'device_gate_required': True,
+                'device_gate_host': '203.0.113.10',
+                'device_gate_port': 24443,
+                'device_gate_server_name': 'gate.example.com',
+                'device_gate_spki_sha256': GATE_SPKI_SHA256,
                 'config_revision': 1,
                 'speed_limit_mbps': 30,
                 'entitlement_expires_at': '2026-09-10T00:00:00+00:00',
@@ -119,6 +130,33 @@ def test_bridge_sends_only_hmac_pseudonyms(monkeypatch):
     assert 'android-secret-device-id' not in wire
     assert len(captured[0]['json']['subject_key']) == 64
     assert len(captured[0]['json']['entitlement_hash']) == 64
+
+
+def test_bridge_rejects_tampered_gate_metadata():
+    payload = {
+        'assignment_id': 17,
+        'status': 'pending',
+        'confirmation_required': True,
+        'confirmation_token': 't' * 43,
+        'node_id': 4,
+        'node_name': 'Germany 1',
+        'region_code': 'de',
+        'config': DEVICE_CONFIG.replace('eg_sni=gate.example.com', 'eg_sni=attacker.example.com'),
+        'client_port': 20000,
+        'device_gate_required': True,
+        'device_gate_host': '203.0.113.10',
+        'device_gate_port': 24443,
+        'device_gate_server_name': 'gate.example.com',
+        'device_gate_spki_sha256': GATE_SPKI_SHA256,
+        'config_revision': 1,
+        'speed_limit_mbps': 30,
+        'entitlement_expires_at': '2026-09-10T00:00:00+00:00',
+    }
+
+    with pytest.raises(bridge.PoolBridgeError) as error:
+        bridge._validated_assignment(payload)
+
+    assert error.value.reason == 'device_gate_metadata_missing'
 
 
 def test_registration_rolls_back_when_pool_has_no_real_slot(legacy_db, monkeypatch):
@@ -152,6 +190,11 @@ def test_registration_persists_then_confirms_personal_config(legacy_db, monkeypa
         'pool_config': DEVICE_CONFIG,
         'pool_config_revision': 1,
         'pool_speed_limit_mbps': 30,
+        'pool_client_port': 20000,
+        'pool_gate_host': '203.0.113.10',
+        'pool_gate_port': 24443,
+        'pool_gate_server_name': 'gate.example.com',
+        'pool_gate_spki_sha256': GATE_SPKI_SHA256,
         'pool_entitlement_hash': 'a' * 64,
         'pool_entitlement_expires_at': '2026-09-10T00:00:00+00:00',
         'confirmation_required': True,

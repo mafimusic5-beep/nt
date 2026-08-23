@@ -216,21 +216,35 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         self.assertEqual(1, first['devices_used'])
         self.assertEqual(1, second['devices_used'])
 
-    def test_key_rotation_after_reinstall_keeps_slot_and_revokes_old_key(self) -> None:
+    def test_activation_code_cannot_replace_registered_device_key(self) -> None:
         code = self.create_code('personal', 1)
         old_key = self.new_private_key()
         new_key = self.new_private_key()
         self.register(code=code, device_id='stable-device', private_key=old_key)
-        rotated = self.register(code=code, device_id='stable-device', private_key=new_key)
-        self.assertEqual(1, rotated['devices_used'])
 
         with self.assertRaises(device_auth.DeviceAuthError) as caught:
-            self.authenticate(code=code, device_id='stable-device', private_key=old_key)
-        self.assertEqual('device_signature_invalid', caught.exception.reason)
+            self.register(code=code, device_id='stable-device', private_key=new_key)
+        self.assertEqual('device_key_rotation_requires_reset', caught.exception.reason)
 
-        profile = self.authenticate(code=code, device_id='stable-device', private_key=new_key)
+        profile = self.authenticate(code=code, device_id='stable-device', private_key=old_key)
         self.assertEqual(1, profile['devices_used'])
         self.assertEqual('stable-device', profile['device_id'])
+
+    def test_revoked_device_cannot_reactivate_itself(self) -> None:
+        code = self.create_code('personal', 1)
+        key = self.new_private_key()
+        self.register(code=code, device_id='revoked-device', private_key=key)
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                'UPDATE code_devices SET active = 0 WHERE code = ? AND device_id = ?',
+                (storage.format_code(code), 'revoked-device'),
+            )
+            con.commit()
+
+        with self.assertRaises(device_auth.DeviceAuthError) as caught:
+            self.register(code=code, device_id='revoked-device', private_key=key)
+
+        self.assertEqual('device_revoked', caught.exception.reason)
 
     def test_replayed_nonce_is_rejected(self) -> None:
         code = self.create_code('personal', 1)

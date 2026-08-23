@@ -1,0 +1,33 @@
+[Unit]
+Description=Emery device-bound VLESS gateway
+After=network-online.target xray.service
+Wants=network-online.target
+Requires=xray.service
+
+[Service]
+Type=simple
+User=emery-gate
+Group=emery-gate
+EnvironmentFile=/etc/emery/device-gate.env
+ExecStart=/usr/bin/python3 /opt/emery/device-gate/emery_device_gate.py
+Restart=on-failure
+RestartSec=2
+UMask=0077
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
