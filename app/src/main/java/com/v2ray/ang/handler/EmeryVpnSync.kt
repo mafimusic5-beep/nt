@@ -5,6 +5,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.SubscriptionItem
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
+import com.v2ray.ang.security.EmeryDeviceGateConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -93,8 +94,14 @@ object EmeryVpnSync {
             }
         }
 
+        val preparedImportText = runCatching {
+            EmeryDeviceGateConfig.prepareImportText(poolImportText)
+        }.getOrElse { error ->
+            Log.e(AppConfig.TAG, "Emery sync: rejected unsafe device-gate config", error)
+            return@withContext Result.failure(IllegalStateException("device_gate_config_invalid"))
+        }
         val (count, _) = AngConfigManager.importBatchConfig(
-            poolImportText,
+            preparedImportText,
             AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID,
             append = false,
         )
@@ -140,8 +147,19 @@ object EmeryVpnSync {
             return@withContext Result.failure(err)
         }
 
+        val preparedImportText = runCatching {
+            EmeryDeviceGateConfig.prepareImportText(payload.importText)
+        }.getOrElse { error ->
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.VPN_IMPORT_FAILED,
+                message = "Device-bound server config was rejected",
+                source = "EmeryVpnSync.connectToServer",
+                details = "serverId=$serverId reason=${error.javaClass.simpleName}",
+            )
+            return@withContext Result.failure(IllegalStateException("device_gate_config_invalid"))
+        }
         val (count, _) = AngConfigManager.importBatchConfig(
-            payload.importText,
+            preparedImportText,
             AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID,
             append = false,
         )

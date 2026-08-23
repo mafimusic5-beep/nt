@@ -19,6 +19,10 @@ class VpnNodeUpsertRequest(BaseModel):
     region_code: str = "moscow"
     endpoint: str
     config_payload: str
+    device_gate_host: str = ""
+    device_gate_port: int = 24443
+    device_gate_server_name: str = ""
+    device_gate_spki_sha256: str = ""
     provider: str = "manual"
     status: str = "active"
     health_status: str = "unknown"
@@ -41,12 +45,23 @@ class VpnNodeUpsertRequest(BaseModel):
     ssh_host_key: str = ""
 
 
+class VpnNodeDeviceGateRequest(BaseModel):
+    device_gate_host: str
+    device_gate_port: int = 24443
+    device_gate_server_name: str
+    device_gate_spki_sha256: str
+
+
 class VpnNodeResponse(BaseModel):
     id: int
     name: str
     region_code: str
     provider: str = "manual"
     endpoint: str
+    device_gate_host: str = ""
+    device_gate_port: int = 24443
+    device_gate_server_name: str = ""
+    device_gate_spki_sha256: str = ""
     status: str
     health_status: str
     load_score: int

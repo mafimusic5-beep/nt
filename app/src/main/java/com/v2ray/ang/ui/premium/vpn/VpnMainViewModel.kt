@@ -27,6 +27,7 @@ import com.v2ray.ang.ui.premium.activateSkryonCode
 import com.v2ray.ang.ui.premium.clearActivatedSkryonConfig
 import com.v2ray.ang.ui.premium.formatSkryonActivationCode
 import com.v2ray.ang.ui.premium.saveActivatedSkryonConfig
+import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.ui.premium.syncSkryonConfig
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
@@ -791,8 +792,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
 
         return withContext(Dispatchers.IO) {
+            val preparedImportText = runCatching {
+                EmeryDeviceGateConfig.prepareImportText(importText)
+            }.getOrElse {
+                return@withContext Result.failure(IllegalStateException("device_gate_config_invalid"))
+            }
             val (count, _) = AngConfigManager.importBatchConfig(
-                importText,
+                preparedImportText,
                 AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID,
                 append = false,
             )

@@ -29,6 +29,8 @@ import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
+import com.v2ray.ang.security.DeviceBoundVlessProxy
+import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.util.MyContextWrapper
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
@@ -39,6 +41,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private lateinit var mInterface: ParcelFileDescriptor
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
+    private var deviceGateProxy: DeviceBoundVlessProxy? = null
+    private var pendingDeviceGate: DeviceBoundVlessProxy.ResolvedDescriptor? = null
     @Volatile
     private var stopInProgress = false
     @Volatile
@@ -100,6 +104,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
 //    }
 
     override fun onDestroy() {
+        deviceGateProxy?.stop()
+        deviceGateProxy = null
         super.onDestroy()
         Log.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
         NotificationManager.cancelNotification()
@@ -112,6 +118,12 @@ class V2RayVpnService : VpnService(), ServiceControl {
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
             if (!RegionalPolicyManager.isPolicyReadyForServiceStart(this)) {
                 Log.e(AppConfig.TAG, "StartCore-VPN: Russia policy data is stale or incomplete")
+                MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
+                stopAllService()
+                return START_NOT_STICKY
+            }
+            if (!prepareDeviceGate()) {
+                Log.e(AppConfig.TAG, "StartCore-VPN: Device gate metadata is missing or invalid")
                 MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
                 stopAllService()
                 return START_NOT_STICKY
@@ -143,6 +155,17 @@ class V2RayVpnService : VpnService(), ServiceControl {
             Log.e(AppConfig.TAG, "StartCore-VPN: Interface not initialized")
             return
         }
+        val resolvedGate = pendingDeviceGate
+        if (resolvedGate != null) {
+            val proxy = DeviceBoundVlessProxy { socket -> protect(socket) }
+            if (!proxy.start(resolvedGate)) {
+                Log.e(AppConfig.TAG, "StartCore-VPN: Device gate could not bind")
+                proxy.stop()
+                stopAllService()
+                return
+            }
+            deviceGateProxy = proxy
+        }
         if (!V2RayServiceManager.startCoreLoop(mInterface)) {
             Log.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
             stopAllService()
@@ -163,6 +186,25 @@ class V2RayVpnService : VpnService(), ServiceControl {
             MyContextWrapper.wrap(newBase, SettingsManager.getLocale())
         }
         super.attachBaseContext(context)
+    }
+
+    private fun prepareDeviceGate(): Boolean {
+        deviceGateProxy?.stop()
+        deviceGateProxy = null
+        pendingDeviceGate = null
+        val selectedGuid = MmkvManager.getSelectServer()?.trim().orEmpty()
+        val profile = MmkvManager.decodeServerConfig(selectedGuid)
+        if (!EmeryDeviceGateConfig.isGateProfile(profile)) {
+            return true
+        }
+        val descriptor = EmeryDeviceGateConfig.descriptorFor(profile) ?: return false
+        return runCatching {
+            pendingDeviceGate = DeviceBoundVlessProxy.resolve(descriptor)
+            true
+        }.getOrElse { error ->
+            Log.e(AppConfig.TAG, "StartCore-VPN: Device gate address resolution failed", error)
+            false
+        }
     }
 
     /**
@@ -426,6 +468,10 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
             tun2SocksService?.stopTun2Socks()
             tun2SocksService = null
+
+            deviceGateProxy?.stop()
+            deviceGateProxy = null
+            pendingDeviceGate = null
 
             V2RayServiceManager.stopCoreLoop()
 

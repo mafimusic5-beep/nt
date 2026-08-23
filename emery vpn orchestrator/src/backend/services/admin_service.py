@@ -1,4 +1,5 @@
 import logging
+import re
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -10,10 +11,17 @@ from src.backend.repositories.subscription_repo import SubscriptionRepository
 from src.backend.services.node_adapters import FirstVdsBillManagerProvisioningService
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.utils.security import generate_activation_code, hash_activation_code
-from src.backend.schemas.admin import GrantSubscriptionRequest, GrantSubscriptionResponse, VpnNodeResponse, VpnNodeUpsertRequest
+from src.backend.schemas.admin import (
+    GrantSubscriptionRequest,
+    GrantSubscriptionResponse,
+    VpnNodeDeviceGateRequest,
+    VpnNodeResponse,
+    VpnNodeUpsertRequest,
+)
 from src.common.config import settings
 
 logger = logging.getLogger(__name__)
+_GATE_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{1,255}$")
 
 
 class AdminService:
@@ -35,6 +43,36 @@ class AdminService:
         return GrantSubscriptionResponse(subscription_id=sub.id, ends_at=sub.ends_at)
 
     @staticmethod
+    def _validated_gate_fields(
+        *,
+        host: str,
+        port: int,
+        server_name: str,
+        spki_sha256: str,
+        required: bool,
+    ) -> tuple[str, int, str, str]:
+        safe_host = host.strip().lower()
+        safe_server_name = server_name.strip().lower()
+        safe_spki = spki_sha256.strip().lower()
+        any_value = bool(safe_host or safe_server_name or safe_spki or int(port) != 24443)
+        if not required and not any_value:
+            return "", int(port), "", ""
+        if not safe_host or not safe_server_name or not safe_spki:
+            raise HTTPException(status_code=400, detail="device_gate_endpoint_required")
+        if any(
+            not _GATE_NAME_RE.fullmatch(value)
+            or value.startswith(".")
+            or value.endswith(".")
+            for value in (safe_host, safe_server_name)
+        ):
+            raise HTTPException(status_code=400, detail="device_gate_endpoint_invalid")
+        if port < 1 or port > 65535:
+            raise HTTPException(status_code=400, detail="device_gate_port_invalid")
+        if not re.fullmatch(r"[a-f0-9]{64}", safe_spki):
+            raise HTTPException(status_code=400, detail="device_gate_spki_invalid")
+        return safe_host, int(port), safe_server_name, safe_spki
+
+    @staticmethod
     def _node_response(n) -> VpnNodeResponse:
         return VpnNodeResponse(
             id=n.id,
@@ -42,6 +80,10 @@ class AdminService:
             region_code=n.region_code,
             provider=n.provider,
             endpoint=n.endpoint,
+            device_gate_host=n.device_gate_host,
+            device_gate_port=n.device_gate_port,
+            device_gate_server_name=n.device_gate_server_name,
+            device_gate_spki_sha256=n.device_gate_spki_sha256,
             status=n.status,
             health_status=n.health_status,
             load_score=n.load_score,
@@ -77,6 +119,13 @@ class AdminService:
             raise HTTPException(status_code=400, detail="endpoint_required")
         if req.config_payload.strip() and not FirstVdsBillManagerProvisioningService.is_config_payload_valid(req.config_payload):
             raise HTTPException(status_code=400, detail="invalid_vless_config")
+        gate_host, gate_port, gate_server_name, gate_spki = self._validated_gate_fields(
+            host=req.device_gate_host,
+            port=req.device_gate_port,
+            server_name=req.device_gate_server_name,
+            spki_sha256=req.device_gate_spki_sha256,
+            required=settings.device_bound_gate_enabled,
+        )
         node = self.admin_repo.create_node(
             req.name,
             req.region_code,
@@ -102,8 +151,42 @@ class AdminService:
             req.auto_renew,
             req.renewal_status,
             req.do_not_renew_reason,
+            gate_host,
+            gate_port,
+            gate_server_name,
+            gate_spki,
         )
         self.audit_repo.write("admin", "api", "create_node", "vpn_node", str(node.id), {"region": node.region_code, "provider": node.provider})
+        self.db.commit()
+        return self._node_response(node)
+
+    def configure_node_device_gate(
+        self,
+        node_id: int,
+        req: VpnNodeDeviceGateRequest,
+    ) -> VpnNodeResponse:
+        node = self.admin_repo.get_node(node_id)
+        if not node:
+            raise HTTPException(status_code=404, detail="node_not_found")
+        host, port, server_name, spki = self._validated_gate_fields(
+            host=req.device_gate_host,
+            port=req.device_gate_port,
+            server_name=req.device_gate_server_name,
+            spki_sha256=req.device_gate_spki_sha256,
+            required=True,
+        )
+        node.device_gate_host = host
+        node.device_gate_port = port
+        node.device_gate_server_name = server_name
+        node.device_gate_spki_sha256 = spki
+        self.audit_repo.write(
+            "admin",
+            "api",
+            "configure_node_device_gate",
+            "vpn_node",
+            str(node.id),
+            {"host": host, "port": port, "server_name": server_name},
+        )
         self.db.commit()
         return self._node_response(node)
 

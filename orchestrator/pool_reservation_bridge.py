@@ -6,7 +6,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
@@ -102,17 +102,58 @@ def _validated_assignment(payload: dict[str, Any]) -> dict[str, Any]:
         config = str(payload['config']).strip()
         parsed = urlsplit(config)
         parsed_uuid = uuid.UUID(parsed.username or '')
-        port = parsed.port
+        local_port = parsed.port
+        client_port = int(payload['client_port'])
+        gate_port = int(payload['device_gate_port'])
     except (KeyError, TypeError, ValueError) as exc:
         raise PoolBridgeError('invalid_pool_assignment', 503) from exc
     if assignment_id <= 0 or node_id <= 0 or revision <= 0:
         raise PoolBridgeError('invalid_pool_assignment', 503)
-    if parsed.scheme != 'vless' or not parsed.hostname or port is None or not (1024 <= port <= 65535):
+    if (
+        parsed.scheme != 'vless'
+        or parsed.hostname != '127.0.0.1'
+        or local_port is None
+        or not (1024 <= local_port <= 65535)
+    ):
         raise PoolBridgeError('invalid_pool_assignment_config', 503)
     if str(parsed_uuid) != (parsed.username or '').lower():
         raise PoolBridgeError('invalid_pool_assignment_uuid', 503)
     if speed <= 0 or speed > 30:
         raise PoolBridgeError('invalid_pool_speed_limit', 503)
+    if not bool(payload.get('device_gate_required')):
+        raise PoolBridgeError('device_gate_not_required', 503)
+    gate_host = str(payload.get('device_gate_host') or '').strip()
+    gate_server_name = str(payload.get('device_gate_server_name') or '').strip()
+    gate_spki_sha256 = str(payload.get('device_gate_spki_sha256') or '').strip().lower()
+    if not gate_host or not gate_server_name:
+        raise PoolBridgeError('device_gate_endpoint_missing', 503)
+    if not re.fullmatch(r'[a-f0-9]{64}', gate_spki_sha256):
+        raise PoolBridgeError('device_gate_spki_invalid', 503)
+    if not (1024 <= client_port <= 65535) or not (1 <= gate_port <= 65535):
+        raise PoolBridgeError('device_gate_port_invalid', 503)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    query = dict(query_pairs)
+    gate_fields = (
+        'eg_v',
+        'eg_host',
+        'eg_port',
+        'eg_sni',
+        'eg_spki',
+        'eg_assignment',
+        'eg_node',
+    )
+    if any(sum(1 for key, _ in query_pairs if key == field) != 1 for field in gate_fields):
+        raise PoolBridgeError('device_gate_metadata_invalid', 503)
+    if (
+        query.get('eg_v') != '1'
+        or query.get('eg_host') != gate_host
+        or query.get('eg_port') != str(gate_port)
+        or query.get('eg_sni') != gate_server_name
+        or query.get('eg_spki') != gate_spki_sha256
+        or query.get('eg_assignment') != str(assignment_id)
+        or query.get('eg_node') != str(node_id)
+    ):
+        raise PoolBridgeError('device_gate_metadata_missing', 503)
 
     region = str(payload.get('region_code') or '').strip().lower()
     if not _REGION_RE.fullmatch(region):
@@ -131,6 +172,11 @@ def _validated_assignment(payload: dict[str, Any]) -> dict[str, Any]:
         'pool_config': config,
         'pool_config_revision': revision,
         'pool_speed_limit_mbps': speed,
+        'pool_client_port': client_port,
+        'pool_gate_host': gate_host,
+        'pool_gate_port': gate_port,
+        'pool_gate_server_name': gate_server_name,
+        'pool_gate_spki_sha256': gate_spki_sha256,
         'pool_entitlement_expires_at': str(payload.get('entitlement_expires_at') or ''),
         'confirmation_required': confirmation_required,
     }

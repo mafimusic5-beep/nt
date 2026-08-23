@@ -20,6 +20,15 @@ class PoolReservationResponse(BaseModel):
     node_name: str
     region_code: str
     config: str
+    # Internal listener details are returned only over the authenticated pool
+    # bridge. The Android client receives a loopback URI and cannot use this
+    # port without passing the device gateway.
+    client_port: int
+    device_gate_required: bool
+    device_gate_host: str
+    device_gate_port: int
+    device_gate_server_name: str
+    device_gate_spki_sha256: str
     config_revision: int
     speed_limit_mbps: int
     entitlement_expires_at: datetime
@@ -38,5 +47,6 @@ class PoolReservationConfirmResponse(BaseModel):
 
 class PoolAssignmentMaintenanceResponse(BaseModel):
     checked: int
+    migrated: int
     revoked: int
     failed: int

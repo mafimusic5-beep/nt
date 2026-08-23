@@ -12,6 +12,9 @@ from src.common.config import settings
 from src.common.models import Subscription, User
 
 
+GATE_SPKI_SHA256 = "a" * 64
+
+
 class FakePoolAssignmentService:
     requests = []
     fail = False
@@ -36,9 +39,18 @@ class FakePoolAssignmentService:
             node_name="Germany",
             region_code="de",
             config=(
-                "vless://14aec1f1-bf97-47d0-896c-c553a18e2282@203.0.113.10:20000"
-                "?type=tcp&security=reality&pbk=key&sid=0123456789abcdef#Germany"
+                "vless://14aec1f1-bf97-47d0-896c-c553a18e2282@127.0.0.1:17890"
+                "?type=tcp&security=reality&pbk=key&sid=0123456789abcdef"
+                "&eg_v=1&eg_host=203.0.113.10&eg_port=24443&eg_sni=gate.example.com"
+                f"&eg_spki={GATE_SPKI_SHA256}"
+                "&eg_assignment=1&eg_node=7#Germany"
             ),
+            client_port=20000,
+            device_gate_required=True,
+            device_gate_host="203.0.113.10",
+            device_gate_port=24443,
+            device_gate_server_name="gate.example.com",
+            device_gate_spki_sha256=GATE_SPKI_SHA256,
             config_revision=1,
             speed_limit_mbps=30,
             entitlement_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
@@ -105,4 +117,22 @@ def test_native_registration_is_removed_when_pool_is_full(db_session):
         )
 
     assert error.value.detail == "server_capacity_unavailable"
+    assert SubscriptionService(db_session).repo.count_active_devices(sub.id) == 0
+
+
+def test_unsigned_native_contract_fails_closed_in_device_gate_mode(db_session, monkeypatch):
+    sub = add_subscription(db_session)
+    monkeypatch.setattr(settings, "device_bound_gate_enabled", True)
+
+    with pytest.raises(HTTPException) as error:
+        SubscriptionService(db_session)._register_device_inner(
+            sub.id,
+            "unsigned-native-device",
+            "android",
+            "Phone",
+        )
+
+    assert error.value.status_code == 503
+    assert error.value.detail == "native_device_key_binding_required"
+    assert FakePoolAssignmentService.requests == []
     assert SubscriptionService(db_session).repo.count_active_devices(sub.id) == 0

@@ -11,6 +11,7 @@ Backend + Telegram bot for subscription sales and VPN access management.
 - Healthcheck scheduler and API health endpoints
 - Kubernetes recovery agent for every active public VLESS node
 - Two-phase legacy-to-pool reservation bridge with one UUID per device
+- TLS proof-of-possession gateway that makes copied VLESS URIs unusable
 - Non-destructive contract renewal planner
 - Example Xray/VLESS/Reality config placeholders
 - Deployment examples (`systemd`, `nginx`, FirstVDS guide)
@@ -25,6 +26,7 @@ Backend + Telegram bot for subscription sales and VPN access management.
 - `deploy/systemd` - example unit files
 - `deploy/nginx` - example reverse proxy config
 - `deploy/kubernetes/recovery-agent.yaml` - continuous public-node recovery worker
+- `deploy/device-gate` - per-connection Android Keystore proof gateway
 - `docs/DEPLOY_FIRSTVDS.md` - deployment guide
 - `docs/PRODUCTION_NOTES.md` - production hardening notes
 
@@ -37,9 +39,28 @@ Copy `.env.example` to `.env` and set required values:
 - `ADMIN_API_KEY`
 - `ADMIN_IDS`
 - `BACKEND_BASE_URL`
-- `MIN_SUPPORTED_APP_VERSION_CODE=716`
+- `MIN_SUPPORTED_APP_VERSION_CODE=718`
 - `APP_UPDATE_MESSAGE=Версия приложения устарела. Обновите приложение.`
 - `POOL_BRIDGE_API_KEY=<same secret in both backends>`
+
+Device-bound mode is fail-closed and remains disabled by default. Deploy the
+gateway and TLS certificate on every VPN node using
+`deploy/device-gate/README.md`, configure each node's gate endpoint and TLS
+SPKI SHA-256 pin, deploy Android 718, and only then set all of these flags to
+`true`:
+
+```text
+POOL_ACCOUNTING_BRIDGE_ENABLED=true
+UNIQUE_DEVICE_CREDENTIALS_ENABLED=true
+PER_DEVICE_RATE_LIMIT_ENFORCED=true
+SMTP_ABUSE_PROTECTION_ENABLED=true
+DEVICE_BOUND_GATE_ENABLED=true
+```
+
+The signed legacy activation/bridge contract is the supported device-bound
+path. The older native registration contract never stored a verified public
+key and therefore returns `native_device_key_binding_required` instead of
+issuing a falsely protected URI while gate mode is enabled.
 
 Новые клиенты передают `X-Skryon-App-Version-Code`. Если переданная версия ниже минимальной, backend возвращает сообщение об обновлении вместо профиля/списка серверов. Отсутствие заголовка сохраняет старые совместимые контракты для legacy polling/event/pool-клиентов. APK, который после активации вообще не выходит в сеть, удалённо показать сообщение не сможет.
 
@@ -128,6 +149,7 @@ database and an SSH `known_hosts` secret; see
 - `GET /api/v1/admin/stats`
 - `GET /api/v1/admin/nodes`
 - `POST /api/v1/admin/nodes`
+- `PUT /api/v1/admin/nodes/{node_id}/device-gate`
 - `GET /api/v1/admin/nodes/best-moscow`
 - `POST /api/v1/admin/nodes/{node_id}/provision`
 - `POST /api/v1/admin/nodes/{node_id}/deprovision` — всегда блокирует удаление VPS

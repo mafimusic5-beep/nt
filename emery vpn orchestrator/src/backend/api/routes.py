@@ -19,6 +19,7 @@ from src.backend.schemas.admin import (
     ProblemActivationResponse,
     VpnNodeResponse,
     VpnNodeUpsertRequest,
+    VpnNodeDeviceGateRequest,
 )
 from src.backend.schemas.internal import ConfirmPaymentRequest, ConfirmPaymentResponse, CreateOrderRequest, CreateOrderResponse
 from src.backend.schemas.pool_bridge import (
@@ -225,6 +226,19 @@ def admin_list_nodes(db: Session = Depends(get_db)):
 @router.post("/admin/nodes", response_model=VpnNodeResponse, dependencies=[Depends(require_admin_api_key)])
 def admin_create_node(payload: VpnNodeUpsertRequest, db: Session = Depends(get_db)):
     return AdminService(db).create_node(payload)
+
+
+@router.put(
+    "/admin/nodes/{node_id}/device-gate",
+    response_model=VpnNodeResponse,
+    dependencies=[Depends(require_admin_api_key)],
+)
+def admin_configure_node_device_gate(
+    node_id: int,
+    payload: VpnNodeDeviceGateRequest,
+    db: Session = Depends(get_db),
+):
+    return AdminService(db).configure_node_device_gate(node_id, payload)
 
 
 @router.get("/admin/capacity", dependencies=[Depends(require_admin_api_key)])
