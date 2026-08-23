@@ -17,8 +17,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import javax.net.ssl.SNIHostName
+import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
 
 class DeviceBoundVlessProxy(
     private val protectSocket: (Socket) -> Boolean,
@@ -116,7 +116,7 @@ class DeviceBoundVlessProxy(
                 CONNECT_TIMEOUT_MILLIS,
             )
 
-            val tlsSocket = (SSLSocketFactory.getDefault().createSocket(
+            val tlsSocket = (SSLContext.getDefault().socketFactory.createSocket(
                 rawSocket,
                 descriptor.serverName,
                 descriptor.gatewayPort,
