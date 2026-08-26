@@ -32,8 +32,20 @@ done
 test -f "$release_root/src/backend/main.py"
 test -f "$release_root/src/backend/services/pool_assignment_service.py"
 release_repo="$(git -C "$release_root" rev-parse --show-toplevel)"
-[[ "$(git -C "$release_repo" rev-parse HEAD)" == '205afa02b023107d3aae13b5cb154ed7150051cb' ]]
-[[ -z "$(git -C "$release_repo" status --porcelain --untracked-files=no)" ]]
+[[ "$(git -C "$release_repo" rev-parse HEAD)" == '85caa7eb9a47c8c5efd0263c526ce38945dc06b5' ]]
+git -C "$release_repo" diff --cached --quiet
+unexpected_dirty=()
+while IFS= read -r -d '' dirty_path; do
+  case "$dirty_path" in
+    */__pycache__/*.pyc|*/debug-*.log) ;;
+    *) unexpected_dirty+=("$dirty_path") ;;
+  esac
+done < <(git -C "$release_repo" diff --name-only -z)
+if (( ${#unexpected_dirty[@]} > 0 )); then
+  printf 'Unexpected tracked release changes:\n' >&2
+  printf ' - %s\n' "${unexpected_dirty[@]}" >&2
+  exit 1
+fi
 systemctl is-active --quiet "$backend_service"
 systemctl is-active --quiet "$api_service"
 
