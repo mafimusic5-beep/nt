@@ -23,9 +23,10 @@ test -s "$database"
 [[ "$(stat -c '%U:%G:%a' "$key_path")" == 'root:root:600' ]]
 [[ "$(ssh-keygen -lf "$public_key_path" | awk 'NR == 1 {print $2}')" == "$expected_key_fingerprint" ]]
 
-derived_public="$(ssh-keygen -y -f "$key_path")"
-stored_public="$(awk 'NR == 1 {print $1 " " $2}' "$public_key_path")"
-[[ "$derived_public" == "$stored_public" ]]
+derived_public_blob="$(ssh-keygen -y -f "$key_path" | awk 'NR == 1 {print $2}')"
+stored_public_blob="$(awk 'NR == 1 {print $2}' "$public_key_path")"
+[[ -n "$derived_public_blob" ]]
+[[ "$derived_public_blob" == "$stored_public_blob" ]]
 [[ "$(wc -l < "$public_key_path")" == 1 ]]
 
 host_keys="$(mktemp)"
