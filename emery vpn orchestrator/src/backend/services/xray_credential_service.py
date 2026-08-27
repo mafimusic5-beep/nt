@@ -176,6 +176,7 @@ class ScriptOrSshXrayCredentialTransport:
 import fcntl
 import json
 import os
+import stat
 import subprocess
 import tempfile
 
@@ -187,6 +188,12 @@ directory = os.path.dirname(path) or "."
 # cannot overwrite another device's concurrently installed inbound.
 lock_handle = open(os.path.join(directory, ".emery-xray-credentials.lock"), "a+", encoding="utf-8")
 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+original_stat = os.stat(path, follow_symlinks=False)
+if not stat.S_ISREG(original_stat.st_mode):
+    raise RuntimeError("xray_config_not_regular")
+original_mode = stat.S_IMODE(original_stat.st_mode)
+if original_mode & 0o022:
+    raise RuntimeError("xray_config_permissions_unsafe")
 with open(path, "r", encoding="utf-8") as handle:
     original_text = handle.read()
 config = json.loads(original_text)
@@ -286,7 +293,11 @@ try:
     subprocess.run(["nft", "-c", "-f", "-"], input=check_nft, check=True, capture_output=True, text=True)
     subprocess.run(["nft", "delete", "table", "inet", "emery_vpn_rate"], check=False, capture_output=True, text=True)
     subprocess.run(["nft", "-f", "-"], input=new_nft, check=True, capture_output=True, text=True)
-    os.chmod(candidate_path, 0o600)
+    # mkstemp creates a root-owned file. Preserve the validated config's owner,
+    # group and non-writable permissions so the non-root Xray service can still
+    # read the atomically replaced file without widening access.
+    os.chown(candidate_path, original_stat.st_uid, original_stat.st_gid, follow_symlinks=False)
+    os.chmod(candidate_path, original_mode, follow_symlinks=False)
     os.replace(candidate_path, path)
     subprocess.run(["systemctl", "restart", "xray"], check=True, capture_output=True, text=True)
     subprocess.run(["systemctl", "is-active", "--quiet", "xray"], check=True)

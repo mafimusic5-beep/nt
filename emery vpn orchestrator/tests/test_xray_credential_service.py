@@ -70,6 +70,12 @@ def test_remote_mutation_is_valid_python_and_contains_mandatory_controls():
     compile(script, "remote-xray-credential.py", "exec")
     assert "fcntl.LOCK_EX" in script
     assert ".emery-xray-credentials.lock" in script
+    assert "os.stat(path, follow_symlinks=False)" in script
+    assert "stat.S_ISREG(original_stat.st_mode)" in script
+    assert "xray_config_permissions_unsafe" in script
+    assert "os.chown(candidate_path, original_stat.st_uid, original_stat.st_gid" in script
+    assert "os.chmod(candidate_path, original_mode" in script
+    assert "os.chmod(candidate_path, 0o600)" not in script
     assert "speed * 1000 // 8" in script
     assert "emery_vpn_rate_check" in script
     assert '"25,465,587"' in script
