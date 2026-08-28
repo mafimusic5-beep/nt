@@ -106,16 +106,22 @@ class DeviceBoundVlessProxy(
     ) {
         var gatewaySocket: SSLSocket? = null
         var rawGatewaySocket: Socket? = null
+        var stage = "socket_create"
         try {
             val rawSocket = Socket()
             rawGatewaySocket = rawSocket
             openSockets += rawSocket
+            stage = "socket_bind"
+            rawSocket.bind(InetSocketAddress(0))
+            stage = "socket_protect"
             check(protectSocket(rawSocket)) { "Unable to protect device-gate socket" }
+            stage = "tcp_connect"
             rawSocket.connect(
                 InetSocketAddress(gatewayAddress, descriptor.gatewayPort),
                 CONNECT_TIMEOUT_MILLIS,
             )
 
+            stage = "tls_handshake"
             val tlsSocket = (SSLContext.getDefault().socketFactory.createSocket(
                 rawSocket,
                 descriptor.serverName,
@@ -133,8 +139,10 @@ class DeviceBoundVlessProxy(
             openSockets -= rawSocket
             rawGatewaySocket = null
             openSockets += tlsSocket
+            stage = "tls_pin"
             verifyGatewayPin(tlsSocket, descriptor.spkiSha256)
 
+            stage = "challenge"
             val challenge = JSONObject(readControlLine(tlsSocket.inputStream))
             check(challenge.length() == 3)
             check(challenge.getInt("version") == PROTOCOL_VERSION)
@@ -168,6 +176,7 @@ class DeviceBoundVlessProxy(
             tlsSocket.outputStream.write((proofJson.toString() + "\n").toByteArray(Charsets.UTF_8))
             tlsSocket.outputStream.flush()
 
+            stage = "authorization"
             val authorization = JSONObject(readControlLine(tlsSocket.inputStream))
             check(authorization.length() == 1 && authorization.optBoolean("ok", false))
             tlsSocket.soTimeout = 0
@@ -180,9 +189,12 @@ class DeviceBoundVlessProxy(
             runCatching { copy(tlsSocket.inputStream, localSocket.outputStream) }
             upstream.cancel(true)
         } catch (_: SocketTimeoutException) {
-            Log.w(AppConfig.TAG, "Device gate connection timed out")
+            Log.w(AppConfig.TAG, "Device gate connection timed out: stage=$stage")
         } catch (error: Exception) {
-            Log.w(AppConfig.TAG, "Device gate connection rejected: ${error.javaClass.simpleName}")
+            Log.w(
+                AppConfig.TAG,
+                "Device gate connection rejected: stage=$stage error=${error.javaClass.simpleName}",
+            )
         } finally {
             localSocket.closeQuietly()
             gatewaySocket?.closeQuietly()
