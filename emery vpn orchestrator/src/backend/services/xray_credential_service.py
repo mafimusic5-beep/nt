@@ -88,6 +88,8 @@ class VlessDeviceConfigBuilder:
         # connection because the gateway requires a fresh Keystore signature.
         netloc = f"{assignment.client_uuid}@127.0.0.1:{local_port}"
         query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        if query.get("security", "").strip().lower() == "reality" and not query.get("flow", "").strip():
+            query["flow"] = "xtls-rprx-vision"
         query.update(
             {
                 "eg_v": "1",
