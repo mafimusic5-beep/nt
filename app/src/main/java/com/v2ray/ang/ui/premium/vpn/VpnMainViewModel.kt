@@ -54,6 +54,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val DEFAULT_ACCESS_KEY = "DEV"
         const val DEFAULT_REGION_TITLE = "Регион"
         const val SERVICE_STATE_RECHECK_DELAY_MS = 1_500L
+        const val STALE_RUNTIME_STOP_TIMEOUT_MS = 10_000L
+        const val STALE_RUNTIME_SETTLE_DELAY_MS = 300L
         const val CONFIG_SYNC_RETRY_DELAY_MS = 3_000L
         const val CONFIG_SYNC_ACCESS_RETRY_DELAY_MS = 30_000L
     }
@@ -667,6 +669,16 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = { payload ->
+                    if (!stopStaleRuntimeBeforeProfileStart()) {
+                        setDisconnectedWithError("Не удалось остановить предыдущий VPN-сеанс")
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H8",
+                            location = "VpnMainViewModel.kt:onConnectClick",
+                            message = "stale VPN runtime did not stop before profile start",
+                            data = JSONObject().put("selectedGuid", payload.selectedGuid),
+                        )
+                        return@fold
+                    }
                     val serviceStartRequested = try {
                         startVpnService(payload.selectedGuid)
                     } catch (e: Exception) {
@@ -715,6 +727,28 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 },
             )
         }
+    }
+
+    private suspend fun stopStaleRuntimeBeforeProfileStart(): Boolean {
+        if (!V2RayServiceManager.isRunning()) {
+            return true
+        }
+        VpnUiDebugLogger.log(
+            hypothesisId = "H8",
+            location = "VpnMainViewModel.kt:stopStaleRuntimeBeforeProfileStart",
+            message = "stopping stale VPN runtime before selected profile start",
+            data = JSONObject(),
+        )
+        V2RayServiceManager.stopVService(getApplication())
+        return withTimeoutOrNull(STALE_RUNTIME_STOP_TIMEOUT_MS) {
+            while (V2RayServiceManager.isRunning()) {
+                delay(100L)
+            }
+            // stopCoreLoop releases the core asynchronously; give the foreground
+            // service time to close the old VPN interface before starting a new one.
+            delay(STALE_RUNTIME_SETTLE_DELAY_MS)
+            true
+        } == true
     }
 
     private fun isBlockingAccessFailure(reason: String): Boolean {

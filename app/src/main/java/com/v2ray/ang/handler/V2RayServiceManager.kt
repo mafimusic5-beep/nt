@@ -42,6 +42,7 @@ object V2RayServiceManager {
     private val coreController: CoreController = V2RayNativeManager.newCoreController(CoreCallback())
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
+    private var currentGuid: String? = null
     @Volatile
     private var serviceReceiverRegistered = false
     private val _vpnState = MutableStateFlow(if (coreController.isRunning) VpnRuntimeState.CONNECTED else VpnRuntimeState.DISCONNECTED)
@@ -184,21 +185,34 @@ object V2RayServiceManager {
      * @param context The context from which the service is started.
      */
     private fun startContextService(context: Context): Boolean {
+        val guid = MmkvManager.getSelectServer()
         if (coreController.isRunning) {
-            Log.w(AppConfig.TAG, "StartCore-Manager: Core already running")
-            updateVpnState(VpnRuntimeState.CONNECTED, "start_context_already_running")
+            if (guid != null && guid == currentGuid) {
+                Log.w(AppConfig.TAG, "StartCore-Manager: Requested profile is already running")
+                updateVpnState(VpnRuntimeState.CONNECTED, "start_context_requested_profile_running")
+                return true
+            }
+            Log.e(AppConfig.TAG, "StartCore-Manager: Refusing to report a stale profile as connected")
+            updateVpnState(VpnRuntimeState.ERROR, "start_context_stale_profile_running")
+            ManualModeDiagnostics.reportError(
+                code = ManualDiagnosticCodes.VPN_SERVICE_START_FAILED,
+                message = "A different VPN profile is still running",
+                source = "V2RayServiceManager",
+                details = "selected=${guid.orEmpty()}; running=${currentGuid.orEmpty()}",
+            )
             // #region agent log
             ManualModeDebugLogger.log(
                 hypothesisId = "H4",
                 location = "V2RayServiceManager.kt:startContextService",
-                message = "start_context_already_running",
-                data = JSONObject(),
+                message = "start_context_rejected_stale_profile",
+                data = JSONObject()
+                    .put("selectedGuid", guid.orEmpty())
+                    .put("runningGuid", currentGuid.orEmpty()),
             )
             // #endregion
-            return true
+            return false
         }
 
-        val guid = MmkvManager.getSelectServer()
         if (guid == null) {
             Log.e(AppConfig.TAG, "StartCore-Manager: No server selected")
             ManualModeDiagnostics.reportError(
@@ -441,6 +455,7 @@ object V2RayServiceManager {
         try {
             MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
             NotificationManager.startSpeedNotification(currentConfig)
+            currentGuid = guid
             Log.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
             updateVpnState(VpnRuntimeState.CONNECTED, "start_core_loop_success")
             ManualModeDiagnostics.clearError()
@@ -486,6 +501,8 @@ object V2RayServiceManager {
         val service = getService() ?: return false
 
         updateVpnState(VpnRuntimeState.DISCONNECTING, "stop_core_loop_enter")
+        currentGuid = null
+        currentConfig = null
         if (coreController.isRunning) {
             CoroutineScope(Dispatchers.IO).launch {
                 try {

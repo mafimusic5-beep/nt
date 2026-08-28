@@ -216,8 +216,6 @@ fun VpnMainScreen(
                         if (uiState.connectionState == VpnConnectionState.Connected) {
                             onDisconnectClick()
                         } else {
-                            autoConnectEnabled = true
-                            MmkvManager.encodeStartOnBoot(true)
                             onConnectClick()
                         }
                     },
