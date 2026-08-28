@@ -19,7 +19,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        path = request.url.path
         key = request.client.host if request.client else "unknown"
+
+        if path in {"/api/v1/health", "/api/v1/ready"}:
+            return await call_next(request)
+
+        is_loopback = key in {"127.0.0.1", "::1"}
+        is_privileged_path = path.startswith("/api/v1/internal/") or path.startswith("/api/v1/admin/")
+        if is_loopback and is_privileged_path:
+            return await call_next(request)
+
         now = time.time()
         bucket = self._hits[key]
         while bucket and (now - bucket[0]) > self.window_seconds:
