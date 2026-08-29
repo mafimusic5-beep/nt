@@ -1,5 +1,7 @@
 package com.v2ray.ang.handler
 
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.dto.RulesetItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -7,6 +9,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RegionalPolicyManagerTest {
+
+    @Test
+    fun requiresEveryEnabledRussiaRestrictionSource() {
+        assertTrue(areRussiaRestrictionRulesReady(completeRussiaRestrictionRules()))
+
+        val missingReFilter = completeRussiaRestrictionRules().map { rule ->
+            if (rule.remarks == "RKN restricted IP ranges") {
+                rule.copy(ip = rule.ip?.filterNot { it == "geoip:re-filter" })
+            } else {
+                rule
+            }
+        }
+        assertFalse(areRussiaRestrictionRulesReady(missingReFilter))
+    }
+
+    @Test
+    fun rejectsDisabledRussiaRestrictionRule() {
+        val disabledDomainRule = completeRussiaRestrictionRules().map { rule ->
+            if (rule.remarks == "RKN restricted domains") {
+                rule.copy(enabled = false)
+            } else {
+                rule
+            }
+        }
+
+        assertFalse(areRussiaRestrictionRulesReady(disabledDomainRule))
+    }
 
     @Test
     fun parsesChecksumWithPublishedFilePath() {
@@ -41,4 +70,26 @@ class RegionalPolicyManagerTest {
         assertFalse(isRegionalPolicyAssetFresh(now, now, filesReady = false))
         assertFalse(isRegionalPolicyAssetFresh(now + 1L, now, filesReady = true))
     }
+
+    private fun completeRussiaRestrictionRules(): List<RulesetItem> = listOf(
+        RulesetItem(
+            remarks = "RKN restricted domains",
+            outboundTag = AppConfig.TAG_BLOCKED,
+            domain = listOf("geosite:ru-blocked-all"),
+        ),
+        RulesetItem(
+            remarks = "RKN restricted DNS safeguard",
+            outboundTag = AppConfig.TAG_PROXY,
+            port = "53",
+        ),
+        RulesetItem(
+            remarks = "RKN restricted IP ranges",
+            outboundTag = AppConfig.TAG_BLOCKED,
+            ip = listOf(
+                "geoip:ru-blocked",
+                "geoip:ru-blocked-community",
+                "geoip:re-filter",
+            ),
+        ),
+    )
 }
