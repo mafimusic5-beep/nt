@@ -77,6 +77,10 @@ fun VpnMainRoute(
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val connectionQualityChecker = remember(context) {
+        PreVpnConnectionQualityChecker(context)
+    }
     VpnMainScreen(
         uiState = uiState,
         locations = uiState.locations,
@@ -87,6 +91,7 @@ fun VpnMainRoute(
             }
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
+        checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
     )
 }
@@ -98,6 +103,9 @@ fun VpnMainScreen(
     onLocationSelected: (String) -> Unit,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
+    checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
+        PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
+    },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -108,6 +116,31 @@ fun VpnMainScreen(
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
+    var connectionCheckInProgress by remember { mutableStateOf(false) }
+    var connectionWarning by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
+
+    fun connectAfterUserConfirmation() {
+        autoConnectEnabled = true
+        MmkvManager.encodeStartOnBoot(true)
+        onConnectClick()
+    }
+
+    fun checkConnectionAndConnect() {
+        if (connectionCheckInProgress) return
+        connectionCheckInProgress = true
+        policyScope.launch {
+            try {
+                val assessment = checkPreVpnConnection()
+                if (assessment.quality.shouldWarn) {
+                    connectionWarning = assessment.quality
+                } else {
+                    connectAfterUserConfirmation()
+                }
+            } finally {
+                connectionCheckInProgress = false
+            }
+        }
+    }
 
     LaunchedEffect(
         reconnectAfterPolicyChange,
@@ -203,15 +236,14 @@ fun VpnMainScreen(
                 PrimaryConnectButton(
                     state = uiState.connectionState,
                     enabled = uiState.connectButtonEnabled,
+                    checkingConnection = connectionCheckInProgress,
                     compact = compact,
                     tight = tight,
                     onClick = {
                         if (uiState.connectionState == VpnConnectionState.Connected) {
                             onDisconnectClick()
                         } else {
-                            autoConnectEnabled = true
-                            MmkvManager.encodeStartOnBoot(true)
-                            onConnectClick()
+                            checkConnectionAndConnect()
                         }
                     },
                 )
@@ -279,6 +311,21 @@ fun VpnMainScreen(
                 onAdvancedClick = { selectedTab = MainTab.Advanced },
             )
         }
+    }
+
+    connectionWarning?.let { quality ->
+        PreVpnConnectionWarningDialog(
+            quality = quality,
+            onContinue = {
+                connectionWarning = null
+                connectAfterUserConfirmation()
+            },
+            onRetry = {
+                connectionWarning = null
+                checkConnectionAndConnect()
+            },
+            onDismiss = { connectionWarning = null },
+        )
     }
 }
 
@@ -1072,16 +1119,25 @@ fun ConnectionStatusOverlay(uiState: VpnMainUiState, modifier: Modifier = Modifi
 fun ActivationKeyField(value: String, onValueChange: (String) -> Unit, enabled: Boolean, modifier: Modifier = Modifier) { Box(modifier = modifier) }
 
 @Composable
-fun PrimaryConnectButton(state: VpnConnectionState, enabled: Boolean, onClick: () -> Unit, compact: Boolean = false, tight: Boolean = false, modifier: Modifier = Modifier) {
+fun PrimaryConnectButton(
+    state: VpnConnectionState,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false,
+    tight: Boolean = false,
+    checkingConnection: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     val containerColor by animateColorAsState(targetValue = if (enabled) Color(0xFF101319) else Color(0xFFB9BEC6), label = "primary-button-color")
-    val label = when (state) {
-        VpnConnectionState.Disconnected -> "Включить VPN"
-        VpnConnectionState.Connecting -> "Включаем..."
-        VpnConnectionState.Connected -> "Отключить VPN"
+    val label = when {
+        checkingConnection -> "Проверяем связь…"
+        state == VpnConnectionState.Disconnected -> "Включить VPN"
+        state == VpnConnectionState.Connecting -> "Включаем..."
+        else -> "Отключить VPN"
     }
     Button(
         onClick = onClick,
-        enabled = enabled && state != VpnConnectionState.Connecting,
+        enabled = enabled && state != VpnConnectionState.Connecting && !checkingConnection,
         modifier = modifier.fillMaxWidth().height(if (tight) 54.dp else if (compact) 60.dp else 66.dp),
         shape = RoundedCornerShape(if (compact) 22.dp else 26.dp),
         colors = ButtonDefaults.buttonColors(
@@ -1092,7 +1148,14 @@ fun PrimaryConnectButton(state: VpnConnectionState, enabled: Boolean, onClick: (
         ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            if (state == VpnConnectionState.Connected || state == VpnConnectionState.Connecting) {
+            if (checkingConnection) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(if (compact) 18.dp else 20.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White.copy(alpha = 0.88f),
+                )
+                Spacer(Modifier.width(14.dp))
+            } else if (state == VpnConnectionState.Connected || state == VpnConnectionState.Connecting) {
                 PauseGlyph(tint = Color.White.copy(alpha = 0.86f), compact = compact)
                 Spacer(Modifier.width(18.dp))
             }
