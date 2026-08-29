@@ -3,6 +3,7 @@ package com.v2ray.ang.handler
 import android.content.Context
 import android.util.Log
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.dto.RulesetItem
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.Utils
 import java.io.File
@@ -15,6 +16,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+private const val RKN_RULE_REMARKS_PREFIX = "RKN restricted"
+private const val RUSSIA_RESTRICTION_RULE_COUNT = 3
+private val requiredRussiaDomainLists = setOf("geosite:ru-blocked-all")
+private val requiredRussiaIpLists = setOf(
+    "geoip:ru-blocked",
+    "geoip:ru-blocked-community",
+    "geoip:re-filter",
+)
 
 internal enum class RegionalPolicyMode(val storageValue: String) {
     International("international"),
@@ -38,8 +48,6 @@ internal object RegionalPolicyManager {
     private const val MIN_DATA_FILE_BYTES = 16L * 1024L
     private const val MAX_DATA_FILE_BYTES = 128L * 1024L * 1024L
     private const val MAX_CHECKSUM_BYTES = 4L * 1024L
-    private const val RKN_RULE_REMARKS_PREFIX = "RKN restricted"
-
     private val updateMutex = Mutex()
 
     private data class GeoAsset(
@@ -111,24 +119,10 @@ internal object RegionalPolicyManager {
             return false
         }
 
-        val firstRules = MmkvManager.decodeRoutingRulesets()?.take(3).orEmpty()
-        val domainRuleReady = firstRules.any { rule ->
-            rule.outboundTag == AppConfig.TAG_BLOCKED &&
-                rule.domain?.contains("geosite:ru-blocked-all") == true
-        }
-        val dnsRuleReady = firstRules.any { rule ->
-            rule.outboundTag == AppConfig.TAG_PROXY && rule.port == "53"
-        }
-        val ipRuleReady = firstRules.any { rule ->
-            rule.outboundTag == AppConfig.TAG_BLOCKED &&
-                rule.ip?.containsAll(
-                    listOf(
-                        "geoip:ru-blocked",
-                        "geoip:ru-blocked-community",
-                    ),
-                ) == true
-        }
-        return domainRuleReady && dnsRuleReady && ipRuleReady &&
+        val firstRules = MmkvManager.decodeRoutingRulesets()
+            ?.take(RUSSIA_RESTRICTION_RULE_COUNT)
+            .orEmpty()
+        return areRussiaRestrictionRulesReady(firstRules) &&
             MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY) == "IPIfNonMatch" &&
             MmkvManager.decodeSettingsBool(AppConfig.PREF_LOCAL_DNS_ENABLED, false) &&
             MmkvManager.decodeSettingsBool(AppConfig.PREF_SNIFFING_ENABLED, true) != false &&
@@ -387,6 +381,24 @@ internal object RegionalPolicyManager {
             throw if (error is IOException) error else IOException("Unable to install policy data", error)
         }
     }
+}
+
+internal fun areRussiaRestrictionRulesReady(rules: List<RulesetItem>): Boolean {
+    val enabledPolicyRules = rules.filter { rule ->
+        rule.enabled && rule.remarks?.startsWith(RKN_RULE_REMARKS_PREFIX) == true
+    }
+    val domainRuleReady = enabledPolicyRules.any { rule ->
+        rule.outboundTag == AppConfig.TAG_BLOCKED &&
+            rule.domain?.containsAll(requiredRussiaDomainLists) == true
+    }
+    val dnsRuleReady = enabledPolicyRules.any { rule ->
+        rule.outboundTag == AppConfig.TAG_PROXY && rule.port == "53"
+    }
+    val ipRuleReady = enabledPolicyRules.any { rule ->
+        rule.outboundTag == AppConfig.TAG_BLOCKED &&
+            rule.ip?.containsAll(requiredRussiaIpLists) == true
+    }
+    return domainRuleReady && dnsRuleReady && ipRuleReady
 }
 
 internal fun parseSha256Checksum(value: String): String? {
