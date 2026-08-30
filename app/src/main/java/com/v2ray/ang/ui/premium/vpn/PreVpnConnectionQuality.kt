@@ -52,7 +52,7 @@ internal fun classifyPreVpnConnection(snapshot: PreVpnConnectionSnapshot): PreVp
     }
 
     val downstreamBandwidthKbps = snapshot.downstreamBandwidthKbps?.takeIf { it > 0 }
-    if (downstreamBandwidthKbps != null && downstreamBandwidthKbps < 128) {
+    if (downstreamBandwidthKbps != null && downstreamBandwidthKbps < CRITICAL_BANDWIDTH_KBPS) {
         return PreVpnConnectionQuality.Critical
     }
 
@@ -182,3 +182,5 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
         const val PROBE_TIMEOUT_MS = 1_800
     }
 }
+
+private const val CRITICAL_BANDWIDTH_KBPS = 500

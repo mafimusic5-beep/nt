@@ -76,12 +76,12 @@ class PreVpnConnectionQualityTest {
     }
 
     @Test
-    fun `very low reported bandwidth marks the connection critical`() {
+    fun `reported bandwidth below half a megabit marks the connection critical`() {
         assertEquals(
             PreVpnConnectionQuality.Critical,
             classifyPreVpnConnection(
                 snapshot(
-                    downstreamBandwidthKbps = 96,
+                    downstreamBandwidthKbps = 499,
                     probes = listOf(120L, 140L, 150L),
                 ),
             ),
@@ -89,12 +89,24 @@ class PreVpnConnectionQualityTest {
     }
 
     @Test
-    fun `very low bandwidth still warns when probe hosts are unavailable`() {
+    fun `half a megabit does not trigger a critical warning`() {
+        val quality = classifyPreVpnConnection(
+            snapshot(
+                downstreamBandwidthKbps = 500,
+                probes = listOf(120L, 140L, 150L),
+            ),
+        )
+
+        assertFalse(quality.shouldWarn)
+    }
+
+    @Test
+    fun `bandwidth below half a megabit still warns when probe hosts are unavailable`() {
         assertEquals(
             PreVpnConnectionQuality.Critical,
             classifyPreVpnConnection(
                 snapshot(
-                    downstreamBandwidthKbps = 96,
+                    downstreamBandwidthKbps = 499,
                     probes = listOf(null, null, null),
                 ),
             ),
