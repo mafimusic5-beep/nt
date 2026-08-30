@@ -7,10 +7,10 @@ import org.junit.Test
 
 class PreVpnConnectionQualityTest {
     @Test
-    fun `warning is shown only for actionable poor states`() {
+    fun `warning is shown only for critical or offline states`() {
         assertFalse(PreVpnConnectionQuality.Good.shouldWarn)
         assertFalse(PreVpnConnectionQuality.Unknown.shouldWarn)
-        assertTrue(PreVpnConnectionQuality.Unstable.shouldWarn)
+        assertFalse(PreVpnConnectionQuality.Unstable.shouldWarn)
         assertTrue(PreVpnConnectionQuality.Critical.shouldWarn)
         assertTrue(PreVpnConnectionQuality.Offline.shouldWarn)
     }
