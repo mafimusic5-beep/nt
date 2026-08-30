@@ -8,6 +8,7 @@ import android.os.SystemClock
 import com.v2ray.ang.AppConfig
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.min
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -52,13 +53,13 @@ internal fun classifyPreVpnConnection(snapshot: PreVpnConnectionSnapshot): PreVp
     }
 
     val downstreamBandwidthKbps = snapshot.downstreamBandwidthKbps?.takeIf { it > 0 }
-    if (downstreamBandwidthKbps != null && downstreamBandwidthKbps < CRITICAL_BANDWIDTH_KBPS) {
+    if (downstreamBandwidthKbps != null && downstreamBandwidthKbps <= CRITICAL_BANDWIDTH_KBPS) {
         return PreVpnConnectionQuality.Critical
     }
 
     val successfulProbes = snapshot.probeLatenciesMs.filterNotNull().sorted()
     // A validated Android network is allowed through if the probe endpoint itself is unavailable,
-    // unless Android independently reports very low bandwidth. This avoids endpoint-wide false warnings.
+    // unless the download probe measured very low bandwidth. This avoids endpoint-wide false warnings.
     if (successfulProbes.isEmpty()) {
         return if (downstreamBandwidthKbps != null && downstreamBandwidthKbps < 512) {
             PreVpnConnectionQuality.Unstable
@@ -81,6 +82,13 @@ internal fun classifyPreVpnConnection(snapshot: PreVpnConnectionSnapshot): PreVp
     }
 
     return PreVpnConnectionQuality.Good
+}
+
+internal fun calculateDownloadedBandwidthKbps(downloadedBytes: Long, elapsedMs: Long): Int? {
+    if (downloadedBytes <= 0L || elapsedMs <= 0L) return null
+    return ((downloadedBytes * 8L) / elapsedMs)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
 }
 
 internal class PreVpnConnectionQualityChecker(context: Context) {
@@ -113,12 +121,16 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
             network == null || !hasInternetCapability || !isValidated -> emptyList()
             else -> collectProbeLatencies(network)
         }
+        val measuredDownstreamBandwidthKbps = when {
+            network == null || !hasInternetCapability || !isValidated -> null
+            else -> measureDownloadBandwidthKbps(network)
+        }
         val quality = classifyPreVpnConnection(
             PreVpnConnectionSnapshot(
                 hasActiveNetwork = hasActiveNetwork,
                 hasInternetCapability = hasInternetCapability,
                 isValidated = isValidated,
-                downstreamBandwidthKbps = capabilities?.linkDownstreamBandwidthKbps,
+                downstreamBandwidthKbps = measuredDownstreamBandwidthKbps,
                 probeLatenciesMs = probeLatencies,
             ),
         )
@@ -176,10 +188,60 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
         }
     }
 
+    private fun measureDownloadBandwidthKbps(network: Network): Int? {
+        val url = "$DOWNLOAD_PROBE_URL&nonce=${SystemClock.elapsedRealtime()}"
+        val connection = try {
+            network.openConnection(URL(url)) as? HttpsURLConnection ?: return null
+        } catch (_: Exception) {
+            return null
+        }
+        var downloadedBytes = 0L
+        var startedAt = 0L
+        try {
+            connection.connectTimeout = DOWNLOAD_CONNECT_TIMEOUT_MS
+            connection.readTimeout = DOWNLOAD_READ_TIMEOUT_MS
+            connection.requestMethod = "GET"
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
+            connection.setRequestProperty("Accept-Encoding", "identity")
+            connection.setRequestProperty("Cache-Control", "no-cache")
+
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
+            startedAt = SystemClock.elapsedRealtime()
+            connection.inputStream.use { input ->
+                val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                while (downloadedBytes < DOWNLOAD_PROBE_BYTES) {
+                    val remaining = (DOWNLOAD_PROBE_BYTES - downloadedBytes).toInt()
+                    val count = input.read(buffer, 0, min(buffer.size, remaining))
+                    if (count < 0) break
+                    downloadedBytes += count
+                    if (SystemClock.elapsedRealtime() - startedAt >= DOWNLOAD_MAX_MEASURE_MS) break
+                }
+            }
+        } catch (_: Exception) {
+            // A partial transfer still provides a usable conservative measurement.
+        } finally {
+            connection.disconnect()
+        }
+
+        if (startedAt == 0L || downloadedBytes < DOWNLOAD_MIN_MEASURE_BYTES) return null
+        return calculateDownloadedBandwidthKbps(
+            downloadedBytes = downloadedBytes,
+            elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+        )
+    }
+
     private companion object {
         const val PROBE_COUNT = 3
         const val MIN_RELIABLE_PROBE_COUNT = 2
         const val PROBE_TIMEOUT_MS = 1_800
+        const val DOWNLOAD_PROBE_BYTES = 128L * 1024L
+        const val DOWNLOAD_MIN_MEASURE_BYTES = 16L * 1024L
+        const val DOWNLOAD_BUFFER_BYTES = 16 * 1024
+        const val DOWNLOAD_CONNECT_TIMEOUT_MS = 2_500
+        const val DOWNLOAD_READ_TIMEOUT_MS = 1_500
+        const val DOWNLOAD_MAX_MEASURE_MS = 3_500L
+        const val DOWNLOAD_PROBE_URL = "https://speed.cloudflare.com/__down?bytes=131072"
     }
 }
 
