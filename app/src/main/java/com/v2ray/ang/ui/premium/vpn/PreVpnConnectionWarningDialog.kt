@@ -97,7 +97,7 @@ private fun PreVpnConnectionQuality.warningCopy(): ConnectionWarningCopy? = when
 
     PreVpnConnectionQuality.Offline -> ConnectionWarningCopy(
         title = "Нет доступа к интернету",
-        status = "ОТСУТСТВУЕТ",
+        status = "БЕЗ ИНТЕРНЕТА",
         description =
             "Без подключения к интернету VPN не сможет запуститься. Проверьте Wi‑Fi или мобильную сеть и повторите.",
         statusColor = Color(0xFFB42318),
