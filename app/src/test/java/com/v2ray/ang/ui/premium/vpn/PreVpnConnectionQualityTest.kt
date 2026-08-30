@@ -89,15 +89,32 @@ class PreVpnConnectionQualityTest {
     }
 
     @Test
-    fun `half a megabit does not trigger a critical warning`() {
+    fun `half a megabit triggers a critical warning`() {
+        assertEquals(
+            PreVpnConnectionQuality.Critical,
+            classifyPreVpnConnection(
+                snapshot(
+                    downstreamBandwidthKbps = 500,
+                    probes = listOf(120L, 140L, 150L),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `bandwidth above half a megabit does not trigger a critical warning`() {
         val quality = classifyPreVpnConnection(
             snapshot(
-                downstreamBandwidthKbps = 500,
+                downstreamBandwidthKbps = 501,
                 probes = listOf(120L, 140L, 150L),
             ),
         )
-
         assertFalse(quality.shouldWarn)
+    }
+
+    @Test
+    fun `downloaded bytes are converted to kilobits per second`() {
+        assertEquals(500, calculateDownloadedBandwidthKbps(downloadedBytes = 125_000L, elapsedMs = 2_000L))
     }
 
     @Test
