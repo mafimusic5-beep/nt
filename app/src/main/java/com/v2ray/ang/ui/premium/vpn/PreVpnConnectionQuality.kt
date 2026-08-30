@@ -24,7 +24,7 @@ enum class PreVpnConnectionQuality {
     Unknown;
 
     val shouldWarn: Boolean
-        get() = this == Unstable || this == Critical || this == Offline
+        get() = this == Critical || this == Offline
 }
 
 data class PreVpnConnectionAssessment(
@@ -127,12 +127,16 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
 
     private suspend fun collectProbeLatencies(network: Network): List<Long?> {
         val primarySamples = probeBatch(network, AppConfig.DELAY_TEST_URL)
-        if (primarySamples.any { it != null }) {
+        if (primarySamples.count { it != null } >= MIN_RELIABLE_PROBE_COUNT) {
             return primarySamples
         }
 
         val fallbackSamples = probeBatch(network, AppConfig.DELAY_TEST_URL2)
-        return if (fallbackSamples.any { it != null }) fallbackSamples else emptyList()
+        return when {
+            fallbackSamples.count { it != null } > primarySamples.count { it != null } -> fallbackSamples
+            primarySamples.any { it != null } -> primarySamples
+            else -> emptyList()
+        }
     }
 
     private suspend fun probeBatch(network: Network, url: String): List<Long?> = coroutineScope {
@@ -174,6 +178,7 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
 
     private companion object {
         const val PROBE_COUNT = 3
+        const val MIN_RELIABLE_PROBE_COUNT = 2
         const val PROBE_TIMEOUT_MS = 1_800
     }
 }

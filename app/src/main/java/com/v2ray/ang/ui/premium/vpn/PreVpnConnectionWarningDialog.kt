@@ -86,15 +86,6 @@ private data class ConnectionWarningCopy(
 )
 
 private fun PreVpnConnectionQuality.warningCopy(): ConnectionWarningCopy? = when (this) {
-    PreVpnConnectionQuality.Unstable -> ConnectionWarningCopy(
-        title = "Слабая связь",
-        status = "НЕСТАБИЛЬНОЕ",
-        description =
-            "Интернет работает нестабильно ещё до включения VPN. Подключение может быть медленным или не запуститься.",
-        statusColor = Color(0xFFC77800),
-        canContinue = true,
-    )
-
     PreVpnConnectionQuality.Critical -> ConnectionWarningCopy(
         title = "Слабая связь",
         status = "КРИТИЧЕСКОЕ",
@@ -114,5 +105,6 @@ private fun PreVpnConnectionQuality.warningCopy(): ConnectionWarningCopy? = when
     )
 
     PreVpnConnectionQuality.Good,
+    PreVpnConnectionQuality.Unstable,
     PreVpnConnectionQuality.Unknown -> null
 }
