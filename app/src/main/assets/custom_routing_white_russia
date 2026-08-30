@@ -16,7 +16,8 @@
     "outboundTag": "block",
     "ip": [
       "geoip:ru-blocked",
-      "geoip:ru-blocked-community"
+      "geoip:ru-blocked-community",
+      "geoip:re-filter"
     ]
   },
   {
