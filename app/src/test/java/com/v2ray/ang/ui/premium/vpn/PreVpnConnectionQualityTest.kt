@@ -24,54 +24,42 @@ class PreVpnConnectionQualityTest {
                     hasActiveNetwork = false,
                     hasInternetCapability = false,
                     isValidated = false,
-                    probes = emptyList(),
                 ),
             ),
         )
     }
 
     @Test
-    fun `critical when Android cannot validate the internet connection`() {
+    fun `offline when Android validation and real download both fail`() {
         assertEquals(
-            PreVpnConnectionQuality.Critical,
+            PreVpnConnectionQuality.Offline,
             classifyPreVpnConnection(
                 snapshot(
                     isValidated = false,
-                    probes = emptyList(),
+                    downstreamBandwidthKbps = null,
                 ),
             ),
         )
     }
 
     @Test
-    fun `unknown probe endpoint does not create a false warning`() {
-        assertEquals(
-            PreVpnConnectionQuality.Unknown,
-            classifyPreVpnConnection(snapshot(probes = listOf(null, null, null))),
-        )
-    }
-
-    @Test
-    fun `good connection passes without a warning`() {
+    fun `measured working connection overrides temporary Android validation failure`() {
         assertEquals(
             PreVpnConnectionQuality.Good,
-            classifyPreVpnConnection(snapshot(probes = listOf(90L, 115L, 130L))),
+            classifyPreVpnConnection(
+                snapshot(
+                    isValidated = false,
+                    downstreamBandwidthKbps = 5_790,
+                ),
+            ),
         )
     }
 
     @Test
-    fun `one failed probe marks the connection unstable`() {
+    fun `failed speed endpoint on validated network does not create a false warning`() {
         assertEquals(
-            PreVpnConnectionQuality.Unstable,
-            classifyPreVpnConnection(snapshot(probes = listOf(140L, null, 180L))),
-        )
-    }
-
-    @Test
-    fun `high latency marks the connection critical`() {
-        assertEquals(
-            PreVpnConnectionQuality.Critical,
-            classifyPreVpnConnection(snapshot(probes = listOf(1_320L, 1_410L, 1_500L))),
+            PreVpnConnectionQuality.Unknown,
+            classifyPreVpnConnection(snapshot(downstreamBandwidthKbps = null)),
         )
     }
 
@@ -82,7 +70,6 @@ class PreVpnConnectionQualityTest {
             classifyPreVpnConnection(
                 snapshot(
                     downstreamBandwidthKbps = 499,
-                    probes = listOf(120L, 140L, 150L),
                 ),
             ),
         )
@@ -95,7 +82,6 @@ class PreVpnConnectionQualityTest {
             classifyPreVpnConnection(
                 snapshot(
                     downstreamBandwidthKbps = 500,
-                    probes = listOf(120L, 140L, 150L),
                 ),
             ),
         )
@@ -106,7 +92,6 @@ class PreVpnConnectionQualityTest {
         val quality = classifyPreVpnConnection(
             snapshot(
                 downstreamBandwidthKbps = 501,
-                probes = listOf(120L, 140L, 150L),
             ),
         )
         assertFalse(quality.shouldWarn)
@@ -118,13 +103,13 @@ class PreVpnConnectionQualityTest {
     }
 
     @Test
-    fun `bandwidth below half a megabit still warns when probe hosts are unavailable`() {
+    fun `bandwidth below half a megabit warns independently of Android validation`() {
         assertEquals(
             PreVpnConnectionQuality.Critical,
             classifyPreVpnConnection(
                 snapshot(
+                    isValidated = false,
                     downstreamBandwidthKbps = 499,
-                    probes = listOf(null, null, null),
                 ),
             ),
         )
@@ -135,12 +120,10 @@ class PreVpnConnectionQualityTest {
         hasInternetCapability: Boolean = true,
         isValidated: Boolean = true,
         downstreamBandwidthKbps: Int? = 10_000,
-        probes: List<Long?>,
     ) = PreVpnConnectionSnapshot(
         hasActiveNetwork = hasActiveNetwork,
         hasInternetCapability = hasInternetCapability,
         isValidated = isValidated,
         downstreamBandwidthKbps = downstreamBandwidthKbps,
-        probeLatenciesMs = probes,
     )
 }
