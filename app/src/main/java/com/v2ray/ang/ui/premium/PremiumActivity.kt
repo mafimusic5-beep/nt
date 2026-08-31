@@ -282,7 +282,7 @@ private fun RegionalPolicyOnboardingScreen(
                     .padding(if (compact) 16.dp else 20.dp),
             ) {
                 Text(
-                    text = "Региональная политика РФ",
+                    text = "Региональная политика",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color(0xFF111319),
                     fontWeight = FontWeight.SemiBold,

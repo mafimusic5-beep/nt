@@ -76,7 +76,9 @@ internal object RegionalPolicyManager {
 
     suspend fun apply(context: Context, mode: RegionalPolicyMode): Result<Unit> {
         if (mode == RegionalPolicyMode.Russia) {
-            val assetResult = ensureRussiaAssetsFresh(context.applicationContext, force = true)
+            // Reuse the verified on-device copy while it is fresh. Forcing a new
+            // download here made every policy selection fetch both large data files.
+            val assetResult = ensureRussiaAssetsFresh(context.applicationContext)
             if (assetResult.isFailure) {
                 return Result.failure(
                     assetResult.exceptionOrNull()

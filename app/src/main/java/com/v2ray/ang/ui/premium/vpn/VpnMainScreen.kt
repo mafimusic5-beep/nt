@@ -929,7 +929,7 @@ private fun RegionalPolicyCard(
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
-            text = "Региональная политика РФ",
+            text = "Региональная политика",
             style = MaterialTheme.typography.titleMedium,
             color = AppUiColors.TextPrimary,
             fontWeight = FontWeight.SemiBold,
