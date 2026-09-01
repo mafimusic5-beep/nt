@@ -94,10 +94,13 @@ internal object RegionalPolicyManager {
         if (!isRussiaModeEnabled()) {
             return Result.success(Unit)
         }
-        val assetResult = ensureRussiaAssetsFresh(context.applicationContext)
-        if (assetResult.isFailure) {
-            return assetResult
+
+        // Connecting must never start a large policy download. Russia mode is
+        // enabled only after apply() has installed and verified these files.
+        if (!areVerifiedRussiaAssetsInstalled(context.applicationContext)) {
+            return Result.failure(IOException("Russia policy data is not installed"))
         }
+
         return runCatching {
             // Re-apply the policy before every connection so manually edited or
             // legacy rules cannot place an allow rule before the restrictions.
@@ -108,16 +111,7 @@ internal object RegionalPolicyManager {
     fun isPolicyReadyForServiceStart(context: Context): Boolean {
         if (!isRussiaModeEnabled()) return true
 
-        val assetDirectory = File(Utils.userAssetPath(context.applicationContext))
-        val filesReady = requiredAssets.all { asset ->
-            val file = File(assetDirectory, asset.fileName)
-            file.isFile && file.length() >= MIN_DATA_FILE_BYTES
-        }
-        val lastUpdated = MmkvManager.decodeSettingsLong(
-            AppConfig.PREF_RF_POLICY_ASSETS_UPDATED_AT,
-            0L,
-        )
-        if (!isRegionalPolicyAssetFresh(lastUpdated, System.currentTimeMillis(), filesReady)) {
+        if (!areVerifiedRussiaAssetsInstalled(context.applicationContext)) {
             return false
         }
 
@@ -131,18 +125,23 @@ internal object RegionalPolicyManager {
             MmkvManager.decodeSettingsBool(AppConfig.PREF_ROUTE_ONLY_ENABLED, false)
     }
 
-    suspend fun ensureRussiaAssetsFresh(context: Context, force: Boolean = false): Result<Unit> {
-        if (!isRussiaModeEnabled() && !force) {
-            return Result.success(Unit)
+    private fun areVerifiedRussiaAssetsInstalled(context: Context): Boolean {
+        val assetDirectory = File(Utils.userAssetPath(context.applicationContext))
+        val filesReady = requiredAssets.all { asset ->
+            val file = File(assetDirectory, asset.fileName)
+            file.isFile && file.length() >= MIN_DATA_FILE_BYTES
         }
+        val installedByPolicyManager =
+            MmkvManager.decodeSettingsString(AppConfig.PREF_GEO_FILES_SOURCES) == RUNET_SOURCE_REPOSITORY &&
+                MmkvManager.decodeSettingsLong(AppConfig.PREF_RF_POLICY_ASSETS_UPDATED_AT, 0L) > 0L
+        return filesReady && installedByPolicyManager
+    }
 
+    suspend fun ensureRussiaAssetsFresh(context: Context, force: Boolean = false): Result<Unit> {
         return updateMutex.withLock {
             withContext(Dispatchers.IO) {
                 val assetDirectory = File(Utils.userAssetPath(context.applicationContext))
-                val filesReady = requiredAssets.all { asset ->
-                    val file = File(assetDirectory, asset.fileName)
-                    file.isFile && file.length() >= MIN_DATA_FILE_BYTES
-                }
+                val filesReady = areVerifiedRussiaAssetsInstalled(context.applicationContext)
                 val lastUpdated = MmkvManager.decodeSettingsLong(
                     AppConfig.PREF_RF_POLICY_ASSETS_UPDATED_AT,
                     0L,
