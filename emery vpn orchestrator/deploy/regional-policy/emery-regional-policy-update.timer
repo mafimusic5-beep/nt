@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Skryon server-side restrictions every six hours
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=6h
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

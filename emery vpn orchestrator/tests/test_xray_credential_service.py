@@ -87,3 +87,7 @@ def test_remote_mutation_is_valid_python_and_contains_mandatory_controls():
     assert '"device_gate_ready": True' in script
     assert '"emery-device-gate"' in script
     assert "systemctl\", \"is-active" in script
+    assert "sync_regional_policy()" in script
+    assert '"sync-credentials"' in script
+    assert '"--credential-lock-held"' in script
+    assert "regional_policy_helper_permissions_unsafe" in script

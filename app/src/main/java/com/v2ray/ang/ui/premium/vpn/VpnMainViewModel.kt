@@ -28,6 +28,7 @@ import com.v2ray.ang.ui.premium.clearActivatedSkryonConfig
 import com.v2ray.ang.ui.premium.formatSkryonActivationCode
 import com.v2ray.ang.ui.premium.saveActivatedSkryonConfig
 import com.v2ray.ang.security.EmeryDeviceGateConfig
+import com.v2ray.ang.security.DeviceBoundVlessProxy
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.ui.premium.syncSkryonConfig
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
@@ -653,11 +654,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
             val policyAssets = RegionalPolicyManager.prepareForConnection(getApplication())
             if (policyAssets.isFailure) {
-                setDisconnectedWithError("Не удалось обновить список ограничений РФ")
+                setDisconnectedWithError("Не удалось применить региональную политику")
                 VpnUiDebugLogger.log(
                     hypothesisId = "H11",
                     location = "VpnMainViewModel.kt:onConnectClick",
-                    message = "regional policy data refresh failed",
+                    message = "regional policy routing preparation failed",
                     data = JSONObject().put(
                         "error",
                         policyAssets.exceptionOrNull()?.message ?: "unknown",
@@ -678,6 +679,24 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                             data = JSONObject().put("selectedGuid", payload.selectedGuid),
                         )
                         return@fold
+                    }
+                    if (RegionalPolicyManager.isRussiaModeEnabled()) {
+                        val policyReady = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val profile = MmkvManager.decodeServerConfig(payload.selectedGuid)
+                                val descriptor = EmeryDeviceGateConfig.descriptorFor(profile)
+                                    ?: error("Server does not support regional policy")
+                                DeviceBoundVlessProxy { true }.use { proxy ->
+                                    proxy.checkRegionalPolicy(
+                                        DeviceBoundVlessProxy.resolve(descriptor, "russia"),
+                                    ).getOrThrow()
+                                }
+                            }
+                        }
+                        if (policyReady.isFailure) {
+                            setDisconnectedWithError("Сервер не подтвердил региональную политику. Подключение не выполнено. Попробуйте другой сервер или повторите позже.")
+                            return@fold
+                        }
                     }
                     val serviceStartRequested = try {
                         startVpnService(payload.selectedGuid)
