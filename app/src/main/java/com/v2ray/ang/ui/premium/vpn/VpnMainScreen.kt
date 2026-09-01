@@ -290,7 +290,7 @@ fun VpnMainScreen(
                                 },
                                 onFailure = {
                                     regionalPolicyError =
-                                        "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
+                                        "Не удалось сохранить выбранную политику. Повторите."
                                 },
                             )
                         }
@@ -929,7 +929,7 @@ private fun RegionalPolicyCard(
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
-            text = "Региональная политика РФ",
+            text = "Региональная политика",
             style = MaterialTheme.typography.titleMedium,
             color = AppUiColors.TextPrimary,
             fontWeight = FontWeight.SemiBold,
@@ -959,7 +959,7 @@ private fun RegionalPolicyCard(
         if (selectedMode == RegionalPolicyMode.Russia) {
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
+                text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextPrimary,
                 fontWeight = FontWeight.Medium,
@@ -981,7 +981,7 @@ private fun RegionalPolicyCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Обновляем список ограничений…",
+                    text = "Применяем политику…",
                     style = MaterialTheme.typography.bodySmall,
                     color = AppUiColors.TextPrimary,
                 )

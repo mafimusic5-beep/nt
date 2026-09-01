@@ -154,14 +154,15 @@ object EmeryDeviceIdentity {
         gateSpkiSha256: String,
         serverIssuedAt: String,
         serverNonce: String,
+        regionalPolicy: String = "international",
+        operation: String = "connect",
     ): GatewayProof {
         require(assignmentId > 0 && nodeId > 0) { "Invalid device-gate assignment" }
         val resolvedDeviceId = deviceId()
         val normalizedServerName = gateServerName.trim().lowercase(Locale.ROOT)
         val timestamp = System.currentTimeMillis().toString()
         val clientNonce = randomNonce()
-        val canonical = listOf(
-            "protocol=emery-device-gate-v1",
+        val canonical = gatewayCanonical(listOf(
             "assignment_id=$assignmentId",
             "node_id=$nodeId",
             "gate_server_name=$normalizedServerName",
@@ -171,7 +172,7 @@ object EmeryDeviceIdentity {
             "timestamp=$timestamp",
             "server_nonce=$serverNonce",
             "client_nonce=$clientNonce",
-        ).joinToString(separator = "\n")
+        ), regionalPolicy, operation)
         return GatewayProof(
             deviceId = resolvedDeviceId,
             timestampMillis = timestamp,

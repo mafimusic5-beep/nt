@@ -12,15 +12,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import secrets
 import ssl
+import stat
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -28,6 +31,7 @@ PROTOCOL_VERSION = 1
 MAX_CONTROL_LINE_BYTES = 8192
 LOGGER = logging.getLogger("emery-device-gate")
 SAFE_SERVER_NAME = re.compile(r"^[A-Za-z0-9.-]{1,255}$")
+REGIONAL_POLICY_MAX_AGE = 48 * 60 * 60
 
 
 class GateError(Exception):
@@ -65,6 +69,7 @@ class Config:
     control_timeout_seconds: int
     connect_timeout_seconds: int
     max_connections: int
+    regional_policy_state_file: str = "/var/lib/emery-regional-policy/ready.json"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -112,6 +117,10 @@ class Config:
             ),
             max_connections=_env_int(
                 "EMERY_GATE_MAX_CONNECTIONS", 2048, 1, 100_000
+            ),
+            regional_policy_state_file=os.getenv(
+                "EMERY_GATE_REGIONAL_POLICY_STATE_FILE",
+                "/var/lib/emery-regional-policy/ready.json",
             ),
         )
 
@@ -201,10 +210,17 @@ def _validated_proof(
         "signature",
         "signature_algorithm",
     }
+    version = payload.get("version")
+    if type(version) is not int or version not in (1, 2):
+        raise GateError("unsupported protocol version")
+    if version == 2:
+        expected_keys |= {"regional_policy", "operation"}
+        if payload.get("regional_policy") != "russia" or payload.get("operation") not in (
+            "connect", "check"
+        ):
+            raise GateError("unsupported regional policy or operation")
     if set(payload) != expected_keys:
         raise GateError("invalid proof fields")
-    if payload.get("version") != PROTOCOL_VERSION:
-        raise GateError("unsupported protocol version")
     if payload.get("node_id") != config.node_id:
         raise GateError("wrong node")
     if payload.get("gate_server_name") != config.server_name:
@@ -215,22 +231,71 @@ def _validated_proof(
         raise GateError("challenge mismatch")
     if not secrets.compare_digest(str(payload.get("server_nonce", "")), server_nonce):
         raise GateError("challenge mismatch")
-    return {key: value for key, value in payload.items() if key != "version"}
+    proof = {key: value for key, value in payload.items() if key != "version"}
+    if version == 2:
+        proof["protocol_version"] = 2
+    return proof
+
+
+def _target_host(proof: dict[str, Any]) -> str:
+    return "127.0.0.2" if proof.get("regional_policy") == "russia" else "127.0.0.1"
 
 
 def _validated_target(config: Config, result: dict[str, Any], proof: dict[str, Any]) -> int:
     if result.get("allowed") is not True:
         raise GateError("authorization denied")
-    if result.get("target_host") != "127.0.0.1":
-        raise GateError("non-loopback target denied")
+    if result.get("target_host") != _target_host(proof):
+        raise GateError("wrong policy target denied")
+    if proof.get("protocol_version") == 2 and any(
+        result.get(key) != proof.get(key)
+        for key in ("protocol_version", "regional_policy", "operation")
+    ):
+        raise GateError("regional policy downgrade denied")
     if result.get("assignment_id") != proof.get("assignment_id"):
         raise GateError("assignment mismatch")
     if result.get("node_id") != config.node_id:
         raise GateError("node mismatch")
     target_port = result.get("target_port")
-    if not isinstance(target_port, int) or target_port < 1 or target_port > 65535:
+    if type(target_port) is not int or target_port < 1 or target_port > 65535:
         raise GateError("invalid target")
     return target_port
+
+
+def _regional_policy_deadline(config: Config, target_port: int, assignment_id: int) -> float:
+    """Small, root-owned readiness record; never downloads or reads the datasets."""
+    path = Path(config.regional_policy_state_file)
+    try:
+        parent = path.parent.stat()
+        if parent.st_uid != 0 or parent.st_mode & 0o022:
+            raise ValueError("unsafe state directory")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError("unsafe state file")
+            raw = handle.read(65_537)
+        if len(raw) > 65_536:
+            raise ValueError("oversized state file")
+        state = json.loads(raw)
+        if not isinstance(state, dict) or not isinstance(state.get("assignments"), dict):
+            raise ValueError("invalid policy state")
+        if not isinstance(state.get("ports"), list):
+            raise ValueError("invalid policy ports")
+        updated = float(state["updated_at"])
+        now = time.time()
+        if (
+            state["schema"] != 1
+            or state["policy"] != "russia"
+            or state["listen_host"] != "127.0.0.2"
+            or target_port not in state["ports"]
+            or state["assignments"].get(str(target_port)) != assignment_id
+            or not math.isfinite(updated)
+            or not 0 <= now - updated < REGIONAL_POLICY_MAX_AGE
+        ):
+            raise ValueError("policy not ready or expired")
+        return updated + REGIONAL_POLICY_MAX_AGE
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise GateError("regional policy unavailable") from exc
 
 
 async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -252,11 +317,12 @@ async def _proxy_bidirectional(
         asyncio.create_task(_pipe(client_reader, target_writer)),
         asyncio.create_task(_pipe(target_reader, client_writer)),
     }
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*done, return_exceptions=True)
-    await asyncio.gather(*pending, return_exceptions=True)
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class DeviceGate:
@@ -303,16 +369,24 @@ class DeviceGate:
                 self.config.control_timeout_seconds + 1,
             )
             target_port = _validated_target(self.config, result, proof)
+            deadline = None
+            if proof.get("regional_policy") == "russia":
+                deadline = _regional_policy_deadline(self.config, target_port, proof["assignment_id"])
             target_reader, target_writer = await asyncio.wait_for(
-                asyncio.open_connection("127.0.0.1", target_port),
+                asyncio.open_connection(_target_host(proof), target_port),
                 self.config.connect_timeout_seconds,
             )
-            client_writer.write(_json_line({"ok": True}))
+            response = {"ok": True}
+            if deadline is not None:
+                response.update(protocol_version=2, regional_policy="russia", operation=proof["operation"])
+            client_writer.write(_json_line(response))
             await client_writer.drain()
             control_complete = True
-            await _proxy_bidirectional(
-                client_reader, client_writer, target_reader, target_writer
-            )
+            if proof.get("operation") != "check":
+                await asyncio.wait_for(
+                    _proxy_bidirectional(client_reader, client_writer, target_reader, target_writer),
+                    timeout=max(0, deadline - time.time()) if deadline is not None else None,
+                )
         except (GateError, asyncio.TimeoutError, OSError) as exc:
             if control_complete:
                 LOGGER.info("authorized connection closed: %s", type(exc).__name__)

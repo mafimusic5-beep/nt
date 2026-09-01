@@ -1,0 +1,15 @@
+[Unit]
+Description=Update Skryon regional lists on the VPN server only
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/emery/regional-policy.env
+ExecStart=/usr/bin/python3 /opt/emery/regional-policy/regional_policy.py update
+TimeoutStartSec=65min
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true

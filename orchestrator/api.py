@@ -2,7 +2,7 @@ import asyncio
 import secrets
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict
+from typing import Deque, Dict, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -77,6 +77,9 @@ class ConfigSyncRequest(BaseModel):
 
 
 class DeviceGateAuthorizeRequest(BaseModel):
+    protocol_version: Literal[1, 2] = 1
+    regional_policy: Literal['international', 'russia'] = 'international'
+    operation: Literal['connect', 'check'] = 'connect'
     assignment_id: int = Field(gt=0)
     node_id: int = Field(gt=0)
     gate_server_name: str = Field(min_length=1, max_length=255)
@@ -213,6 +216,9 @@ def device_gate_authorize(payload: DeviceGateAuthorizeRequest, request: Request)
             client_nonce=payload.client_nonce,
             signature_base64=payload.signature,
             signature_algorithm=payload.signature_algorithm,
+            protocol_version=payload.protocol_version,
+            regional_policy=payload.regional_policy,
+            operation=payload.operation,
         )
     except DeviceAuthError as error:
         return _auth_error(error)

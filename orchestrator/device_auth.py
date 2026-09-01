@@ -314,10 +314,13 @@ def _gateway_canonical(
     timestamp: str,
     server_nonce: str,
     client_nonce: str,
+    protocol_version: int = 1,
+    regional_policy: str = 'international',
+    operation: str = 'connect',
 ) -> str:
-    return '\n'.join(
+    canonical = '\n'.join(
         (
-            'protocol=emery-device-gate-v1',
+            f'protocol=emery-device-gate-v{protocol_version}',
             f'assignment_id={assignment_id}',
             f'node_id={node_id}',
             f'gate_server_name={gate_server_name}',
@@ -329,6 +332,9 @@ def _gateway_canonical(
             f'client_nonce={client_nonce}',
         )
     )
+    if protocol_version == 2:
+        canonical += f'\nregional_policy={regional_policy}\noperation={operation}'
+    return canonical
 
 
 def _consume_nonce(
@@ -759,6 +765,9 @@ def authorize_gateway_connection(
     client_nonce: str,
     signature_base64: str,
     signature_algorithm: str,
+    protocol_version: int = 1,
+    regional_policy: str = 'international',
+    operation: str = 'connect',
 ) -> Dict[str, Any]:
     """Authorize one TCP connection using the registered device key.
 
@@ -772,7 +781,12 @@ def authorize_gateway_connection(
     safe_server_nonce = server_nonce.strip()
     safe_client_nonce = client_nonce.strip()
     if (
-        assignment_id <= 0
+        (protocol_version, regional_policy, operation) not in {
+            (1, 'international', 'connect'),
+            (2, 'russia', 'connect'),
+            (2, 'russia', 'check'),
+        }
+        or assignment_id <= 0
         or node_id <= 0
         or len(safe_gate_server_name) < 1
         or len(safe_gate_server_name) > 255
@@ -803,6 +817,9 @@ def authorize_gateway_connection(
         timestamp=timestamp,
         server_nonce=safe_server_nonce,
         client_nonce=safe_client_nonce,
+        protocol_version=protocol_version,
+        regional_policy=regional_policy,
+        operation=operation,
     )
 
     con = _connect()
@@ -879,13 +896,18 @@ def authorize_gateway_connection(
             (now_iso(), int(row['device_row_id'])),
         )
         con.commit()
-        return {
+        result = {
             'allowed': True,
-            'target_host': '127.0.0.1',
+            'target_host': '127.0.0.2' if regional_policy == 'russia' else '127.0.0.1',
             'target_port': target_port,
             'assignment_id': assignment_id,
             'node_id': node_id,
         }
+        if protocol_version == 2:
+            # The gateway requires this echo. An old control plane which ignores
+            # v2 fields must never silently authorize an unrestricted route.
+            result.update(protocol_version=2, regional_policy=regional_policy, operation=operation)
+        return result
     except DeviceAuthError:
         con.rollback()
         raise

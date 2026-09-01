@@ -16,6 +16,8 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
@@ -30,21 +32,31 @@ class DeviceBoundVlessProxy(
         private const val CONNECT_TIMEOUT_MILLIS = 7_000
         private const val MAX_CONTROL_LINE_BYTES = 8_192
 
-        fun resolve(descriptor: EmeryDeviceGateConfig.Descriptor): ResolvedDescriptor =
+        fun resolve(
+            descriptor: EmeryDeviceGateConfig.Descriptor,
+            regionalPolicy: String = "international",
+        ): ResolvedDescriptor =
             ResolvedDescriptor(
                 descriptor = descriptor,
                 // Resolution intentionally happens before Android establishes
                 // the VPN interface, avoiding a DNS bootstrap loop.
                 gatewayAddress = InetAddress.getAllByName(descriptor.gatewayHost).first(),
+                regionalPolicy = regionalPolicy,
             )
     }
 
     data class ResolvedDescriptor(
         val descriptor: EmeryDeviceGateConfig.Descriptor,
         val gatewayAddress: InetAddress,
-    )
+        val regionalPolicy: String = "international",
+    ) {
+        init {
+            require(regionalPolicy == "international" || regionalPolicy == "russia")
+        }
+    }
 
     private val executor: ExecutorService = Executors.newCachedThreadPool()
+    private val deadlines = ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
     private val openSockets = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
     @Volatile
     private var running = false
@@ -70,7 +82,7 @@ class DeviceBoundVlessProxy(
             }
             serverSocket = listener
             running = true
-            executor.execute { acceptLoop(listener, resolved.gatewayAddress, descriptor) }
+            executor.execute { acceptLoop(listener, resolved) }
             true
         }.getOrElse { error ->
             Log.e(AppConfig.TAG, "Device gate failed to start", error)
@@ -81,8 +93,7 @@ class DeviceBoundVlessProxy(
 
     private fun acceptLoop(
         listener: ServerSocket,
-        gatewayAddress: InetAddress,
-        descriptor: EmeryDeviceGateConfig.Descriptor,
+        resolved: ResolvedDescriptor,
     ) {
         while (running) {
             val localSocket = try {
@@ -95,33 +106,68 @@ class DeviceBoundVlessProxy(
                 break
             }
             openSockets += localSocket
-            executor.execute { handleConnection(localSocket, gatewayAddress, descriptor) }
+            executor.execute { handleConnection(localSocket, resolved) }
         }
     }
 
     private fun handleConnection(
         localSocket: Socket,
-        gatewayAddress: InetAddress,
-        descriptor: EmeryDeviceGateConfig.Descriptor,
+        resolved: ResolvedDescriptor,
     ) {
         var gatewaySocket: SSLSocket? = null
-        var rawGatewaySocket: Socket? = null
-        var stage = "socket_create"
         try {
-            val rawSocket = Socket()
-            rawGatewaySocket = rawSocket
-            openSockets += rawSocket
-            stage = "socket_bind"
+            val tlsSocket = openAuthorizedGateway(resolved, "connect")
+            gatewaySocket = tlsSocket
+            tlsSocket.soTimeout = 0
+            localSocket.soTimeout = 0
+            val upstream = executor.submit {
+                runCatching { copy(localSocket.inputStream, tlsSocket.outputStream) }
+                tlsSocket.closeQuietly()
+            }
+            runCatching { copy(tlsSocket.inputStream, localSocket.outputStream) }
+            upstream.cancel(true)
+        } catch (_: SocketTimeoutException) {
+            Log.w(AppConfig.TAG, "Device gate connection timed out")
+        } catch (error: Exception) {
+            Log.w(AppConfig.TAG, "Device gate connection rejected: error=${error.javaClass.simpleName}")
+        } finally {
+            localSocket.closeQuietly()
+            gatewaySocket?.closeQuietly()
+            openSockets -= localSocket
+            gatewaySocket?.let { socket -> openSockets -= socket }
+        }
+    }
+
+    /** Small authenticated check before the VPN starts. No lists are transferred. */
+    fun checkRegionalPolicy(resolved: ResolvedDescriptor): Result<Unit> = runCatching {
+        check(resolved.regionalPolicy == "russia")
+        openAuthorizedGateway(resolved, "check").use { socket -> openSockets -= socket }
+    }
+
+    private fun openAuthorizedGateway(resolved: ResolvedDescriptor, operation: String): SSLSocket {
+        val descriptor = resolved.descriptor
+        val restricted = resolved.regionalPolicy == "russia"
+        val rawSocket = Socket()
+        var gatewaySocket: SSLSocket? = null
+        openSockets += rawSocket
+        // A whole-exchange deadline also bounds TLS and slow/drip-fed control lines.
+        val deadline = try {
+            deadlines.schedule(
+                Runnable { rawSocket.closeQuietly() }, if (operation == "check") 8L else 25L, TimeUnit.SECONDS,
+            )
+        } catch (error: Exception) {
+            rawSocket.closeQuietly()
+            openSockets -= rawSocket
+            throw error
+        }
+        try {
             rawSocket.bind(InetSocketAddress(0))
-            stage = "socket_protect"
             check(protectSocket(rawSocket)) { "Unable to protect device-gate socket" }
-            stage = "tcp_connect"
             rawSocket.connect(
-                InetSocketAddress(gatewayAddress, descriptor.gatewayPort),
+                InetSocketAddress(resolved.gatewayAddress, descriptor.gatewayPort),
                 CONNECT_TIMEOUT_MILLIS,
             )
 
-            stage = "tls_handshake"
             val tlsSocket = (SSLContext.getDefault().socketFactory.createSocket(
                 rawSocket,
                 descriptor.serverName,
@@ -137,12 +183,9 @@ class DeviceBoundVlessProxy(
             }
             gatewaySocket = tlsSocket
             openSockets -= rawSocket
-            rawGatewaySocket = null
             openSockets += tlsSocket
-            stage = "tls_pin"
             verifyGatewayPin(tlsSocket, descriptor.spkiSha256)
 
-            stage = "challenge"
             val challenge = JSONObject(readControlLine(tlsSocket.inputStream))
             check(challenge.length() == 3)
             check(challenge.getInt("version") == PROTOCOL_VERSION)
@@ -159,9 +202,11 @@ class DeviceBoundVlessProxy(
                 gateSpkiSha256 = descriptor.spkiSha256,
                 serverIssuedAt = serverIssuedAt,
                 serverNonce = serverNonce,
+                regionalPolicy = resolved.regionalPolicy,
+                operation = operation,
             )
             val proofJson = JSONObject()
-                .put("version", PROTOCOL_VERSION)
+                .put("version", if (restricted) 2 else PROTOCOL_VERSION)
                 .put("assignment_id", descriptor.assignmentId)
                 .put("node_id", descriptor.nodeId)
                 .put("gate_server_name", descriptor.serverName)
@@ -173,35 +218,31 @@ class DeviceBoundVlessProxy(
                 .put("client_nonce", proof.clientNonce)
                 .put("signature", proof.signatureBase64)
                 .put("signature_algorithm", proof.signatureAlgorithm)
+            if (restricted) {
+                proofJson.put("regional_policy", "russia").put("operation", operation)
+            }
             tlsSocket.outputStream.write((proofJson.toString() + "\n").toByteArray(Charsets.UTF_8))
             tlsSocket.outputStream.flush()
 
-            stage = "authorization"
             val authorization = JSONObject(readControlLine(tlsSocket.inputStream))
-            check(authorization.length() == 1 && authorization.optBoolean("ok", false))
-            tlsSocket.soTimeout = 0
-            localSocket.soTimeout = 0
-
-            val upstream = executor.submit {
-                runCatching { copy(localSocket.inputStream, tlsSocket.outputStream) }
-                tlsSocket.closeQuietly()
+            check(authorization.optBoolean("ok", false)) { "Device gate authorization denied" }
+            if (restricted) {
+                check(authorization.length() == 4 &&
+                    authorization.optInt("protocol_version") == 2 &&
+                    authorization.optString("regional_policy") == "russia" &&
+                    authorization.optString("operation") == operation) { "Regional policy not confirmed" }
+            } else {
+                check(authorization.length() == 1)
             }
-            runCatching { copy(tlsSocket.inputStream, localSocket.outputStream) }
-            upstream.cancel(true)
-        } catch (_: SocketTimeoutException) {
-            Log.w(AppConfig.TAG, "Device gate connection timed out: stage=$stage")
+            return tlsSocket
         } catch (error: Exception) {
-            Log.w(
-                AppConfig.TAG,
-                "Device gate connection rejected: stage=$stage error=${error.javaClass.simpleName}",
-            )
-        } finally {
-            localSocket.closeQuietly()
             gatewaySocket?.closeQuietly()
-            rawGatewaySocket?.closeQuietly()
-            openSockets -= localSocket
+            rawSocket.closeQuietly()
+            openSockets -= rawSocket
             gatewaySocket?.let { socket -> openSockets -= socket }
-            rawGatewaySocket?.let { socket -> openSockets -= socket }
+            throw error
+        } finally {
+            deadline.cancel(false)
         }
     }
 
@@ -213,6 +254,7 @@ class DeviceBoundVlessProxy(
         openSockets.toList().forEach { it.closeQuietly() }
         openSockets.clear()
         executor.shutdownNow()
+        deadlines.shutdownNow()
     }
 
     override fun close() = stop()

@@ -200,6 +200,17 @@ with open(path, "r", encoding="utf-8") as handle:
     original_text = handle.read()
 config = json.loads(original_text)
 original_config = json.loads(original_text)
+
+def sync_regional_policy():
+    helper = __EMERY_REGIONAL_HELPER__
+    if not os.path.exists(helper):
+        return  # Not deployed on this node: the gateway refuses regional mode.
+    helper_stat = os.stat(helper, follow_symlinks=False)
+    if not stat.S_ISREG(helper_stat.st_mode) or helper_stat.st_uid != 0 or helper_stat.st_mode & 0o022:
+        raise RuntimeError("regional_policy_helper_permissions_unsafe")
+    subprocess.run(["python3", helper, "sync-credentials", "--source-config", path,
+                    "--credential-lock-held"], check=True, capture_output=True, timeout=75)
+
 tag_prefix = "emery-device-%s-" % DATA["assignment_id"]
 tag = tag_prefix + str(DATA["speed_limit_mbps"])
 inbounds = list(config.get("inbounds") or [])
@@ -303,6 +314,7 @@ try:
     os.replace(candidate_path, path)
     subprocess.run(["systemctl", "restart", "xray"], check=True, capture_output=True, text=True)
     subprocess.run(["systemctl", "is-active", "--quiet", "xray"], check=True)
+    sync_regional_policy()
     if DATA["action"] == "upsert_client":
         subprocess.run(["systemctl", "is-active", "--quiet", __EMERY_GATE_SERVICE__], check=True)
 except Exception:
@@ -312,6 +324,10 @@ except Exception:
         subprocess.run(["nft", "delete", "table", "inet", "emery_vpn_rate"], check=False, capture_output=True, text=True)
         subprocess.run(["nft", "-f", "-"], input=old_nft, check=False, capture_output=True, text=True)
         subprocess.run(["systemctl", "restart", "xray"], check=False, capture_output=True, text=True)
+        try:
+            sync_regional_policy()
+        except Exception:
+            pass  # The helper removes readiness and stops restricted Xray on failure.
     finally:
         if os.path.exists(candidate_path):
             os.unlink(candidate_path)
@@ -321,6 +337,7 @@ print(json.dumps({"ok": True, "rate_limit_enforced": True, "smtp_block_enforced"
 '''
         return (
             template.replace("__EMERY_PAYLOAD__", encoded)
+            .replace("__EMERY_REGIONAL_HELPER__", json.dumps(settings.regional_policy_sync_script))
             .replace(
                 "__EMERY_GATE_SERVICE__",
                 json.dumps(settings.device_gate_service_name),

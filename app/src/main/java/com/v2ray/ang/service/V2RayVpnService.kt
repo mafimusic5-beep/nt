@@ -116,8 +116,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
         try {
             // Promote to foreground immediately to avoid FGS timeout
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
-            if (!RegionalPolicyManager.isPolicyReadyForServiceStart(this)) {
-                Log.e(AppConfig.TAG, "StartCore-VPN: Russia policy data is stale or incomplete")
+            if (!RegionalPolicyManager.isPolicyReadyForServiceStart()) {
+                Log.e(AppConfig.TAG, "StartCore-VPN: Server regional policy routing is not ready")
                 MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
                 stopAllService()
                 return START_NOT_STICKY
@@ -195,11 +195,14 @@ class V2RayVpnService : VpnService(), ServiceControl {
         val selectedGuid = MmkvManager.getSelectServer()?.trim().orEmpty()
         val profile = MmkvManager.decodeServerConfig(selectedGuid)
         if (!EmeryDeviceGateConfig.isGateProfile(profile)) {
-            return true
+            return !RegionalPolicyManager.isRussiaModeEnabled()
         }
         val descriptor = EmeryDeviceGateConfig.descriptorFor(profile) ?: return false
         return runCatching {
-            pendingDeviceGate = DeviceBoundVlessProxy.resolve(descriptor)
+            pendingDeviceGate = DeviceBoundVlessProxy.resolve(
+                descriptor,
+                if (RegionalPolicyManager.isRussiaModeEnabled()) "russia" else "international",
+            )
             true
         }.getOrElse { error ->
             Log.e(AppConfig.TAG, "StartCore-VPN: Device gate address resolution failed", error)

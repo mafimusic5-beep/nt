@@ -168,6 +168,71 @@ def _authorize(registered_assignment, signing_key, *, server_nonce=None, client_
     return arguments, device_auth.authorize_gateway_connection(**arguments)
 
 
+def _regional_arguments(registered_assignment, operation="connect"):
+    issued = str(int(time.time() * 1000))
+    fields = dict(
+        assignment_id=17, node_id=4, gate_server_name="gate.example.com",
+        gate_spki_sha256=GATE_SPKI_SHA256, device_id=registered_assignment["device_id"],
+        server_issued_at=issued, timestamp=issued,
+        server_nonce="server-" + uuid.uuid4().hex, client_nonce="client-" + uuid.uuid4().hex,
+        protocol_version=2, regional_policy="russia", operation=operation,
+    )
+    # Independent wire canonical, not the production builder under test.
+    canonical = _gateway_canonical(**{key: value for key, value in fields.items()
+                                    if key not in ("protocol_version", "regional_policy", "operation")})
+    canonical = canonical.replace("protocol=emery-device-gate-v1", "protocol=emery-device-gate-v2")
+    canonical += f"\nregional_policy=russia\noperation={operation}"
+    assert device_auth._gateway_canonical(**fields) == canonical
+    return dict(fields, signature_base64=_sign(registered_assignment["private_key"], canonical),
+                signature_algorithm="SHA256withECDSA")
+
+
+@pytest.mark.parametrize("operation", ["connect", "check"])
+def test_signed_regional_mode_selects_only_restricted_loopback(registered_assignment, operation):
+    result = device_auth.authorize_gateway_connection(**_regional_arguments(registered_assignment, operation))
+    assert result["target_host"] == "127.0.0.2"
+    assert result["target_port"] == 20000
+    assert result["regional_policy"] == "russia"
+    assert result["protocol_version"] == 2
+    assert result["operation"] == operation
+
+
+@pytest.mark.parametrize("changes", [
+    {"operation": "check"},
+    {"regional_policy": "international"},
+    {"protocol_version": 1, "regional_policy": "international"},
+    {"protocol_version": 99},
+    {"regional_policy": "other"},
+])
+def test_regional_signature_cannot_be_repurposed(registered_assignment, changes):
+    arguments = _regional_arguments(registered_assignment)
+    arguments.update(changes)
+    with pytest.raises(device_auth.DeviceAuthError):
+        device_auth.authorize_gateway_connection(**arguments)
+
+
+def test_regional_proof_is_single_use(registered_assignment):
+    arguments = _regional_arguments(registered_assignment)
+    device_auth.authorize_gateway_connection(**arguments)
+    with pytest.raises(device_auth.DeviceAuthError):
+        device_auth.authorize_gateway_connection(**arguments)
+
+
+def test_internal_api_passes_signed_regional_fields(registered_assignment, monkeypatch):
+    monkeypatch.setattr(api, "DEVICE_GATE_API_KEY", "k" * 32)
+    arguments = _regional_arguments(registered_assignment, "check")
+    arguments["signature"] = arguments.pop("signature_base64")
+    payload = api.DeviceGateAuthorizeRequest(**arguments)
+    request = Request({
+        "type": "http", "method": "POST", "path": "/internal/device-gate/authorize",
+        "headers": [(b"x-device-gate-key", b"k" * 32)],
+    })
+    result = api.device_gate_authorize(payload, request)
+    assert result["target_host"] == "127.0.0.2"
+    assert result["regional_policy"] == "russia"
+    assert result["operation"] == "check"
+
+
 def test_registered_device_key_authorizes_only_loopback_target(registered_assignment):
     _, result = _authorize(registered_assignment, registered_assignment["private_key"])
 

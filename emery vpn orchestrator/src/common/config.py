@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     xray_client_port_end: int = 20199
     xray_credential_script: str = ""
     xray_credential_timeout_seconds: int = 90
+    regional_policy_sync_script: str = "/opt/emery/regional-policy/regional_policy.py"
     rate_limit_per_minute: int = 60
     min_supported_app_version_code: int = 718
     app_update_message: str = (

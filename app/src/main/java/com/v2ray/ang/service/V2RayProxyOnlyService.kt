@@ -8,8 +8,10 @@ import android.util.Log
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.util.MyContextWrapper
+import com.v2ray.ang.util.MessageUtil
 import java.lang.ref.SoftReference
 
 class V2RayProxyOnlyService : Service(), ServiceControl {
@@ -31,6 +33,13 @@ class V2RayProxyOnlyService : Service(), ServiceControl {
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(AppConfig.TAG, "StartCore-Proxy: Service command received")
+        if (RegionalPolicyManager.isRussiaModeEnabled()) {
+            // This legacy service has no authenticated device-gate transport.
+            Log.e(AppConfig.TAG, "Server regional policy requires VPN mode")
+            MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
+            stopSelf()
+            return START_NOT_STICKY
+        }
         V2RayServiceManager.startCoreLoop(null)
         return START_STICKY
     }

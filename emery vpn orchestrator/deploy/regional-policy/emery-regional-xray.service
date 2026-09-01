@@ -1,0 +1,32 @@
+[Unit]
+Description=Skryon isolated regional-policy Xray
+After=network-online.target xray.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=emery-regional-xray
+Group=emery-regional-xray
+Environment=XRAY_LOCATION_ASSET=/var/lib/emery-regional-policy/active
+ExecStartPre=/usr/bin/python3 /opt/emery/regional-policy/regional_policy.py check-snapshot
+ExecStart=/usr/local/bin/xray run -config /var/lib/emery-regional-policy/active/config.json
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+LimitNOFILE=65536
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
