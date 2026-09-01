@@ -653,11 +653,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
             val policyAssets = RegionalPolicyManager.prepareForConnection(getApplication())
             if (policyAssets.isFailure) {
-                setDisconnectedWithError("Не удалось обновить список ограничений РФ")
+                setDisconnectedWithError("Данные региональной политики не готовы")
                 VpnUiDebugLogger.log(
                     hypothesisId = "H11",
                     location = "VpnMainViewModel.kt:onConnectClick",
-                    message = "regional policy data refresh failed",
+                    message = "regional policy data is unavailable",
                     data = JSONObject().put(
                         "error",
                         policyAssets.exceptionOrNull()?.message ?: "unknown",

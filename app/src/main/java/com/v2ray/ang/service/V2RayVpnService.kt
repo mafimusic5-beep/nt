@@ -117,7 +117,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             // Promote to foreground immediately to avoid FGS timeout
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
             if (!RegionalPolicyManager.isPolicyReadyForServiceStart(this)) {
-                Log.e(AppConfig.TAG, "StartCore-VPN: Russia policy data is stale or incomplete")
+                Log.e(AppConfig.TAG, "StartCore-VPN: Russia policy data is missing or incomplete")
                 MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
                 stopAllService()
                 return START_NOT_STICKY
