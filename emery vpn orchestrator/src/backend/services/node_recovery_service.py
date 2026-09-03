@@ -51,7 +51,7 @@ class VlessTcpProbe:
 
     @staticmethod
     def endpoint(node: VpnNode) -> tuple[str, int]:
-        if node.provider == "ionos_cloud" and node.endpoint:
+        if node.provider in {"ionos_cloud", "manual_vps"} and node.endpoint:
             # IONOS nodes expose only the signed-device gateway; the VLESS
             # template and per-device ports are intentionally loopback-only.
             return node.endpoint, int(node.device_gate_port or 24443)
@@ -197,7 +197,7 @@ class SshAndProviderRecoveryTransport:
             result = self._command(
                 client,
                 ("systemctl restart xray emery-device-gate && systemctl is-active --quiet xray emery-device-gate"
-                 if node.provider == "ionos_cloud" else
+                 if node.provider in {"ionos_cloud", "manual_vps"} else
                  "systemctl restart xray && systemctl is-active --quiet xray"),
             )
             return RecoveryActionResult(result.ok, f"ssh_restart_xray:{result.detail}")
@@ -228,6 +228,8 @@ class SshAndProviderRecoveryTransport:
             if client is not None:
                 client.close()
 
+        if node.provider == "manual_vps":
+            return RecoveryActionResult(False, "manual_vps_ssh_reboot_failed_provider_actions_disabled")
         script = (settings.recovery_provider_reboot_script or "").strip()
         if not script:
             return RecoveryActionResult(False, f"ssh_reboot_failed:{ssh_error};provider_script_missing")

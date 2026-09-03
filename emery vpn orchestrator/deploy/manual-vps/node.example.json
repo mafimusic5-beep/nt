@@ -1,0 +1,10 @@
+{
+  "endpoint": "REPLACE_WITH_PURCHASED_VPS_IPV4",
+  "hostname": "frankfurt-01.vpn.example.com",
+  "region_code": "de",
+  "name": "Frankfurt",
+  "capacity_clients": 20,
+  "bandwidth_limit_mbps": 600,
+  "ssh_private_key_path": "/etc/emery/ssh/frankfurt-01",
+  "ssh_host_key": "ssh-ed25519 REPLACE_WITH_VERIFIED_PUBLIC_HOST_KEY"
+}
