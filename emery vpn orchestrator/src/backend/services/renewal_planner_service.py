@@ -121,7 +121,7 @@ class RenewalPlannerService:
                 required_capacity = max(required_capacity, min_single_capacity)
 
             candidates = sorted(
-                (node for node in renewable if int(node.current_clients or 0) == 0),
+                (node for node in renewable if int(node.current_clients or 0) == 0 and node.provider != "manual_vps"),
                 key=self._retirement_key,
             )
             recommended: list[dict] = []

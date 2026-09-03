@@ -25,6 +25,8 @@ class ProvisioningGuardService:
         return value.astimezone(timezone.utc)
 
     def evaluate(self, *, region_code: str, nodes: list, now: datetime | None = None) -> ProvisioningGuardDecision:
+        if settings.manual_vps_setup_enabled:
+            return ProvisioningGuardDecision(False, "manual_vps_setup_disallows_automatic_purchases")
         if not settings.auto_provision_enabled:
             return ProvisioningGuardDecision(False, "auto_provision_disabled")
 

@@ -30,6 +30,7 @@ def _debug_log(hypothesis_id: str, location: str, message: str, data: dict | Non
 # #endregion
 
 _task: asyncio.Task | None = None
+_manual_vps_task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
 
 
@@ -55,6 +56,23 @@ def _assignment_maintenance_tick():
 
 def _renewal_tick():
     return _with_session(lambda db: RenewalPlannerService(db).apply())
+
+
+def _manual_vps_tick():
+    if not settings.manual_vps_setup_enabled:
+        return {"status": "disabled"}
+    from src.backend.services.manual_vps_setup import ManualVpsSetupService
+    return _with_session(lambda db: ManualVpsSetupService(db).tick())
+
+
+async def _manual_vps_runner() -> None:
+    while _stop_event and not _stop_event.is_set():
+        try:
+            setup = await asyncio.to_thread(_manual_vps_tick)
+            logger.debug("manual VPS setup tick: %s", setup.get("status"))
+        except Exception as exc:
+            logger.warning("manual VPS setup tick failed: %s", type(exc).__name__)
+        await asyncio.sleep(max(settings.healthcheck_interval_seconds, 10))
 
 
 async def _runner() -> None:
@@ -97,20 +115,25 @@ async def _runner() -> None:
 
 
 def start_healthcheck_scheduler() -> None:
-    global _task, _stop_event
+    global _task, _manual_vps_task, _stop_event
     if _task and not _task.done():
         return
     _stop_event = asyncio.Event()
     _task = asyncio.create_task(_runner())
+    if settings.manual_vps_setup_enabled:
+        # Installation IO must not delay health checks, assignments or renewals.
+        _manual_vps_task = asyncio.create_task(_manual_vps_runner())
 
 
 async def stop_healthcheck_scheduler() -> None:
-    global _task, _stop_event
+    global _task, _manual_vps_task, _stop_event
     if _stop_event:
         _stop_event.set()
-    if _task:
-        with suppress(asyncio.CancelledError):
-            _task.cancel()
-            await _task
+    for task in (_task, _manual_vps_task):
+        if task:
+            with suppress(asyncio.CancelledError):
+                task.cancel()
+                await task
     _task = None
+    _manual_vps_task = None
     _stop_event = None

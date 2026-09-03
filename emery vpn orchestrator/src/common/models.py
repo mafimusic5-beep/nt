@@ -114,6 +114,26 @@ class IonosProvisionJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class ManualVpsSetupJob(Base):
+    """Private, resumable installation journal; never a provider order."""
+
+    __tablename__ = "manual_vps_setup_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    node_id: Mapped[int] = mapped_column(ForeignKey("vpn_nodes.id"), nullable=False, unique=True)
+    endpoint: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    hostname: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False, default="preflight")
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    bootstrap_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    lease_token: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
 

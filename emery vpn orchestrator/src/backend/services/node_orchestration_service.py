@@ -225,6 +225,9 @@ class NodeOrchestrationService:
         node = self.repo.get_node(node_id)
         if not node:
             raise HTTPException(status_code=404, detail="node_not_found")
+        if node.provider == "manual_vps":
+            from src.backend.services.manual_vps_setup import ManualVpsSetupService
+            return ManualVpsSetupService(self.db).advance(node.id)
         if node.provider == "ionos_cloud":
             from src.backend.services.ionos_cloud_provisioning import IonosCloudProvisioningService
             return IonosCloudProvisioningService(self.db).advance(node.id)

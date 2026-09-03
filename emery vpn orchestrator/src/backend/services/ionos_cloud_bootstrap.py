@@ -77,8 +77,9 @@ def bundle_digest() -> str:
 
 
 class IonosSshBootstrap:
-    def __init__(self):
+    def __init__(self, *, authorize_key: str | None = None):
         self.ssh = SshAndProviderRecoveryTransport()
+        self.authorize_key = authorize_key
 
     @staticmethod
     def _exec(client, command: str, *, data: str | None = None, timeout: int = 20) -> str:
@@ -123,7 +124,8 @@ class IonosSshBootstrap:
                         handle.write((DEPLOY_ROOT / name).read_bytes())
                     sftp.chmod(remote, 0o600)
                 config = dict(profile, operation_id=job.id, node_id=node.id, endpoint=node.endpoint,
-                              authorize_key=settings.ionos_cloud_gate_authorize_key.get_secret_value())
+                              authorize_key=(settings.ionos_cloud_gate_authorize_key.get_secret_value()
+                                             if self.authorize_key is None else self.authorize_key))
                 with sftp.file(REMOTE_ROOT + "/config.json", "w") as handle:
                     handle.write(json.dumps(config))
                 sftp.chmod(REMOTE_ROOT + "/config.json", 0o600)

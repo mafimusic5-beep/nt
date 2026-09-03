@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     auto_provision_monthly_budget_eur: int = 0
     auto_provision_retry_seconds: int = 300
 
+    # Configure an operator-owned, already purchased VPS over pinned SSH only.
+    # This mode cannot call a provider API and requires purchasing to stay off.
+    manual_vps_setup_enabled: bool = False
+    manual_vps_profile_path: str = ""
+    manual_vps_gate_authorize_key: SecretStr = SecretStr("")
+
     # IONOS CLOUD / Data Center Designer (Cloud API v6), not retail VPS+.
     # Both this switch and AUTO_PROVISION_ENABLED must be explicitly enabled.
     # No account credential is included in node user-data or Android profiles.
