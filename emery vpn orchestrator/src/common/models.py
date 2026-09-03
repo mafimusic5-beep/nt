@@ -88,6 +88,32 @@ class VpnNode(Base):
         )
 
 
+class IonosProvisionJob(Base):
+    """Durable purchase journal. Never expose this table through node serializers."""
+
+    __tablename__ = "ionos_provision_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    node_id: Mapped[int] = mapped_column(ForeignKey("vpn_nodes.id"), nullable=False, unique=True)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
+    resource_name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    posted_operations: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    datacenter_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    lan_id: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    server_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    # The matching public host key is pinned before the first SSH connection.
+    # Protected with the same DB access controls as VpnNode.ssh_private_key.
+    bootstrap_host_private_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    bootstrap_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    lease_key: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
+    lease_token: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
 

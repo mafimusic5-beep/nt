@@ -225,6 +225,9 @@ class NodeOrchestrationService:
         node = self.repo.get_node(node_id)
         if not node:
             raise HTTPException(status_code=404, detail="node_not_found")
+        if node.provider == "ionos_cloud":
+            from src.backend.services.ionos_cloud_provisioning import IonosCloudProvisioningService
+            return IonosCloudProvisioningService(self.db).advance(node.id)
         logger.info("provision_node invoked for node_id=%s", node.id)
         node.status = "provisioning"
         node.health_status = "unknown"

@@ -16,7 +16,7 @@ class ProvisioningGuardDecision:
 class ProvisioningGuardService:
     """Fail-closed financial and idempotency checks for automatic purchases."""
 
-    SUPPORTED_AUTOMATIC_PROVIDERS = {"firstvds", "script", "ionos_vps_plus"}
+    SUPPORTED_AUTOMATIC_PROVIDERS = {"firstvds", "script", "ionos_vps_plus", "ionos_cloud"}
 
     @staticmethod
     def _utc(value: datetime) -> datetime:
@@ -33,6 +33,14 @@ class ProvisioningGuardService:
             return ProvisioningGuardDecision(False, "auto_provision_provider_unconfigured")
         if provider in {"script", "ionos_vps_plus"} and not settings.node_provision_script.strip():
             return ProvisioningGuardDecision(False, "provider_ordering_adapter_not_configured")
+        if provider == "ionos_cloud":
+            if not settings.ionos_cloud_apply_enabled:
+                return ProvisioningGuardDecision(False, "ionos_cloud_apply_disabled")
+            from src.backend.services.ionos_cloud_config import IonosConfigurationError, ordering_profile
+            try:
+                ordering_profile(region_code)
+            except IonosConfigurationError as exc:
+                return ProvisioningGuardDecision(False, str(exc))
         if not settings.pool_accounting_bridge_enabled:
             return ProvisioningGuardDecision(
                 False,

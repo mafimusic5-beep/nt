@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from functools import cached_property
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -102,6 +103,27 @@ class Settings(BaseSettings):
     auto_provision_max_servers_per_day: int = 2
     auto_provision_monthly_budget_eur: int = 0
     auto_provision_retry_seconds: int = 300
+
+    # IONOS CLOUD / Data Center Designer (Cloud API v6), not retail VPS+.
+    # Both this switch and AUTO_PROVISION_ENABLED must be explicitly enabled.
+    # No account credential is included in node user-data or Android profiles.
+    ionos_cloud_apply_enabled: bool = False
+    ionos_cloud_token: SecretStr = SecretStr("")
+    ionos_cloud_contract_number: str = ""
+    ionos_cloud_region_profiles_json: str = "{}"
+    ionos_cloud_management_ipv4: str = ""
+    ionos_cloud_dns_zone_id: str = ""
+    ionos_cloud_domain_suffix: str = ""
+    ionos_cloud_dns_token: SecretStr = SecretStr("")
+    ionos_cloud_gate_authorize_url: str = ""
+    ionos_cloud_gate_authorize_key: SecretStr = SecretStr("")
+    ionos_cloud_acme_email: str = ""
+    ionos_cloud_acme_terms_accepted: bool = False
+    ionos_cloud_xray_version: str = ""
+    ionos_cloud_xray_sha256: str = ""
+    ionos_cloud_reality_server_name: str = "apple.com"
+    ionos_cloud_probe_url: str = "https://example.com/"
+    ionos_cloud_bootstrap_timeout_seconds: int = 7200
 
     # Legacy placeholders kept for compatibility.
     firstvds_api_url: str = "https://api.firstvds.ru"

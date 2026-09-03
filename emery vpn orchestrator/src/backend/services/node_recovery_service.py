@@ -51,6 +51,10 @@ class VlessTcpProbe:
 
     @staticmethod
     def endpoint(node: VpnNode) -> tuple[str, int]:
+        if node.provider == "ionos_cloud" and node.endpoint:
+            # IONOS nodes expose only the signed-device gateway; the VLESS
+            # template and per-device ports are intentionally loopback-only.
+            return node.endpoint, int(node.device_gate_port or 24443)
         for line in (node.config_payload or "").splitlines():
             candidate = line.strip()
             if not candidate.startswith("vless://"):
@@ -192,7 +196,9 @@ class SshAndProviderRecoveryTransport:
             client = self._connect(node)
             result = self._command(
                 client,
-                "systemctl restart xray && systemctl is-active --quiet xray",
+                ("systemctl restart xray emery-device-gate && systemctl is-active --quiet xray emery-device-gate"
+                 if node.provider == "ionos_cloud" else
+                 "systemctl restart xray && systemctl is-active --quiet xray"),
             )
             return RecoveryActionResult(result.ok, f"ssh_restart_xray:{result.detail}")
         except Exception as exc:  # noqa: BLE001
