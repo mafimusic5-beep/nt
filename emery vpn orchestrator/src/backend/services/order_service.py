@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from src.backend.schemas.internal import ConfirmPaymentRequest, ConfirmPaymentRe
 from src.backend.utils.debug_log import agent_log
 from src.backend.utils.security import generate_activation_code, hash_activation_code, mask_secret
 from src.common.config import settings
+from src.common.models import IonosProvisionJob
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,11 @@ class OrderService:
         all_nodes = self.admin_repo.list_nodes()
         now = datetime.now(timezone.utc)
         retryable = sorted(
-            (node for node in all_nodes if node.status in {"draft", "provision_failed"} and node.provisioning_lock_key),
+            (node for node in all_nodes if node.provisioning_lock_key
+             and (settings.auto_provision_provider != "ionos_cloud" or node.provider == "ionos_cloud") and (
+                node.status in {"draft", "provision_failed"}
+                or (node.provider == "ionos_cloud" and node.status == "provisioning")
+            )),
             key=lambda node: node.updated_at,
         )
         if retryable:
@@ -52,11 +58,21 @@ class OrderService:
                     "projected_monthly_cost_eur": retry_guard.projected_monthly_cost_eur,
                 }
             updated_at = node.updated_at
+            retry_after = max(int(settings.auto_provision_retry_seconds), 30)
+            if node.provider == "ionos_cloud" and node.status == "provisioning":
+                job = self.db.scalar(select(IonosProvisionJob).where(IonosProvisionJob.node_id == node.id))
+                if job is not None:
+                    # Health checks can change node.updated_at. Progress is
+                    # scheduled by its own journal so health ticks cannot starve it.
+                    updated_at = job.updated_at
+                    if not job.last_error:
+                        retry_after = 30
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
-            retry_after = max(int(settings.auto_provision_retry_seconds), 30)
             age_seconds = (now - updated_at.astimezone(timezone.utc)).total_seconds()
-            if node.status == "provision_failed" and age_seconds < retry_after:
+            if (node.status == "provision_failed" or (
+                node.provider == "ionos_cloud" and node.status == "provisioning"
+            )) and age_seconds < retry_after:
                 return {
                     "status": "provision_retry_cooldown",
                     "node_id": node.id,
