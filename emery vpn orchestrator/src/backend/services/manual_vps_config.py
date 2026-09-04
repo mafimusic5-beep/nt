@@ -9,11 +9,24 @@ import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from src.backend.services.ionos_cloud_config import (
     IonosConfigurationError, _https_url, dns_name, public_ipv4,
 )
 from src.common.config import settings
+
+
+# These identifiers must never appear in the public DNS name, PTR or leaf
+# certificate of a hardened manually managed node. Operators add their own
+# product/company terms in the private profile; the built-ins prevent an
+# accidental regression to the names used by this codebase or its protocols.
+BUILTIN_PUBLIC_MARKERS = frozenset({
+    "emery", "openvpn", "proxy", "skryon", "tunnel", "vless", "vpn", "wireguard", "xray",
+})
+CONTROLLER_ONLY_PROFILE_FIELDS = frozenset({
+    "brand_domains", "forbidden_public_markers", "separate_service_hosts",
+})
 
 
 class ManualVpsError(ValueError):
@@ -78,6 +91,41 @@ def setup_guard() -> None:
         raise ManualVpsError("manual_vps_incompatible_node_transport")
 
 
+def _dns_list(value, *, code: str) -> list[str]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 32:
+        raise ManualVpsError(code)
+    try:
+        result = [dns_name(item) for item in value]
+    except (IonosConfigurationError, TypeError, AttributeError) as exc:
+        raise ManualVpsError(code) from exc
+    if len(set(result)) != len(result):
+        raise ManualVpsError(code)
+    return result
+
+
+def public_metadata_is_forbidden(value: str, profile: dict, *, dns: bool = False) -> bool:
+    """Return only a boolean so rejected metadata never enters diagnostics."""
+    try:
+        normalized = dns_name(value) if dns else str(value).casefold().strip().rstrip(".")
+    except (IonosConfigurationError, TypeError, AttributeError):
+        return True
+    if not normalized:
+        return True
+    if any(marker in normalized for marker in profile["forbidden_public_markers"]):
+        return True
+    return any(
+        normalized == domain or normalized.endswith("." + domain)
+        for domain in profile["brand_domains"]
+    )
+
+
+def require_neutral_public_name(value: str, profile: dict) -> str:
+    name = dns_name(value)
+    if public_metadata_is_forbidden(name, profile, dns=True):
+        raise ManualVpsError("manual_vps_public_identity_not_neutral")
+    return name
+
+
 def bootstrap_profile() -> dict:
     """Secret-free installation snapshot; deliberate local config, never APK data."""
     setup_guard()
@@ -85,7 +133,8 @@ def bootstrap_profile() -> dict:
     required = {
         "management_ipv4", "authorize_url", "acme_email", "acme_terms_accepted",
         "xray_version", "xray_sha256", "reality_server_name", "probe_url",
-        "bootstrap_timeout_seconds",
+        "bootstrap_timeout_seconds", "brand_domains", "forbidden_public_markers",
+        "separate_service_hosts",
     }
     if set(value) != required:
         raise ManualVpsError("manual_vps_profile_fields_invalid")
@@ -94,6 +143,26 @@ def bootstrap_profile() -> dict:
         value["authorize_url"] = _https_url(value["authorize_url"], path="/internal/device-gate/authorize")
         value["probe_url"] = _https_url(value["probe_url"])
         value["reality_server_name"] = dns_name(value["reality_server_name"])
+        value["brand_domains"] = _dns_list(
+            value["brand_domains"], code="manual_vps_brand_domains_invalid",
+        )
+        value["separate_service_hosts"] = _dns_list(
+            value["separate_service_hosts"], code="manual_vps_separate_service_hosts_invalid",
+        )
+        markers = value["forbidden_public_markers"]
+        if (not isinstance(markers, list) or not 1 <= len(markers) <= 32
+                or any(not isinstance(item, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", item)
+                       for item in markers)):
+            raise ManualVpsError("manual_vps_public_markers_invalid")
+        value["forbidden_public_markers"] = sorted(BUILTIN_PUBLIC_MARKERS | set(markers))
+        authorize_host = dns_name(urlsplit(value["authorize_url"]).hostname)
+        if authorize_host not in value["separate_service_hosts"]:
+            raise ManualVpsError("manual_vps_authorization_host_must_be_separate")
+        if not any(
+            authorize_host == domain or authorize_host.endswith("." + domain)
+            for domain in value["brand_domains"]
+        ):
+            raise ManualVpsError("manual_vps_authorization_domain_must_be_declared")
         if (value["acme_terms_accepted"] is not True
                 or not isinstance(value["acme_email"], str)
                 or len(value["acme_email"]) > 254
@@ -116,6 +185,7 @@ def bootstrap_profile() -> dict:
         value.update(
             assignment_port_start=start, assignment_port_end=end, gate_port=24443,
             authorize_key_sha256=hashlib.sha256(key.encode()).hexdigest(),
+            public_metadata_hardening=True,
         )
         return value
     except (IonosConfigurationError, TypeError, AttributeError) as exc:

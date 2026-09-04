@@ -54,11 +54,13 @@ def configured(monkeypatch, tmp_path):
         "pool_per_device_speed_limit_mbps": 30, "ionos_cloud_token": SecretStr(""),
         "ionos_cloud_dns_token": SecretStr(""), "ionos_cloud_contract_number": "",
         "manual_vps_profile_path": write_private(tmp_path / "profile.json", {
-            "management_ipv4": "9.9.9.9", "authorize_url": "https://control.example.com/internal/device-gate/authorize",
+            "management_ipv4": "9.9.9.9", "authorize_url": "https://control.brand.example/internal/device-gate/authorize",
             "acme_email": "operator@example.com", "acme_terms_accepted": True,
             "xray_version": "26.8.1", "xray_sha256": "a" * 64,
             "reality_server_name": "example.com", "probe_url": "https://example.com/",
             "bootstrap_timeout_seconds": 7200,
+            "brand_domains": ["brand.example"], "forbidden_public_markers": ["yourbrand"],
+            "separate_service_hosts": ["control.brand.example", "www.brand.example"],
         }),
     }
     for key, value in values.items():
@@ -74,7 +76,7 @@ def configured(monkeypatch, tmp_path):
     ).decode()
     path = write_private(tmp_path / "node.json", {
         "name": "Frankfurt manual VPS", "region_code": "de", "endpoint": IP,
-        "hostname": "frankfurt.vpn.example.com", "capacity_clients": 20, "bandwidth_limit_mbps": 600,
+        "hostname": "edge-frankfurt.neutral.example", "capacity_clients": 20, "bandwidth_limit_mbps": 600,
         "ssh_private_key_path": write_private(tmp_path / "id_ed25519", private), "ssh_host_key": host,
     })
     return {"spec": node_spec(path), "node_file": path, "private": private, "profile_file": values["manual_vps_profile_path"]}
@@ -105,7 +107,7 @@ class FakeBootstrap:
         return {
             "operation_id": job.id, "endpoint": node.endpoint, "hostname": profile["hostname"],
             "bootstrap_verified": True, "regional_policy_ready": True, "control_api_verified": True,
-            "certificate_verified": True, "spki_sha256": "b" * 64,
+            "certificate_verified": True, "public_metadata_hardened": True, "spki_sha256": "b" * 64,
             "config_payload": f"vless://11111111-1111-4111-8111-111111111111@{node.endpoint}:443?type=tcp&security=reality&pbk={'a' * 43}&sid=0123456789abcdef&flow=xtls-rprx-vision",
             **self.override,
         }
@@ -225,6 +227,7 @@ def test_duplicate_registration_returns_same_job_and_never_reinstalls(configured
 @pytest.mark.parametrize("field,value", [
     ("bootstrap_verified", False), ("regional_policy_ready", False),
     ("control_api_verified", False), ("certificate_verified", False),
+    ("public_metadata_hardened", False),
     ("endpoint", "8.8.8.8"), ("hostname", "other.example.com"),
     ("operation_id", "other-job"), ("spki_sha256", "not-a-pin"),
     ("config_payload", "arbitrary"),
@@ -378,6 +381,47 @@ def test_dns_proxy_stale_aaaa_and_control_host_are_rejected(configured, monkeypa
         ManualVpsBootstrap.check_dns(node, profile)
     monkeypatch.setattr(module, "resolve_host", lambda name: {IP} if name == profile["hostname"] else {"9.9.9.9"})
     ManualVpsBootstrap.check_dns(node, profile)
+
+
+def test_public_identity_policy_is_required_and_never_uploaded(configured, db_session):
+    profile = bootstrap_profile()
+    assert profile["public_metadata_hardening"] is True
+    assert {"skryon", "emery", "vpn", "xray"} <= set(profile["forbidden_public_markers"])
+    uploaded = ManualVpsBootstrap.server_profile(dict(profile, hostname=configured["spec"].hostname))
+    assert uploaded["public_metadata_hardening"] is True
+    assert not {"brand_domains", "forbidden_public_markers", "separate_service_hosts"} & set(uploaded)
+    with pytest.raises(ManualVpsError, match="public_identity_not_neutral"):
+        ManualVpsSetupService(db_session, bootstrap=FakeBootstrap()).register(
+            replace(configured["spec"], hostname="frankfurt.vpn.neutral.example"),
+        )
+
+
+def test_public_metadata_must_be_neutral_closed_and_strict_sni(configured, monkeypatch):
+    from src.backend.services import manual_vps_bootstrap as module
+    node = VpnNode(endpoint=IP)
+    profile = dict(bootstrap_profile(), hostname=configured["spec"].hostname)
+    clean = {
+        "dns_names": {profile["hostname"]}, "subject_values": {profile["hostname"]},
+        "challenge": {"version": 1, "server_issued_at": "1787500000000", "server_nonce": "n" * 43},
+        "denial": {"ok": False},
+    }
+    monkeypatch.setattr(module, "reverse_names", lambda _address: {"static-203-0-113-10.provider.example"})
+    monkeypatch.setattr(module, "public_gateway_metadata", lambda *_args: clean)
+    monkeypatch.setattr(module, "generic_tls_is_rejected", lambda *_args: True)
+    monkeypatch.setattr(module, "tcp_port_open", lambda *_args: False)
+    ManualVpsBootstrap.verify_public_metadata(node, profile)
+
+    monkeypatch.setattr(module, "reverse_names", lambda _address: {"edge.yourbrand.example"})
+    with pytest.raises(ManualVpsError, match="ptr_exposes_identity"):
+        ManualVpsBootstrap.verify_public_metadata(node, profile)
+    monkeypatch.setattr(module, "reverse_names", lambda _address: set())
+    monkeypatch.setattr(module, "generic_tls_is_rejected", lambda *_args: False)
+    with pytest.raises(ManualVpsError, match="unknown_sni"):
+        ManualVpsBootstrap.verify_public_metadata(node, profile)
+    monkeypatch.setattr(module, "generic_tls_is_rejected", lambda *_args: True)
+    monkeypatch.setattr(module, "tcp_port_open", lambda _address, port: port == 80)
+    with pytest.raises(ManualVpsError, match="unexpected_public_service"):
+        ManualVpsBootstrap.verify_public_metadata(node, profile)
 
 
 def test_missing_host_key_or_injection_is_rejected(configured):

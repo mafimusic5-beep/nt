@@ -55,6 +55,13 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return value
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name, "true" if default else "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise GateError(f"invalid boolean environment variable: {name}")
+    return value == "true"
+
+
 @dataclass(frozen=True)
 class Config:
     bind_host: str
@@ -69,6 +76,7 @@ class Config:
     control_timeout_seconds: int
     connect_timeout_seconds: int
     max_connections: int
+    strict_sni: bool = False
     regional_policy_state_file: str = "/var/lib/emery-regional-policy/ready.json"
 
     @classmethod
@@ -118,6 +126,7 @@ class Config:
             max_connections=_env_int(
                 "EMERY_GATE_MAX_CONNECTIONS", 2048, 1, 100_000
             ),
+            strict_sni=_env_bool("EMERY_GATE_STRICT_SNI"),
             regional_policy_state_file=os.getenv(
                 "EMERY_GATE_REGIONAL_POLICY_STATE_FILE",
                 "/var/lib/emery-regional-policy/ready.json",
@@ -125,11 +134,23 @@ class Config:
         )
 
 
+def _sni_alert(config: Config, server_name: str | None) -> int | None:
+    received = server_name.casefold().rstrip(".") if isinstance(server_name, str) else ""
+    if config.strict_sni and not secrets.compare_digest(received, config.server_name.casefold()):
+        return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+    return None
+
+
 def _tls_context(config: Config) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.options |= ssl.OP_NO_COMPRESSION
     context.load_cert_chain(config.tls_cert_file, config.tls_key_file)
+    if config.strict_sni:
+        def require_expected_sni(_socket, server_name, _context):  # noqa: ANN001, ANN202
+            return _sni_alert(config, server_name)
+
+        context.sni_callback = require_expected_sni
     return context
 
 

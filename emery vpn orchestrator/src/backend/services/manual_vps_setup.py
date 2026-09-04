@@ -17,7 +17,7 @@ from src.backend.services.ionos_cloud_api import IonosApiError
 from src.backend.services.ionos_cloud_bootstrap import bundle_digest
 from src.backend.services.manual_vps_bootstrap import ManualVpsBootstrap, helper_digest
 from src.backend.services.manual_vps_config import (
-    ManualVpsError, ManualVpsSpec, bootstrap_profile, setup_guard,
+    ManualVpsError, ManualVpsSpec, bootstrap_profile, require_neutral_public_name, setup_guard,
 )
 from src.common.config import settings
 from src.common.models import Device, ManualVpsSetupJob, VpnAssignment, VpnNode
@@ -45,6 +45,7 @@ class ManualVpsSetupService:
         profile = bootstrap_profile()
         if spec.endpoint == profile["management_ipv4"]:
             raise ManualVpsError("manual_vps_refusing_management_server")
+        require_neutral_public_name(spec.hostname, profile)
         return dict(profile, **spec.snapshot(), bundle_sha256=bundle_digest(), preflight_sha256=helper_digest())
 
     def _existing_host(self, spec: ManualVpsSpec) -> None:
@@ -187,6 +188,7 @@ class ManualVpsSetupService:
                     or result.get("hostname") != profile["hostname"] or result.get("endpoint") != node.endpoint
                     or any(result.get(key) is not True for key in (
                         "bootstrap_verified", "regional_policy_ready", "control_api_verified", "certificate_verified",
+                        "public_metadata_hardened",
                     ))):
                 raise ManualVpsError("manual_vps_readiness_attestation_invalid")
             pin, config = result.get("spki_sha256", ""), result.get("config_payload", "")

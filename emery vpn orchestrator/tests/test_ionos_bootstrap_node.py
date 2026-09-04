@@ -48,6 +48,7 @@ class BootstrapOfflineTests(unittest.TestCase):
             ("authorize_url", "http://control.example.com/internal/device-gate/authorize"),
             ("authorize_url", "https://control.example.com/other"), ("gate_port", 22),
             ("assignment_port_start", True), ("acme_terms_accepted", False), ("xray_version", "latest"),
+            ("public_metadata_hardening", "true"),
         ]:
             with self.subTest(key=key, value=value), patch.object(node, "run") as command:
                 value_config = config()
@@ -74,6 +75,24 @@ class BootstrapOfflineTests(unittest.TestCase):
         self.assertNotIn("tcp dport 22 accept\n", rules.replace("ip saddr 9.9.9.9 tcp dport 22 accept", ""))
         self.assertNotIn("20000", rules)
         self.assertIn("tcp dport { 25, 465, 587 } drop", rules)
+
+    def test_hardened_firewall_exposes_only_gateway_outside_acme_window(self):
+        value = dict(config(), public_metadata_hardening=True)
+        rules = node.firewall_rules(value)
+        self.assertIn("chain acme { }", rules)
+        self.assertIn("jump acme", rules)
+        self.assertIn("tcp dport 24443 accept", rules)
+        self.assertNotIn("tcp dport { 80, 24443 } accept", rules)
+        self.assertNotIn("tcp dport 80 accept", rules)
+
+    def test_certificate_failure_always_closes_temporary_acme_ingress(self):
+        value = dict(config(), public_metadata_hardening=True)
+        with patch.object(node.socket, "getaddrinfo", return_value=[(None, None, None, None, (value["endpoint"], 80))]), \
+                patch.object(node, "set_acme_ingress") as ingress, \
+                patch.object(node, "run", side_effect=node.BootstrapError("bootstrap_command_failed")):
+            with self.assertRaises(node.BootstrapError):
+                node.provision_certificate(value)
+        self.assertEqual([call.args for call in ingress.call_args_list], [(value, True), (value, False)])
 
     def test_rate_limits_are_rebuilt_from_dedicated_listeners_after_reboot(self):
         value = node.xray_config(config(), KEYS)
@@ -178,6 +197,7 @@ class BootstrapOfflineTests(unittest.TestCase):
                 self.assertEqual(actions["install_gate"].call_count, 2)
                 ready = json.loads((state / "ready.json").read_text())
                 self.assertTrue(ready["regional_policy_ready"])
+                self.assertFalse(ready["public_metadata_hardened"])
                 self.assertEqual(ready["operation_id"], value["operation_id"])
                 self.assertNotIn(value["authorize_key"], (state / "ready.json").read_text())
                 changed = dict(value, operation_id=str(uuid.uuid4()))
