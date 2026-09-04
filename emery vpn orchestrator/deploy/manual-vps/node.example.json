@@ -1,6 +1,6 @@
 {
   "endpoint": "REPLACE_WITH_PURCHASED_VPS_IPV4",
-  "hostname": "frankfurt-01.vpn.example.com",
+  "hostname": "edge-frankfurt-01.neutral.example",
   "region_code": "de",
   "name": "Frankfurt",
   "capacity_clients": 20,

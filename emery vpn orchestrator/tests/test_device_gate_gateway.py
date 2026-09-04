@@ -129,6 +129,14 @@ def test_remote_plain_http_authorization_is_rejected(monkeypatch):
         gate.Config.from_env()
 
 
+def test_hardened_gateway_rejects_missing_or_wrong_sni():
+    hardened = replace(config(), strict_sni=True)
+    assert gate._sni_alert(hardened, None) == gate.ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+    assert gate._sni_alert(hardened, "wrong.example.com") == gate.ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+    assert gate._sni_alert(hardened, "GATE.EXAMPLE.COM.") is None
+    assert gate._sni_alert(config(), None) is None
+
+
 def regional_proof(operation="connect"):
     return dict(proof(), version=2, regional_policy="russia", operation=operation)
 

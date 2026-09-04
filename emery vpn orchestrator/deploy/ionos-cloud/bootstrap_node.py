@@ -34,6 +34,7 @@ XRAY_CONFIG = Path("/usr/local/etc/xray/config.json")
 XRAY_BINARY = Path("/usr/local/bin/xray")
 XRAY_ASSETS = Path("/usr/local/share/xray")
 REGIONAL_STATE = Path("/var/lib/emery-regional-policy")
+ACME_INGRESS_HELPER = Path("/usr/local/sbin/edge-acme-ingress")
 MAX_ARCHIVE = 128 * 1024 * 1024
 CANARY_ID = 2147483000
 
@@ -123,6 +124,8 @@ def validate(config: dict) -> None:
         raise BootstrapError("bootstrap_xray_version_required")
     if not re.fullmatch(r"[a-f0-9]{64}", config["xray_sha256"]):
         raise BootstrapError("bootstrap_xray_checksum_required")
+    if "public_metadata_hardening" in config and type(config["public_metadata_hardening"]) is not bool:
+        raise BootstrapError("bootstrap_public_metadata_hardening_invalid")
 
 
 def install_packages() -> None:
@@ -292,10 +295,16 @@ WantedBy=multi-user.target
 
 
 def firewall_rules(config: dict) -> str:
+    if config.get("public_metadata_hardening") is True:
+        acme_chain = " chain acme { }\n"
+        public_ingress = f"  jump acme\n  tcp dport {config['gate_port']} accept"
+    else:
+        acme_chain = ""
+        public_ingress = f"  tcp dport {{ 80, {config['gate_port']} }} accept"
     return f"""add table inet emery_ionos_ingress
 flush table inet emery_ionos_ingress
 table inet emery_ionos_ingress {{
- chain input {{ type filter hook input priority -5; policy drop;
+{acme_chain} chain input {{ type filter hook input priority -5; policy drop;
   iifname "lo" accept
   ct state established,related accept
   ct state invalid drop
@@ -303,7 +312,7 @@ table inet emery_ionos_ingress {{
   ip protocol icmp accept
   meta l4proto ipv6-icmp accept
   ip saddr {config['management_ipv4']} tcp dport 22 accept
-  tcp dport {{ 80, {config['gate_port']} }} accept
+{public_ingress}
  }}
  chain forward {{ type filter hook forward priority -5; policy drop; }}
  chain output {{ type filter hook output priority -5; policy accept;
@@ -319,6 +328,20 @@ def install_firewall(config: dict) -> None:
     run(["nft", "-c", "-f", "-"], data=rules)
     atomic(Path("/etc/emery/ionos-firewall.nft"), rules)
     run(["nft", "-f", "/etc/emery/ionos-firewall.nft"])
+    if config.get("public_metadata_hardening") is True:
+        atomic(ACME_INGRESS_HELPER, """#!/bin/sh
+set -eu
+/usr/sbin/nft flush chain inet emery_ionos_ingress acme
+case "${1:-}" in
+  open) /usr/sbin/nft add rule inet emery_ionos_ingress acme tcp dport 80 accept ;;
+  close) ;;
+  *) exit 64 ;;
+esac
+""", 0o700)
+        atomic(Path("/etc/letsencrypt/renewal-hooks/pre/10-edge-acme-ingress"),
+               "#!/bin/sh\nexec /usr/local/sbin/edge-acme-ingress open\n", 0o700)
+        atomic(Path("/etc/letsencrypt/renewal-hooks/post/90-edge-acme-ingress"),
+               "#!/bin/sh\nexec /usr/local/sbin/edge-acme-ingress close\n", 0o700)
     service("emery-ionos-firewall.service", """[Unit]
 Description=Skryon IONOS ingress firewall
 Before=xray.service emery-device-gate.service
@@ -330,6 +353,11 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 """)
+
+
+def set_acme_ingress(config: dict, enabled: bool) -> None:
+    if config.get("public_metadata_hardening") is True:
+        run([str(ACME_INGRESS_HELPER), "open" if enabled else "close"])
 
 
 def rate_rules(config: dict, source: dict) -> str:
@@ -395,10 +423,16 @@ def provision_certificate(config: dict) -> None:
         if time.monotonic() >= deadline:
             raise BootstrapError("bootstrap_public_dns_not_ready")
         time.sleep(5)
-    # Explicit acceptance is a validated operator setting, never assumed by code.
-    run(["certbot", "certonly", "--standalone", "--non-interactive", "--agree-tos",
-         "--email", config["acme_email"], "--cert-name", config["hostname"], "-d", config["hostname"],
-         "--server", "https://acme-v02.api.letsencrypt.org/directory", "--reuse-key", "--keep-until-expiring"], timeout=300)
+    # Explicit acceptance is a validated operator setting, never assumed by
+    # code. Hardened nodes expose port 80 only during this ACME transaction;
+    # the renewal pre/post hooks apply the same bounded window later.
+    set_acme_ingress(config, True)
+    try:
+        run(["certbot", "certonly", "--standalone", "--non-interactive", "--agree-tos",
+             "--email", config["acme_email"], "--cert-name", config["hostname"], "-d", config["hostname"],
+             "--server", "https://acme-v02.api.letsencrypt.org/directory", "--reuse-key", "--keep-until-expiring"], timeout=300)
+    finally:
+        set_acme_ingress(config, False)
     run(["openssl", "x509", "-in", str(certificate_paths(config)[0]), "-noout", "-checkend", "3600"])
 
 
@@ -413,6 +447,7 @@ def install_gate(config: dict) -> None:
         "EMERY_GATE_SPKI_SHA256": pin, "EMERY_GATE_TLS_CERT_FILE": str(cert), "EMERY_GATE_TLS_KEY_FILE": str(key),
         "EMERY_GATE_AUTHORIZE_URL": config["authorize_url"], "EMERY_GATE_AUTHORIZE_KEY": config["authorize_key"],
         "EMERY_GATE_REGIONAL_POLICY_STATE_FILE": str(REGIONAL_STATE / "ready.json"),
+        "EMERY_GATE_STRICT_SNI": "true" if config.get("public_metadata_hardening") is True else "false",
     }
     # systemd reads this root-only file before dropping to the gate user.
     atomic(Path("/etc/emery/device-gate.env"), "".join(f"{name}={value}\n" for name, value in env.items()))
@@ -556,6 +591,7 @@ def bootstrap(config: dict) -> None:
         "spki_sha256": certificate_pin(config), "config_payload": template_uri(config, seed()),
         "bootstrap_verified": True, "regional_policy_ready": True,
         "control_api_verified": True, "certificate_verified": True,
+        "public_metadata_hardened": config.get("public_metadata_hardening") is True,
     }))
 
 

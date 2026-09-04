@@ -1,11 +1,14 @@
 {
   "management_ipv4": "REPLACE_WITH_CONTROLLER_PUBLIC_IPV4",
-  "authorize_url": "https://control.example.com/internal/device-gate/authorize",
-  "acme_email": "operator@example.com",
+  "authorize_url": "https://control.brand.example/internal/device-gate/authorize",
+  "acme_email": "operator@neutral.example",
   "acme_terms_accepted": false,
   "xray_version": "REPLACE_WITH_PINNED_VERSION",
   "xray_sha256": "REPLACE_WITH_ARCHIVE_SHA256",
   "reality_server_name": "apple.com",
   "probe_url": "https://example.com/",
-  "bootstrap_timeout_seconds": 7200
+  "bootstrap_timeout_seconds": 7200,
+  "brand_domains": ["brand.example"],
+  "forbidden_public_markers": ["yourbrand"],
+  "separate_service_hosts": ["control.brand.example", "www.brand.example"]
 }
