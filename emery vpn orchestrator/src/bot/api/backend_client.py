@@ -29,10 +29,11 @@ class BackendClient:
         json_data: dict | None = None,
         params: dict | None = None,
         headers: dict | None = None,
+        timeout_seconds: float = 20.0,
     ) -> Any:
         url = f"{self.base_url}{path}"
         req_headers = headers or {}
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             try:
                 response = await client.request(method, url, json=json_data, params=params, headers=req_headers)
             except httpx.HTTPError as exc:
@@ -93,6 +94,15 @@ class BackendClient:
             "/api/v1/admin/nodes",
             json_data=payload,
             headers={"X-Admin-Api-Key": self.admin_api_key},
+        )
+
+    async def admin_bootstrap_node(self, payload: dict) -> dict:
+        return await self._request(
+            "POST",
+            "/api/v1/admin/nodes/bootstrap",
+            json_data=payload,
+            headers={"X-Admin-Api-Key": self.admin_api_key},
+            timeout_seconds=300.0,
         )
 
     async def admin_disable_node(self, node_id: int) -> dict:
