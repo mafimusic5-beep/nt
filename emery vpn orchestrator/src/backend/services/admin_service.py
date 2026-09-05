@@ -140,7 +140,7 @@ class AdminService:
             port=req.device_gate_port,
             server_name=req.device_gate_server_name,
             spki_sha256=req.device_gate_spki_sha256,
-            required=settings.device_bound_gate_enabled,
+            required=settings.device_bound_gate_enabled and req.status == "active",
         )
         node = self.admin_repo.create_node(
             req.name,
