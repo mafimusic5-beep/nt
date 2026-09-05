@@ -95,12 +95,14 @@ async def setup_server_handler(message: Message) -> None:
         return
 
     node = result.get("node") or {}
+    egress_label = "ISP / WireGuard" if result.get("isp_egress_enabled") else "VPS direct"
     await message.answer(
         "✅ VPS настроен и добавлен в пул.\n\n"
         f"ID: #{node.get('id')}\n"
         f"Название: {node.get('name')}\n"
         f"Регион: {node.get('region_code')}\n"
         f"Endpoint: {node.get('endpoint')}\n"
+        f"Выход: {egress_label}\n"
         f"Статус: {node.get('status')} / {node.get('health_status')}\n"
         f"Ёмкость: {node.get('current_clients')}/{node.get('capacity_clients')}"
     )
