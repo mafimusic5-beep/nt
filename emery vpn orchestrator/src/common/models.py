@@ -8,14 +8,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.common.db import Base
 
 
-
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
 class User(Base):
     __tablename__ = "users"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     telegram_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -25,7 +23,6 @@ class User(Base):
 
 class Plan(Base):
     __tablename__ = "plans"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -38,7 +35,6 @@ class Plan(Base):
 
 class VpnNode(Base):
     __tablename__ = "vpn_nodes"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     region_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -90,7 +86,6 @@ class VpnNode(Base):
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     plan_code: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -109,7 +104,6 @@ class Device(Base):
         UniqueConstraint("subscription_id", "device_fingerprint", name="uq_subscription_device"),
         UniqueConstraint("subscription_id", "slot_index", name="uq_subscription_device_slot"),
     )
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     subscription_id: Mapped[int] = mapped_column(ForeignKey("subscriptions.id"), nullable=False, index=True)
     device_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -129,7 +123,6 @@ class VpnAssignment(Base):
         UniqueConstraint("subject_type", "subject_key", name="uq_vpn_assignment_subject"),
         UniqueConstraint("node_id", "client_port", name="uq_vpn_assignment_node_port"),
     )
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     subject_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     subject_key: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -139,6 +132,7 @@ class VpnAssignment(Base):
     client_uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     client_port: Mapped[int] = mapped_column(Integer, nullable=False)
     speed_limit_mbps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    traffic_policy: Mapped[str] = mapped_column(String(16), nullable=False, default="international")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="installing", index=True)
     config_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     confirmation_token_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
@@ -153,7 +147,6 @@ class VpnAssignment(Base):
 
 class Order(Base):
     __tablename__ = "orders"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False, index=True)
@@ -168,7 +161,6 @@ class Order(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False, default="stub")
@@ -184,7 +176,6 @@ class Payment(Base):
 
 class ActivationCode(Base):
     __tablename__ = "activation_codes"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     subscription_id: Mapped[int] = mapped_column(ForeignKey("subscriptions.id"), nullable=False, index=True)
@@ -196,7 +187,6 @@ class ActivationCode(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
     actor_id: Mapped[str] = mapped_column(String(64), nullable=False)
