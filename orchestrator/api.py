@@ -348,7 +348,7 @@ async def sync_config(payload: ConfigSyncRequest, request: Request):
         header_device_id = _header(request, 'x-emery-device-id')
         _require_header_match(payload.deviceId, header_device_id)
         authenticate_registered_device(
-            raw_code=_bearer_code(request),
+            raw_code=payload.code,
             method='POST',
             path=request.url.path,
             device_id=header_device_id,
