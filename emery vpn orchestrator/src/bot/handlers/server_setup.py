@@ -91,7 +91,22 @@ async def setup_server_handler(message: Message) -> None:
     try:
         result = await client.admin_bootstrap_node(payload)
     except BackendClientError as exc:
-        await message.answer(f"❌ Сервер не настроен: {exc.detail}")
+        method = exc.method or "POST"
+        path = exc.path or "/api/v1/admin/nodes/bootstrap"
+        base_url = exc.base_url or client.base_url
+        logger.error(
+            "setup_server failed status=%s method=%s path=%s base_url=%s detail=%s",
+            exc.status_code,
+            method,
+            path,
+            base_url,
+            str(exc.detail)[:160],
+        )
+        await message.answer(
+            f"❌ Сервер не настроен: {exc.detail}\n\n"
+            f"🔎 HTTP {exc.status_code} · {method} {path}\n"
+            f"Backend: {base_url}"
+        )
         return
 
     node = result.get("node") or {}
