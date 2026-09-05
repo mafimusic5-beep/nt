@@ -191,6 +191,7 @@ def health() -> dict:
     return {'ok': True}
 
 
+@app.post('/api/device-gate/authorize')
 @app.post('/internal/device-gate/authorize')
 def device_gate_authorize(payload: DeviceGateAuthorizeRequest, request: Request):
     supplied_key = request.headers.get('x-device-gate-key', '').strip()
@@ -347,7 +348,7 @@ async def sync_config(payload: ConfigSyncRequest, request: Request):
         header_device_id = _header(request, 'x-emery-device-id')
         _require_header_match(payload.deviceId, header_device_id)
         authenticate_registered_device(
-            raw_code=payload.code,
+            raw_code=_bearer_code(request),
             method='POST',
             path=request.url.path,
             device_id=header_device_id,
