@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, SecretStr
 
 
 class GrantSubscriptionRequest(BaseModel):
@@ -12,6 +13,22 @@ class GrantSubscriptionRequest(BaseModel):
 class GrantSubscriptionResponse(BaseModel):
     subscription_id: int
     ends_at: datetime
+
+
+class ManualNodeBootstrapRequest(BaseModel):
+    name: str = "Server"
+    region_code: str
+    endpoint: str
+    ssh_user: str = "root"
+    ssh_password: SecretStr
+    policy: Literal["auto", "ru", "intl"] = "auto"
+    capacity_clients: int = Field(default=5, ge=1, le=100)
+    bandwidth_limit_mbps: int = Field(default=1000, ge=1, le=100000)
+    per_device_speed_limit_mbps: int = Field(default=100, ge=1, le=10000)
+    device_gate_host: str = ""
+    device_gate_port: int = 24443
+    device_gate_server_name: str = ""
+    device_gate_spki_sha256: str = ""
 
 
 class VpnNodeUpsertRequest(BaseModel):
@@ -88,6 +105,12 @@ class VpnNodeResponse(BaseModel):
     last_recovery_at: datetime | None = None
     last_recovery_action: str = ""
     last_recovery_error: str = ""
+
+
+class ManualNodeBootstrapResponse(BaseModel):
+    node: VpnNodeResponse
+    policy: Literal["ru", "intl"]
+    blocked_domains: int = 0
 
 
 class AdminStatsResponse(BaseModel):
