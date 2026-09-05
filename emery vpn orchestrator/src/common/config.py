@@ -59,9 +59,7 @@ class Settings(BaseSettings):
     xray_credential_timeout_seconds: int = 90
     rate_limit_per_minute: int = 60
     min_supported_app_version_code: int = 718
-    app_update_message: str = (
-        "Версия приложения устарела. Обновите приложение."
-    )
+    app_update_message: str = "Версия приложения устарела. Обновите приложение."
     healthcheck_interval_seconds: int = 30
     node_provision_script: str = ""
     node_provision_script_timeout_seconds: int = 900
@@ -77,8 +75,6 @@ class Settings(BaseSettings):
     manual_bootstrap_ssh_timeout_seconds: int = 30
     manual_bootstrap_vless_port: int = 443
     manual_bootstrap_reality_sni: str = "apple.com"
-    # Comma/newline separated domains. RU nodes fail closed when this list is empty.
-    ru_policy_blocked_domains: str = ""
 
     # Dedicated recovery-agent. It probes the current VLESS listener and first
     # repairs the existing VPS; replacement capacity is a later fallback.
@@ -148,11 +144,6 @@ class Settings(BaseSettings):
     def admin_id_list(self) -> list[int]:
         raw = [item.strip() for item in self.admin_ids.split(",") if item.strip()]
         return [int(item) for item in raw]
-
-    @cached_property
-    def ru_policy_blocked_domain_list(self) -> list[str]:
-        normalized = self.ru_policy_blocked_domains.replace("\r", "\n").replace("\n", ",")
-        return [item.strip() for item in normalized.split(",") if item.strip()]
 
     @cached_property
     def firstvds_order_addons(self) -> dict[str, str]:
