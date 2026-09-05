@@ -9,7 +9,6 @@ class PoolReservationPrepareRequest(BaseModel):
     entitlement_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     entitlement_expires_at: datetime
     region_code: str = Field(min_length=1, max_length=16, pattern=r"^[a-z0-9-]+$")
-    traffic_policy: str = Field(default="international", pattern=r"^(international|russia)$")
 
 
 class PoolReservationResponse(BaseModel):
