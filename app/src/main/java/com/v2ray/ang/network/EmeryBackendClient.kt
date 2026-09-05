@@ -217,10 +217,6 @@ object EmeryBackendClient {
         }
     }
 
-    /**
-     * Returns import blob for [com.v2ray.ang.handler.AngConfigManager.importBatchConfig], or failure.
-     * Soft failures: no allocation / no config payload (orchestrator has nothing v2rayNG can import yet).
-     */
     suspend fun fetchVpnConfigImportText(accessKey: String): Result<String> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
         if (key.isEmpty()) return@withContext Result.failure(IllegalStateException("bad_request"))
@@ -229,22 +225,12 @@ object EmeryBackendClient {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 val parsed = JsonUtil.fromJson(raw, VpnConfigApiResponseBody::class.java)
-                if (response.code == 401) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: "invalid_or_expired_key"))
-                }
-                if (response.code == 403) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: "vpn_disabled"))
-                }
-                if (response.code == 404) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: "no_allocation"))
-                }
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: "http_${response.code}"))
-                }
+                if (response.code == 401) return@withContext Result.failure(IllegalStateException(parsed?.error ?: "invalid_or_expired_key"))
+                if (response.code == 403) return@withContext Result.failure(IllegalStateException(parsed?.error ?: "vpn_disabled"))
+                if (response.code == 404) return@withContext Result.failure(IllegalStateException(parsed?.error ?: "no_allocation"))
+                if (!response.isSuccessful) return@withContext Result.failure(IllegalStateException(parsed?.error ?: "http_${response.code}"))
                 val text = parsed?.importText?.trim().orEmpty()
-                if (text.isEmpty()) {
-                    return@withContext Result.failure(IllegalStateException("parse_error"))
-                }
+                if (text.isEmpty()) return@withContext Result.failure(IllegalStateException("parse_error"))
                 Result.success(text)
             }
         } catch (_: IOException) {
@@ -261,56 +247,48 @@ object EmeryBackendClient {
         try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(IllegalStateException("http_${response.code}"))
-                }
+                if (!response.isSuccessful) return@withContext Result.failure(IllegalStateException("http_${response.code}"))
                 val parsed = JsonUtil.fromJson(raw, Array<VpnServerItemApiResponseBody>::class.java)?.toList()
                     ?: return@withContext Result.failure(IllegalStateException("parse_error"))
-                val mapped = parsed.map {
+                Result.success(parsed.map {
                     BackendServer(
                         id = it.id,
                         city = it.city?.ifBlank { "Unknown" } ?: "Unknown",
                         healthStatus = it.healthStatus ?: "unknown",
                         isAvailable = it.isAvailable != false,
                     )
-                }
-                Result.success(mapped)
+                })
             }
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))
         }
     }
 
-    suspend fun connectServer(accessKey: String, serverId: Long): Result<ConnectPayload> = withContext(Dispatchers.IO) {
+    suspend fun connectServer(
+        accessKey: String,
+        serverId: Long,
+        trafficPolicy: String,
+    ): Result<ConnectPayload> = withContext(Dispatchers.IO) {
         val key = accessKey.trim()
-        if (key.isEmpty() || serverId <= 0L) return@withContext Result.failure(IllegalStateException("bad_request"))
-        val bodyJson = JsonUtil.toJson(VpnConnectRequestBody(accessKey = key, serverId = serverId)) ?: "{}"
+        val policy = trafficPolicy.trim().lowercase()
+        if (key.isEmpty() || serverId <= 0L || policy !in setOf("russia", "international")) {
+            return@withContext Result.failure(IllegalStateException("bad_request"))
+        }
+        val bodyJson = JsonUtil.toJson(
+            VpnConnectRequestBody(accessKey = key, serverId = serverId, trafficPolicy = policy),
+        ) ?: "{}"
         val request = authorizedPost("/api/v1/vpn/connect", key, bodyJson)
         try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 val parsed = JsonUtil.fromJson(raw, VpnConnectApiResponseBody::class.java)
-                val detail = try {
-                    JSONObject(raw).optString("detail")
-                } catch (_: Exception) {
-                    ""
-                }
-                if (response.code == 401) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "invalid_or_expired_key" }))
-                }
-                if (response.code == 404) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_not_found" }))
-                }
-                if (response.code == 409) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_config_unavailable" }))
-                }
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "http_${response.code}" }))
-                }
+                val detail = try { JSONObject(raw).optString("detail") } catch (_: Exception) { "" }
+                if (response.code == 401) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "invalid_or_expired_key" }))
+                if (response.code == 404) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_not_found" }))
+                if (response.code == 409) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_config_unavailable" }))
+                if (!response.isSuccessful) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "http_${response.code}" }))
                 val importText = parsed?.importText?.trim().orEmpty()
-                if (importText.isEmpty()) {
-                    return@withContext Result.failure(IllegalStateException("server_config_unavailable"))
-                }
+                if (importText.isEmpty()) return@withContext Result.failure(IllegalStateException("server_config_unavailable"))
                 Result.success(
                     ConnectPayload(
                         serverId = parsed?.serverId ?: serverId,
