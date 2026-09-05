@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+from threading import Lock
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.services.node_recovery_service import SshAndProviderRecoveryTransport
 from src.common.config import settings
 from src.common.models import VpnAssignment, VpnNode
@@ -20,10 +20,23 @@ class TrafficPolicyService:
     RUSSIA = "russia"
     VALID = {INTERNATIONAL, RUSSIA}
 
+    # Process-local cache only. The current app request is always authoritative.
+    _cache_lock = Lock()
+    _policy_cache: dict[int, str] = {}
+
     def __init__(self, db: Session) -> None:
         self.db = db
-        self.audit = AuditRepository(db)
         self.ssh = SshAndProviderRecoveryTransport()
+
+    @classmethod
+    def cached_policy(cls, assignment_id: int) -> str | None:
+        with cls._cache_lock:
+            return cls._policy_cache.get(assignment_id)
+
+    @classmethod
+    def _remember_policy(cls, assignment_id: int, policy: str) -> None:
+        with cls._cache_lock:
+            cls._policy_cache[assignment_id] = policy
 
     @staticmethod
     def assignment_id_from_import_text(import_text: str) -> int | None:
@@ -61,30 +74,14 @@ class TrafficPolicyService:
         if node is None:
             raise HTTPException(status_code=409, detail="assigned_node_missing")
 
-        # The app is authoritative. Re-check the requested mode every connect;
-        # the remote side only restarts Xray if the effective config differs.
+        # Re-assert the mode from the current request every time. Cache is not
+        # trusted for enforcement, so backend restarts cannot restore stale state.
         result = self._apply_remote(node, assignment, policy)
         if not result["ok"]:
             raise HTTPException(status_code=503, detail=result["detail"])
 
-        changed = assignment.traffic_policy != policy
-        assignment.traffic_policy = policy
-        if changed:
-            assignment.config_revision += 1
-        self.audit.write(
-            "user",
-            "app",
-            "vpn_traffic_policy_applied",
-            "vpn_assignment",
-            str(assignment.id),
-            {
-                "policy": policy,
-                "node_id": node.id,
-                "changed": changed,
-                "server_config_changed": bool(result.get("changed")),
-            },
-        )
-        self.db.commit()
+        # Do not persist policy in the assignment, audit log, or database.
+        self._remember_policy(assignment.id, policy)
 
     def _apply_remote(self, node: VpnNode, assignment: VpnAssignment, policy: str) -> dict:
         payload = json.dumps(
@@ -273,7 +270,7 @@ routing["rules"] = rules
 
 candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\\n"
 if candidate_text == original:
-    print(json.dumps({"ok": True, "policy": policy, "assignment_id": assignment_id, "changed": False}))
+    print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": False}))
     raise SystemExit(0)
 
 fd, candidate = tempfile.mkstemp(prefix=".emery-policy-", suffix=".json", dir=folder)
@@ -299,5 +296,5 @@ except Exception:
             os.unlink(candidate)
     raise
 
-print(json.dumps({"ok": True, "policy": policy, "assignment_id": assignment_id, "changed": True}))
+print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": True}))
 '''.replace("__PAYLOAD__", encoded)
