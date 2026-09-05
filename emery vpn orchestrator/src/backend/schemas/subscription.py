@@ -65,7 +65,7 @@ class VpnServerItemResponse(BaseModel):
 class VpnConnectRequest(BaseModel):
     access_key: str = Field(min_length=1, max_length=128)
     server_id: int
-    traffic_policy: str = Field(default="international", pattern=r"^(international|russia)$")
+    traffic_policy: str = Field(pattern=r"^(international|russia)$")
 
 
 class VpnConnectResponse(BaseModel):
