@@ -153,9 +153,41 @@ assignment_id = int(DATA["assignment_id"])
 policy = str(DATA["traffic_policy"])
 path = str(DATA["config_path"])
 tag_prefix = "emery-device-%d-" % assignment_id
-# The Russia policy mirrors the Roskomnadzor registry feed exposed by
-# antifilter.download. RunetFreedom packages that feed into Xray geodata.
-RU_DOMAINS = ["geosite:antifilter-download"]
+# The dynamic source remains the registry-backed antifilter feed. Explicit
+# service domains below are a fail-safe for major services whose access has
+# been publicly restricted by Roskomnadzor.
+RU_SERVICE_DOMAINS = [
+    "domain:facebook.com",
+    "domain:fb.com",
+    "domain:fbcdn.net",
+    "domain:messenger.com",
+    "domain:instagram.com",
+    "domain:cdninstagram.com",
+    "domain:ig.me",
+    "domain:x.com",
+    "domain:twitter.com",
+    "domain:twimg.com",
+    "domain:t.co",
+    "domain:linkedin.com",
+    "domain:licdn.com",
+    "domain:lnkd.in",
+    "domain:discord.com",
+    "domain:discord.gg",
+    "domain:discordapp.com",
+    "domain:discordapp.net",
+    "domain:discordcdn.com",
+    "domain:signal.org",
+    "domain:signal.art",
+    "domain:viber.com",
+    "domain:viber.co",
+    "domain:vb.me",
+    "domain:youtube.com",
+    "domain:youtu.be",
+    "domain:youtube-nocookie.com",
+    "domain:googlevideo.com",
+    "domain:ytimg.com",
+]
+RU_DOMAINS = ["geosite:antifilter-download"] + RU_SERVICE_DOMAINS
 RU_IPS = ["geoip:ru-blocked"]
 ASSET_TTL_SECONDS = 6 * 60 * 60
 
