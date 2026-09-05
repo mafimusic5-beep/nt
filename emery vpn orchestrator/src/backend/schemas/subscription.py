@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class RedeemActivationCodeRequest(BaseModel):
-    code: str = Field(min_length=12, max_length=64)
+    code: str = Field(min_length=11, max_length=64)
     telegram_id: int
     device_fingerprint: str = Field(min_length=6, max_length=128)
     platform: str = "android"
