@@ -23,10 +23,11 @@ class ManualNodeBootstrapService:
         requested = (requested_policy or "auto").strip().lower()
         if requested not in {"auto", cls.POLICY_RU, cls.POLICY_INTL}:
             raise ValueError("invalid_traffic_policy")
-        if requested != "auto":
-            return requested
         region = (region_code or "").strip().lower()
-        return cls.POLICY_RU if region == "ru" or region.startswith("ru-") else cls.POLICY_INTL
+        derived = cls.POLICY_RU if region == "ru" or region.startswith("ru-") else cls.POLICY_INTL
+        if requested != "auto" and requested != derived:
+            raise ValueError("traffic_policy_region_mismatch")
+        return derived
 
     @classmethod
     def blocked_domains_for_policy(cls, policy: str) -> list[str]:
@@ -192,6 +193,7 @@ chmod 600 /root/.ssh/authorized_keys
         )
         rules_json = json.dumps(rules, ensure_ascii=True, separators=(",", ":"))
         hostname_json = json.dumps(neutral_hostname)
+        reality_dest_json = json.dumps(f"{server_name}:443")
         server_name_json = json.dumps(server_name)
 
         return f"""#!/usr/bin/env bash
@@ -234,7 +236,7 @@ cat >/usr/local/etc/xray/config.json <<EOF
         \"security\": \"reality\",
         \"realitySettings\": {{
           \"show\": false,
-          \"dest\": {server_name_json[:-1]}:443\" ,
+          \"dest\": {reality_dest_json},
           \"xver\": 0,
           \"serverNames\": [{server_name_json}],
           \"privateKey\": \"$PRIVATE_KEY\",
