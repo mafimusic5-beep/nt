@@ -108,6 +108,7 @@ class VpnNodeResponse(BaseModel):
 class ManualNodeBootstrapResponse(BaseModel):
     node: VpnNodeResponse
     policy_ready: bool = True
+    isp_egress_enabled: bool = False
 
 
 class AdminStatsResponse(BaseModel):
