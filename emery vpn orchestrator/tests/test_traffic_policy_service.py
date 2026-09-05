@@ -1,0 +1,40 @@
+from src.backend.services.manual_node_bootstrap_service import ManualNodeBootstrapService
+from src.backend.services.traffic_policy_service import TrafficPolicyService
+
+
+def test_assignment_id_is_read_from_device_bound_uri():
+    uri = (
+        "vless://abc@127.0.0.1:17890?security=reality"
+        "&eg_assignment=42&eg_node=7#Server"
+    )
+    assert TrafficPolicyService.assignment_id_from_import_text(uri) == 42
+
+
+def test_shared_legacy_uri_has_no_server_side_policy_identity():
+    uri = "vless://abc@1.2.3.4:443?security=reality#Server"
+    assert TrafficPolicyService.assignment_id_from_import_text(uri) is None
+
+
+def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert 'tag_prefix = "emery-device-%d-" % assignment_id' in script
+    assert '"inboundTag": [inbound_tag]' in script
+    assert '"geosite:ru-blocked-all"' in script
+    assert '"geoip:ru-blocked-community"' in script
+    assert 'elif policy != "international"' in script
+
+
+def test_manual_vps_bootstrap_has_no_server_wide_regional_filter():
+    script = ManualNodeBootstrapService._bootstrap_script(
+        port=443,
+        server_name="apple.com",
+        node_public_key="",
+        neutral_hostname="server-1",
+    )
+    assert "ru-blocked" not in script
+    assert "re-filter" not in script
+    assert '"emery-blocked"' in script
+    assert '"25,465,587"' in script
+    assert '"geoip:private"' in script
