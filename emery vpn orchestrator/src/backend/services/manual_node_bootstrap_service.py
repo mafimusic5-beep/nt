@@ -217,20 +217,25 @@ grep -qxF \"$AUTH_KEY\" /root/.ssh/authorized_keys || printf '%s\n' \"$AUTH_KEY\
 chmod 600 /root/.ssh/authorized_keys
 """
 
+        # Keep direct VPS egress deterministic and leak-resistant without adding
+        # another paid hop: resolve domain destinations to IPv4 and reject raw
+        # IPv6 destinations so one client session cannot expose a second VPS
+        # address/family unexpectedly. This does not hide the VPS ASN itself.
         rules = [
+            {"type": "field", "ip": ["::/0"], "outboundTag": "emery-blocked"},
             {"type": "field", "port": "25,465,587", "outboundTag": "emery-blocked"},
             {"type": "field", "ip": ["geoip:private"], "outboundTag": "emery-blocked"},
         ]
-        direct_outbound: dict[str, object] = {"tag": "direct", "protocol": "freedom"}
+        direct_outbound: dict[str, object] = {
+            "tag": "direct",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"},
+        }
         egress_setup = ""
         egress_packages_apt = ""
         egress_packages_rpm = ""
         egress_print = ""
         if isp_egress is not None:
-            # Do not permit raw IPv6 to fall back to the VPS provider while the
-            # ISP egress is IPv4-only. Domain destinations are resolved as IPv4
-            # by the freedom outbound below.
-            rules.insert(0, {"type": "field", "ip": ["::/0"], "outboundTag": "emery-blocked"})
             direct_outbound = {
                 "tag": "direct",
                 "protocol": "freedom",
