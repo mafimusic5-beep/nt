@@ -50,18 +50,6 @@ object EmeryVpnSync {
         val selectedGuid: String,
     )
 
-    /**
-     * Activation sync for the Skryon/v2rayNG model:
-     * one paid access key gives access to the whole public server pool, not to a personal VPS.
-     *
-     * New backend contract, preferred:
-     *   GET /api/v1/vpn/pool/config
-     *   returns either { importText: "vless://...\nvless://..." } or a JSON list of online servers.
-     *
-     * Legacy fallback:
-     *   GET /vpn/config
-     *   keeps older single-allocation backend builds working while the pool backend is being deployed.
-     */
     suspend fun syncProfileAndVpnConfig(accessKey: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
         Log.i(AppConfig.TAG, "EmerySync[H1]: starting sync, baseUrl=${EmeryApiConfig.baseUrl()}")
         val profileResult = EmeryBackendClient.fetchProfile(accessKey)
@@ -123,7 +111,10 @@ object EmeryVpnSync {
 
     suspend fun connectToServer(accessKey: String, serverId: Long): Result<ConnectServerResult> = withContext(Dispatchers.IO) {
         ensureEmerySubscription()
-        val connectResult = EmeryBackendClient.connectServer(accessKey, serverId)
+        val trafficPolicy = (
+            RegionalPolicyManager.readMode() ?: RegionalPolicyMode.International
+        ).storageValue
+        val connectResult = EmeryBackendClient.connectServer(accessKey, serverId, trafficPolicy)
         val payload = connectResult.getOrElse { err ->
             val code = when (err.message) {
                 "server_config_unavailable" -> ManualDiagnosticCodes.SERVER_CONFIG_UNAVAILABLE
@@ -134,7 +125,7 @@ object EmeryVpnSync {
                 code = code,
                 message = "Failed to fetch server config",
                 source = "EmeryVpnSync.connectToServer",
-                details = "serverId=$serverId reason=${err.message}",
+                details = "serverId=$serverId policy=$trafficPolicy reason=${err.message}",
             )
             ManualModeDebugLogger.log(
                 hypothesisId = "H2",
@@ -142,6 +133,7 @@ object EmeryVpnSync {
                 message = "connect endpoint failed",
                 data = JSONObject()
                     .put("serverId", serverId)
+                    .put("trafficPolicy", trafficPolicy)
                     .put("reason", err.message ?: "unknown"),
             )
             return@withContext Result.failure(err)
@@ -193,6 +185,7 @@ object EmeryVpnSync {
             data = JSONObject()
                 .put("serverId", payload.serverId)
                 .put("city", payload.city)
+                .put("trafficPolicy", trafficPolicy)
                 .put("selectedGuid", selectedGuid),
         )
         Result.success(
