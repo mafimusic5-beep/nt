@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import logging
+import os
+import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -9,6 +13,80 @@ import httpx
 from src.common.config import settings
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_CODE_GROUPS = (1, 3, 2, 2, 2, 1)
+_DEFAULT_LEGACY_DATABASE_PATH = "/opt/nt/orchestrator/skryon.db"
+
+
+def _format_legacy_activation_code(value: str) -> str:
+    normalized = "".join(ch for ch in str(value).upper() if ch.isalnum())
+    if len(normalized) != sum(_LEGACY_CODE_GROUPS):
+        raise ValueError("invalid_activation_code_length")
+    parts: list[str] = []
+    index = 0
+    for size in _LEGACY_CODE_GROUPS:
+        parts.append(normalized[index:index + size])
+        index += size
+    return "-".join(parts)
+
+
+def _mirror_activation_code_to_legacy(code: str, subscription_status: dict) -> None:
+    """Keep the website activation endpoint compatible with modern code issuance.
+
+    The Android client still activates through the legacy `/api/activate` endpoint,
+    whose SQLite store keeps the formatted plaintext code. Modern backend storage
+    intentionally keeps only a SHA-256 hash, so every code shown by the bot must be
+    mirrored before it is returned to the admin.
+    """
+
+    formatted = _format_legacy_activation_code(code)
+    expires_at = str(subscription_status.get("ends_at") or "").strip()
+    plan = str(subscription_status.get("plan_code") or "manual").strip()[:64] or "manual"
+    try:
+        max_devices = int(subscription_status.get("devices_limit") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_subscription_device_limit") from exc
+    if not expires_at:
+        raise ValueError("subscription_expiry_missing")
+    if max_devices < 1 or max_devices > 20:
+        raise ValueError("invalid_subscription_device_limit")
+
+    db_path = Path(
+        os.getenv("SKRYON_LEGACY_DATABASE_PATH", _DEFAULT_LEGACY_DATABASE_PATH).strip()
+        or _DEFAULT_LEGACY_DATABASE_PATH
+    )
+    if not db_path.is_file():
+        raise FileNotFoundError("legacy_activation_database_missing")
+
+    created_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    with sqlite3.connect(db_path, timeout=10.0) as con:
+        table_exists = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='activation_codes'"
+        ).fetchone()
+        if not table_exists:
+            raise RuntimeError("legacy_activation_table_missing")
+        con.execute(
+            """
+            INSERT INTO activation_codes(
+                code, status, note, created_at, expires_at, max_devices, plan
+            ) VALUES (?, 'active', ?, ?, ?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                status = 'active',
+                note = excluded.note,
+                expires_at = excluded.expires_at,
+                max_devices = excluded.max_devices,
+                plan = excluded.plan
+            """,
+            (
+                formatted,
+                "modern-subscription",
+                created_at,
+                expires_at,
+                max_devices,
+                plan,
+            ),
+        )
+        con.commit()
 
 
 class BackendClientError(Exception):
@@ -191,12 +269,38 @@ class BackendClient:
         )
 
     async def admin_generate_code(self, telegram_id: int) -> dict:
-        return await self._request(
+        path = "/api/v1/admin/codes/generate"
+        result = await self._request(
             "POST",
-            "/api/v1/admin/codes/generate",
+            path,
             params={"telegram_id": telegram_id},
             headers={"X-Admin-Api-Key": self.admin_api_key},
         )
+        try:
+            subscription_status = await self.get_subscription_status(telegram_id)
+            if not bool(subscription_status.get("active")):
+                raise RuntimeError("subscription_inactive_after_code_generation")
+            _mirror_activation_code_to_legacy(
+                str(result.get("activation_code") or ""),
+                subscription_status,
+            )
+        except BackendClientError:
+            raise
+        except Exception as exc:
+            # Never log the plaintext activation code.
+            logger.error(
+                "activation code compatibility sync failed telegram_id=%s error=%s",
+                telegram_id,
+                type(exc).__name__,
+            )
+            raise BackendClientError(
+                "activation_code_compat_sync_failed",
+                503,
+                method="POST",
+                path=path,
+                base_url=self.base_url,
+            ) from exc
+        return result
 
     async def admin_problem_activations(self) -> list[dict]:
         return await self._request(
