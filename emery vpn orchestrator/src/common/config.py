@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # used only for the initial connection and is never persisted.
     manual_bootstrap_ssh_timeout_seconds: int = 30
     manual_bootstrap_vless_port: int = 443
-    manual_bootstrap_reality_sni: str = "apple.com"
+    manual_bootstrap_reality_sni: str = "www.cloudflare.com"
 
     # Dedicated recovery-agent. It probes the current VLESS listener and first
     # repairs the existing VPS; replacement capacity is a later fallback.
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     firstvds_ssh_private_key_path: str = ""
     firstvds_ssh_connect_timeout_seconds: int = 25
     firstvds_vless_port: int = 443
-    firstvds_reality_sni: str = "apple.com"
+    firstvds_reality_sni: str = "www.cloudflare.com"
     firstvds_password_bootstrap_enabled: bool = True
     firstvds_node_ssh_key_autogenerate: bool = True
     firstvds_node_ssh_key_bits: int = 4096
