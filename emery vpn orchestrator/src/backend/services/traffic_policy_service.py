@@ -153,8 +153,10 @@ assignment_id = int(DATA["assignment_id"])
 policy = str(DATA["traffic_policy"])
 path = str(DATA["config_path"])
 tag_prefix = "emery-device-%d-" % assignment_id
-RU_DOMAINS = ["geosite:ru-blocked-all"]
-RU_IPS = ["geoip:ru-blocked", "geoip:ru-blocked-community", "geoip:re-filter"]
+# The Russia policy mirrors the Roskomnadzor registry feed exposed by
+# antifilter.download. RunetFreedom packages that feed into Xray geodata.
+RU_DOMAINS = ["geosite:antifilter-download"]
+RU_IPS = ["geoip:ru-blocked"]
 ASSET_TTL_SECONDS = 6 * 60 * 60
 
 
