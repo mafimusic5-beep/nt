@@ -35,6 +35,46 @@ class ManualNodeAdminService:
             raise HTTPException(status_code=409, detail="duplicate_node_endpoint")
         return matches[0] if matches else None
 
+    def _rebootstrap_gate_fields(
+        self,
+        req: ManualNodeBootstrapRequest,
+        node: VpnNode,
+    ) -> tuple[str, int, str, str]:
+        """Keep a configured gate when reimaging the same VPS.
+
+        /setup_server intentionally only asks for IP/password. A provider
+        reimage changes the machine but not the node identity or its public gate
+        hostname. Empty gate fields in that short-form command therefore mean
+        "reuse the node's existing gate metadata", not "erase the gate".
+
+        Explicit gate values still override the stored values and go through the
+        same strict validation path.
+        """
+        request_has_gate = bool(
+            req.device_gate_host.strip()
+            or req.device_gate_server_name.strip()
+            or req.device_gate_spki_sha256.strip()
+            or int(req.device_gate_port) != 24443
+        )
+        if request_has_gate:
+            host = req.device_gate_host
+            port = req.device_gate_port
+            server_name = req.device_gate_server_name
+            spki_sha256 = req.device_gate_spki_sha256
+        else:
+            host = node.device_gate_host or ""
+            port = int(node.device_gate_port or 24443)
+            server_name = node.device_gate_server_name or ""
+            spki_sha256 = node.device_gate_spki_sha256 or ""
+
+        return self.admin._validated_gate_fields(
+            host=host,
+            port=port,
+            server_name=server_name,
+            spki_sha256=spki_sha256,
+            required=settings.device_bound_gate_enabled,
+        )
+
     def bootstrap(self, req: ManualNodeBootstrapRequest) -> ManualNodeBootstrapResponse:
         endpoint = req.endpoint.strip()
         node = self._existing_node_for_endpoint(endpoint)
@@ -68,12 +108,9 @@ class ManualNodeAdminService:
             # Reinstalling a VPS commonly keeps the same public IP. Reuse the
             # existing database row so assignments keep their node identity and
             # /setup_server cannot create a second pool entry for the same IP.
-            gate_host, gate_port, gate_server_name, gate_spki = self.admin._validated_gate_fields(
-                host=req.device_gate_host,
-                port=req.device_gate_port,
-                server_name=req.device_gate_server_name,
-                spki_sha256=req.device_gate_spki_sha256,
-                required=settings.device_bound_gate_enabled,
+            gate_host, gate_port, gate_server_name, gate_spki = self._rebootstrap_gate_fields(
+                req,
+                node,
             )
             node.name = req.name.strip() or "Server"
             node.region_code = req.region_code.strip().lower()
