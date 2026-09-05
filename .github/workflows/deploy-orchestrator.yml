@@ -218,15 +218,29 @@ jobs:
             echo 'The running Skryon bot could not be inspected; no files were changed.'
             exit 66
           fi
-          python3 - "$bot_pid" <<'PY'
+          python3 - "$bot_pid" "$modern/.env" <<'PY'
           from pathlib import Path
           import sys
 
           entries = Path('/proc', sys.argv[1], 'environ').read_bytes().split(b'\0')
           names = {entry.split(b'=', 1)[0] for entry in entries if b'=' in entry}
+
+          env_path = Path(sys.argv[2])
+          if env_path.is_file():
+              for raw_line in env_path.read_text(encoding='utf-8').splitlines():
+                  line = raw_line.strip()
+                  if not line or line.startswith('#'):
+                      continue
+                  if line.startswith('export '):
+                      line = line[7:].lstrip()
+                  key, separator, _value = line.partition('=')
+                  key = key.strip()
+                  if separator and key:
+                      names.add(key.encode())
+
           missing = [name for name in (b'BOT_TOKEN', b'ADMIN_IDS') if name not in names]
           if missing:
-              print('The running bot is missing required systemd environment settings; no files were changed.')
+              print('The running bot and Emery .env are missing required bot settings; no files were changed.')
               raise SystemExit(67)
           PY
 
