@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import uuid
 
 from src.backend.services.node_adapters import FirstVdsBillManagerProvisioningService
@@ -11,40 +10,14 @@ from src.common.models import VpnNode
 
 logger = logging.getLogger(__name__)
 
-_DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
-
 
 class ManualNodeBootstrapService:
-    POLICY_RU = "ru"
-    POLICY_INTL = "intl"
+    """Prepare one VPS for the shared pool without assigning a regional policy.
 
-    @classmethod
-    def resolve_policy(cls, region_code: str, requested_policy: str = "auto") -> str:
-        requested = (requested_policy or "auto").strip().lower()
-        if requested not in {"auto", cls.POLICY_RU, cls.POLICY_INTL}:
-            raise ValueError("invalid_traffic_policy")
-        region = (region_code or "").strip().lower()
-        derived = cls.POLICY_RU if region == "ru" or region.startswith("ru-") else cls.POLICY_INTL
-        if requested != "auto" and requested != derived:
-            raise ValueError("traffic_policy_region_mismatch")
-        return derived
-
-    @classmethod
-    def blocked_domains_for_policy(cls, policy: str) -> list[str]:
-        if policy != cls.POLICY_RU:
-            return []
-        result: list[str] = []
-        for value in settings.ru_policy_blocked_domain_list:
-            domain = value.strip().lower().rstrip(".")
-            if not domain:
-                continue
-            if not _DOMAIN_RE.fullmatch(domain):
-                raise ValueError("ru_blocklist_invalid_domain")
-            if domain not in result:
-                result.append(domain)
-        if not result:
-            raise ValueError("ru_blocklist_not_configured")
-        return result
+    Regional policy is per device/assignment and is re-applied on every connect.
+    The bootstrap only installs the neutral Xray/Reality base, global abuse
+    protections, and the orchestrator SSH key used for later per-device updates.
+    """
 
     def bootstrap_with_password(
         self,
@@ -52,7 +25,6 @@ class ManualNodeBootstrapService:
         *,
         ssh_user: str,
         ssh_password: str,
-        policy: str,
     ) -> dict:
         endpoint = (node.endpoint or "").strip()
         username = (ssh_user or "").strip()
@@ -64,11 +36,6 @@ class ManualNodeBootstrapService:
         if not password:
             return {"status": "failed", "detail": "ssh_password_required"}
 
-        try:
-            blocked_domains = self.blocked_domains_for_policy(policy)
-        except ValueError as exc:
-            return {"status": "failed", "detail": str(exc)}
-
         adapter = FirstVdsBillManagerProvisioningService()
         adapter._ensure_node_ssh_keypair(node)
         script = self._bootstrap_script(
@@ -76,7 +43,6 @@ class ManualNodeBootstrapService:
             server_name=settings.manual_bootstrap_reality_sni,
             node_public_key=node.ssh_public_key,
             neutral_hostname=f"server-{node.id}",
-            blocked_domains=blocked_domains,
         )
 
         try:
@@ -149,9 +115,8 @@ class ManualNodeBootstrapService:
         return {
             "status": "ok",
             "detail": "manual_node_bootstrapped",
-            "policy": policy,
-            "blocked_domains": len(blocked_domains),
             "config_payload": config_payload,
+            "policy_ready": True,
             "ssh_host_key_pinned": bool(node.ssh_host_key),
         }
 
@@ -162,7 +127,6 @@ class ManualNodeBootstrapService:
         server_name: str,
         node_public_key: str,
         neutral_hostname: str,
-        blocked_domains: list[str],
     ) -> str:
         escaped_public_key = node_public_key.replace("'", "'\\''") if node_public_key else ""
         authorized_keys_block = ""
@@ -176,21 +140,10 @@ grep -qxF \"$AUTH_KEY\" /root/.ssh/authorized_keys || printf '%s\n' \"$AUTH_KEY\
 chmod 600 /root/.ssh/authorized_keys
 """
 
-        rules: list[dict] = []
-        if blocked_domains:
-            rules.append(
-                {
-                    "type": "field",
-                    "domain": [f"domain:{domain}" for domain in blocked_domains],
-                    "outboundTag": "blocked",
-                }
-            )
-        rules.extend(
-            [
-                {"type": "field", "port": "25,465,587", "outboundTag": "blocked"},
-                {"type": "field", "ip": ["geoip:private"], "outboundTag": "blocked"},
-            ]
-        )
+        rules = [
+            {"type": "field", "port": "25,465,587", "outboundTag": "emery-blocked"},
+            {"type": "field", "ip": ["geoip:private"], "outboundTag": "emery-blocked"},
+        ]
         rules_json = json.dumps(rules, ensure_ascii=True, separators=(",", ":"))
         hostname_json = json.dumps(neutral_hostname)
         reality_dest_json = json.dumps(f"{server_name}:443")
@@ -223,6 +176,7 @@ cat >/usr/local/etc/xray/config.json <<EOF
   \"log\": {{\"loglevel\": \"warning\"}},
   \"inbounds\": [
     {{
+      \"tag\": \"base-vless\",
       \"listen\": \"0.0.0.0\",
       \"port\": {int(port)},
       \"protocol\": \"vless\",
@@ -247,7 +201,7 @@ cat >/usr/local/etc/xray/config.json <<EOF
   ],
   \"outbounds\": [
     {{\"tag\": \"direct\", \"protocol\": \"freedom\"}},
-    {{\"tag\": \"blocked\", \"protocol\": \"blackhole\"}}
+    {{\"tag\": \"emery-blocked\", \"protocol\": \"blackhole\"}}
   ],
   \"routing\": {{
     \"domainStrategy\": \"IPIfNonMatch\",
