@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr
 
@@ -21,7 +20,6 @@ class ManualNodeBootstrapRequest(BaseModel):
     endpoint: str
     ssh_user: str = "root"
     ssh_password: SecretStr
-    policy: Literal["auto", "ru", "intl"] = "auto"
     capacity_clients: int = Field(default=5, ge=1, le=100)
     bandwidth_limit_mbps: int = Field(default=1000, ge=1, le=100000)
     per_device_speed_limit_mbps: int = Field(default=100, ge=1, le=10000)
@@ -109,8 +107,7 @@ class VpnNodeResponse(BaseModel):
 
 class ManualNodeBootstrapResponse(BaseModel):
     node: VpnNodeResponse
-    policy: Literal["ru", "intl"]
-    blocked_domains: int = 0
+    policy_ready: bool = True
 
 
 class AdminStatsResponse(BaseModel):
