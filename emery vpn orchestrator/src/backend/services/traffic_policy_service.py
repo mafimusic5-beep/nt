@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.services.node_recovery_service import SshAndProviderRecoveryTransport
+from src.common.config import settings
 from src.common.models import VpnAssignment, VpnNode
 
 logger = logging.getLogger(__name__)
@@ -46,8 +47,6 @@ class TrafficPolicyService:
             raise HTTPException(status_code=400, detail="invalid_traffic_policy")
         assignment_id = self.assignment_id_from_import_text(import_text)
         if assignment_id is None:
-            # Server-side per-user routing requires the device-bound assignment
-            # contract. Do not pretend that a shared/legacy profile is filtered.
             raise HTTPException(status_code=409, detail="per_device_policy_unavailable")
         self.apply(assignment_id, policy)
 
@@ -62,9 +61,8 @@ class TrafficPolicyService:
         if node is None:
             raise HTTPException(status_code=409, detail="assigned_node_missing")
 
-        # Re-assert the policy on every connect. This is intentional: the app
-        # is authoritative for the current user choice, and a manual Xray edit
-        # must not silently bypass that choice.
+        # The app is authoritative. Re-check the requested mode every connect;
+        # the remote side only restarts Xray if the effective config differs.
         result = self._apply_remote(node, assignment, policy)
         if not result["ok"]:
             raise HTTPException(status_code=503, detail=result["detail"])
@@ -79,7 +77,12 @@ class TrafficPolicyService:
             "vpn_traffic_policy_applied",
             "vpn_assignment",
             str(assignment.id),
-            {"policy": policy, "node_id": node.id, "changed": changed},
+            {
+                "policy": policy,
+                "node_id": node.id,
+                "changed": changed,
+                "server_config_changed": bool(result.get("changed")),
+            },
         )
         self.db.commit()
 
@@ -88,7 +91,7 @@ class TrafficPolicyService:
             {
                 "assignment_id": assignment.id,
                 "traffic_policy": policy,
-                "config_path": "/usr/local/etc/xray/config.json",
+                "config_path": settings.xray_config_path,
             },
             separators=(",", ":"),
         )
@@ -96,7 +99,7 @@ class TrafficPolicyService:
         client = None
         try:
             client = self.ssh._connect(node)
-            stdin, stdout, stderr = client.exec_command("python3 -", timeout=120)
+            stdin, stdout, stderr = client.exec_command("python3 -", timeout=180)
             stdin.write(script)
             stdin.flush()
             stdin.channel.shutdown_write()
@@ -118,7 +121,11 @@ class TrafficPolicyService:
                 parsed = {}
             if parsed.get("ok") is not True:
                 return {"ok": False, "detail": str(parsed.get("detail") or "traffic_policy_not_applied")[:120]}
-            return {"ok": True, "detail": "traffic_policy_applied"}
+            return {
+                "ok": True,
+                "detail": "traffic_policy_applied",
+                "changed": parsed.get("changed") is True,
+            }
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "traffic policy SSH failed assignment=%s node=%s err=%s",
@@ -141,6 +148,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import urllib.request
 
 DATA = json.loads(__PAYLOAD__)
@@ -150,12 +158,23 @@ path = str(DATA["config_path"])
 tag_prefix = "emery-device-%d-" % assignment_id
 RU_DOMAINS = ["geosite:ru-blocked-all"]
 RU_IPS = ["geoip:ru-blocked", "geoip:ru-blocked-community", "geoip:re-filter"]
+ASSET_TTL_SECONDS = 6 * 60 * 60
+
+
+def asset_is_fresh(target):
+    try:
+        stat = os.stat(target)
+        return stat.st_size >= 16 * 1024 and (time.time() - stat.st_mtime) < ASSET_TTL_SECONDS
+    except OSError:
+        return False
 
 
 def install_asset(name):
     asset_dir = "/usr/local/share/xray"
     os.makedirs(asset_dir, exist_ok=True)
     target = os.path.join(asset_dir, name)
+    if asset_is_fresh(target):
+        return
     bases = [
         "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release",
         "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download",
@@ -230,12 +249,11 @@ for item in list(routing.get("rules") or []):
     if isinstance(inbound_tags, str):
         inbound_tags = [inbound_tags]
     managed = any(str(value).startswith(tag_prefix) for value in inbound_tags)
-    if managed:
-        continue
-    rules.append(item)
+    if not managed:
+        rules.append(item)
 
 if policy == "russia":
-    policy_rules = [
+    rules = [
         {
             "type": "field",
             "inboundTag": [inbound_tag],
@@ -248,17 +266,22 @@ if policy == "russia":
             "ip": RU_IPS,
             "outboundTag": "emery-blocked",
         },
-    ]
-    rules = policy_rules + rules
+    ] + rules
 elif policy != "international":
     raise RuntimeError("invalid_traffic_policy")
 routing["rules"] = rules
 
+candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\\n"
+if candidate_text == original:
+    print(json.dumps({"ok": True, "policy": policy, "assignment_id": assignment_id, "changed": False}))
+    raise SystemExit(0)
+
 fd, candidate = tempfile.mkstemp(prefix=".emery-policy-", suffix=".json", dir=folder)
 try:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(config, handle, ensure_ascii=False, indent=2)
-        handle.write("\\n")
+        handle.write(candidate_text)
+        handle.flush()
+        os.fsync(handle.fileno())
     current_stat = os.stat(path, follow_symlinks=False)
     os.chown(candidate, current_stat.st_uid, current_stat.st_gid, follow_symlinks=False)
     os.chmod(candidate, current_stat.st_mode & 0o777, follow_symlinks=False)
@@ -276,5 +299,5 @@ except Exception:
             os.unlink(candidate)
     raise
 
-print(json.dumps({"ok": True, "policy": policy, "assignment_id": assignment_id}))
+print(json.dumps({"ok": True, "policy": policy, "assignment_id": assignment_id, "changed": True}))
 '''.replace("__PAYLOAD__", encoded)
