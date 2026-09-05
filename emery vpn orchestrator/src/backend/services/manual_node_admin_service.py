@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,9 +13,11 @@ from src.backend.schemas.admin import (
     VpnNodeUpsertRequest,
 )
 from src.backend.services.admin_service import AdminService
+from src.backend.services.manual_device_gate_service import ManualDeviceGateService
 from src.backend.services.manual_node_bootstrap_service import ManualNodeBootstrapService
+from src.backend.services.xray_credential_service import ScriptOrSshXrayCredentialTransport
 from src.common.config import settings
-from src.common.models import VpnNode
+from src.common.models import VpnAssignment, VpnNode
 
 
 class ManualNodeAdminService:
@@ -40,15 +44,13 @@ class ManualNodeAdminService:
         req: ManualNodeBootstrapRequest,
         node: VpnNode,
     ) -> tuple[str, int, str, str]:
-        """Keep a configured gate when reimaging the same VPS.
+        """Preserve valid metadata until automatic gate provisioning replaces it.
 
-        /setup_server intentionally only asks for IP/password. A provider
-        reimage changes the machine but not the node identity or its public gate
-        hostname. Empty gate fields in that short-form command therefore mean
-        "reuse the node's existing gate metadata", not "erase the gate".
-
-        Explicit gate values still override the stored values and go through the
-        same strict validation path.
+        /setup_server intentionally only asks for IP/password. Empty gate fields
+        therefore never mean "erase the gate". They may reuse a complete stored
+        endpoint, or remain empty for a node that will receive its automatic gate
+        later in the same bootstrap. Explicit gate values remain strictly
+        validated.
         """
         request_has_gate = bool(
             req.device_gate_host.strip()
@@ -72,8 +74,80 @@ class ManualNodeAdminService:
             port=port,
             server_name=server_name,
             spki_sha256=spki_sha256,
-            required=settings.device_bound_gate_enabled,
+            required=request_has_gate,
         )
+
+    def _fail_bootstrap(self, node: VpnNode, detail: str) -> None:
+        safe_detail = (detail or "manual_bootstrap_failed").replace("\n", " ")[:120]
+        node.status = "provision_failed"
+        node.health_status = "down"
+        self.audit.write(
+            "admin",
+            "api",
+            "manual_node_bootstrap_failed",
+            "vpn_node",
+            str(node.id),
+            {"detail": safe_detail},
+        )
+        self.db.commit()
+        raise HTTPException(status_code=502, detail=safe_detail)
+
+    def _restore_active_assignments(self, node: VpnNode) -> int:
+        assignments = self.db.scalars(
+            select(VpnAssignment)
+            .where(
+                VpnAssignment.node_id == node.id,
+                VpnAssignment.status == "active",
+            )
+            .order_by(VpnAssignment.id.asc())
+        ).all()
+        if not assignments:
+            return 0
+
+        transport = ScriptOrSshXrayCredentialTransport()
+        for assignment in assignments:
+            try:
+                result = transport.install(node, assignment)
+            except Exception as exc:  # noqa: BLE001
+                self._fail_bootstrap(
+                    node,
+                    f"assignment_restore_failed:{assignment.id}:{type(exc).__name__}",
+                )
+            safe = (
+                result.ok
+                and result.rate_limit_enforced
+                and result.smtp_block_enforced
+                and result.shared_credential_disabled
+                and result.direct_ingress_blocked
+                and result.device_gate_ready
+            )
+            if not safe:
+                self._fail_bootstrap(
+                    node,
+                    f"assignment_restore_failed:{assignment.id}:{result.detail}",
+                )
+
+        # Only after every remote upsert attests all protections do we expose a
+        # new revision to clients. UUIDs, ports and assignment identities stay
+        # unchanged, so reimaging a VPS does not consume new device slots.
+        now = datetime.now(timezone.utc)
+        for assignment in assignments:
+            assignment.device_gate_enforced = True
+            assignment.installed_at = now
+            assignment.config_revision = max(int(assignment.config_revision or 0), 0) + 1
+            assignment.prepare_expires_at = None
+            assignment.last_error = ""
+
+        self.audit.write(
+            "admin",
+            "api",
+            "manual_node_assignments_restored",
+            "vpn_node",
+            str(node.id),
+            {"count": len(assignments)},
+        )
+        self.db.flush()
+        return len(assignments)
 
     def bootstrap(self, req: ManualNodeBootstrapRequest) -> ManualNodeBootstrapResponse:
         endpoint = req.endpoint.strip()
@@ -120,7 +194,10 @@ class ManualNodeAdminService:
             node.health_status = "unknown"
             node.load_score = 100
             node.priority = 0
-            node.capacity_clients = req.capacity_clients
+            # Never produce an impossible 15/5 node merely because the admin
+            # command's default is lower than assignments already attached to a
+            # reimaged server. Existing accounting wins until those users leave.
+            node.capacity_clients = max(req.capacity_clients, int(node.current_clients or 0))
             node.bandwidth_limit_mbps = req.bandwidth_limit_mbps
             node.per_device_speed_limit_mbps = req.per_device_speed_limit_mbps
             node.config_payload = ""
@@ -149,19 +226,25 @@ class ManualNodeAdminService:
             ssh_password=req.ssh_password.get_secret_value(),
         )
         if result.get("status") != "ok":
-            node.status = "provision_failed"
-            node.health_status = "down"
-            safe_detail = str(result.get("detail") or "manual_bootstrap_failed")[:120]
-            self.audit.write(
-                "admin",
-                "api",
-                "manual_node_bootstrap_failed",
-                "vpn_node",
-                str(node.id),
-                {"detail": safe_detail},
+            self._fail_bootstrap(
+                node,
+                str(result.get("detail") or "manual_bootstrap_failed"),
             )
-            self.db.commit()
-            raise HTTPException(status_code=502, detail=safe_detail)
+
+        restored_assignments = 0
+        if settings.device_bound_gate_enabled:
+            gate_result = ManualDeviceGateService().bootstrap(node)
+            if gate_result.get("status") != "ok":
+                self._fail_bootstrap(
+                    node,
+                    str(gate_result.get("detail") or "device_gate_bootstrap_failed"),
+                )
+            node.device_gate_host = str(gate_result["host"])
+            node.device_gate_port = int(gate_result["port"])
+            node.device_gate_server_name = str(gate_result["server_name"])
+            node.device_gate_spki_sha256 = str(gate_result["spki_sha256"])
+            self.db.flush()
+            restored_assignments = self._restore_active_assignments(node)
 
         node.status = "active"
         node.health_status = "healthy"
@@ -173,7 +256,12 @@ class ManualNodeAdminService:
             "manual_node_bootstrapped",
             "vpn_node",
             str(node.id),
-            {"policy_ready": True, "isp_egress_enabled": isp_egress_enabled},
+            {
+                "policy_ready": True,
+                "isp_egress_enabled": isp_egress_enabled,
+                "device_gate_ready": bool(settings.device_bound_gate_enabled),
+                "restored_assignments": restored_assignments,
+            },
         )
         self.db.commit()
         return ManualNodeBootstrapResponse(
