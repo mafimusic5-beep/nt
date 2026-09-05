@@ -397,13 +397,32 @@ jobs:
           systemctl is-active --quiet skryon-bot.service
 
           remote_phase=local_verify
-          curl -fsS --max-time 10 http://127.0.0.1:9330/api/v1/health >/dev/null
-          curl -fsS --max-time 10 http://127.0.0.1:8080/health >/dev/null
-          sync_status="$(curl -sS -o /dev/null -w '%{http_code}' \
-            --max-time 10 \
-            -H 'Content-Type: application/json' \
-            -d '{}' \
-            http://127.0.0.1:8080/api/config/sync)"
+          probe_url() {
+            local url="$1"
+            for attempt in {1..15}; do
+              if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 1
+            done
+            printf 'Local readiness probe failed: %s\n' "$url" >&2
+            return 1
+          }
+          probe_url http://127.0.0.1:9330/api/v1/health
+          probe_url http://127.0.0.1:8080/health
+
+          sync_status=000
+          for attempt in {1..15}; do
+            sync_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+              --max-time 5 \
+              -H 'Content-Type: application/json' \
+              -d '{}' \
+              http://127.0.0.1:8080/api/config/sync || true)"
+            if [[ "$sync_status" != 000 && "$sync_status" != 404 && "$sync_status" -lt 500 ]]; then
+              break
+            fi
+            sleep 1
+          done
           if [[ "$sync_status" == 000 || "$sync_status" == 404 || "$sync_status" -ge 500 ]]; then
             echo 'Legacy config-sync endpoint failed its local probe.'
             exit 71
