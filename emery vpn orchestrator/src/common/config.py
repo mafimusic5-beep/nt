@@ -76,6 +76,27 @@ class Settings(BaseSettings):
     manual_bootstrap_vless_port: int = 443
     manual_bootstrap_reality_sni: str = "www.cloudflare.com"
 
+    # Optional high-quality ISP egress. When enabled, /setup_server still needs
+    # only the new VPS IP/password: the control backend allocates a unique
+    # WireGuard tunnel IP, registers the peer on the preconfigured ISP egress,
+    # and binds Xray's direct outbound to that tunnel with a kill switch.
+    manual_bootstrap_isp_egress_enabled: bool = False
+    manual_bootstrap_isp_egress_host: str = ""
+    manual_bootstrap_isp_egress_port: int = 51820
+    manual_bootstrap_isp_egress_public_key: str = ""
+    manual_bootstrap_isp_egress_interface: str = "wg-skryon"
+    manual_bootstrap_isp_egress_cidr: str = "10.77.0.0/16"
+    manual_bootstrap_isp_egress_mtu: int = 1380
+    manual_bootstrap_isp_egress_keepalive_seconds: int = 25
+    manual_bootstrap_isp_egress_routing_table: int = 51820
+    manual_bootstrap_isp_egress_ssh_host: str = ""
+    manual_bootstrap_isp_egress_ssh_port: int = 22
+    manual_bootstrap_isp_egress_ssh_user: str = "root"
+    manual_bootstrap_isp_egress_ssh_private_key_path: str = ""
+    manual_bootstrap_isp_egress_ssh_known_hosts_path: str = ""
+    manual_bootstrap_isp_egress_ssh_timeout_seconds: int = 15
+    manual_bootstrap_isp_egress_allow_unknown_host_keys: bool = False
+
     # Dedicated recovery-agent. It probes the current VLESS listener and first
     # repairs the existing VPS; replacement capacity is a later fallback.
     recovery_probe_interval_seconds: int = 15
