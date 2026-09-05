@@ -54,9 +54,9 @@ def _contains_public_provider_marker(value: str) -> bool:
     return any(marker in lowered for marker in _PUBLIC_PROVIDER_MARKERS)
 
 
-def _sanitize_public_server_label(value: str, fallback: str = "Skryon") -> str:
+def _sanitize_public_server_label(value: str, fallback: str = "Server") -> str:
     label = str(value or "").strip()
-    fallback_label = str(fallback or "Skryon").strip() or "Skryon"
+    fallback_label = str(fallback or "Server").strip() or "Server"
     if not label:
         return fallback_label
     if not _contains_public_provider_marker(label):
@@ -87,7 +87,7 @@ def _sanitize_public_import_text(import_text: str) -> str:
         if not line:
             continue
         if line.lower().startswith("vless://"):
-            line = f"{line.split('#', 1)[0]}#Skryon"
+            line = f"{line.split('#', 1)[0]}#Server"
         lines.append(line)
     return "\n".join(lines)
 
@@ -384,7 +384,7 @@ class SubscriptionService:
         for row in rows:
             public_label = _sanitize_public_server_label(
                 str(row.get("city") or row.get("region_name") or ""),
-                fallback="Skryon",
+                fallback="Server",
             )
             public_rows.append({**row, "city": public_label, "region_name": public_label})
         agent_log(
