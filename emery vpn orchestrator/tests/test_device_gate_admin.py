@@ -7,6 +7,7 @@ from src.backend.schemas.admin import (
     VpnNodeUpsertRequest,
 )
 from src.backend.services.admin_service import AdminService
+from src.backend.services.manual_device_gate_service import ManualDeviceGateService
 from src.backend.services.manual_node_admin_service import ManualNodeAdminService
 from src.backend.services.manual_node_bootstrap_service import ManualNodeBootstrapService
 from src.common.config import settings
@@ -101,6 +102,17 @@ def test_rebootstrap_reuses_existing_gate_when_short_command_omits_it(db_session
         lambda self, node, *, ssh_user, ssh_password: {
             "status": "ok",
             "isp_egress_enabled": False,
+        },
+    )
+    monkeypatch.setattr(
+        ManualDeviceGateService,
+        "bootstrap",
+        lambda self, node: {
+            "status": "ok",
+            "host": "gate.example.com",
+            "port": 8447,
+            "server_name": "gate.example.com",
+            "spki_sha256": "a" * 64,
         },
     )
 
