@@ -9,6 +9,7 @@ class PoolReservationPrepareRequest(BaseModel):
     entitlement_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     entitlement_expires_at: datetime
     region_code: str = Field(min_length=1, max_length=16, pattern=r"^[a-z0-9-]+$")
+    traffic_policy: str = Field(default="international", pattern=r"^(international|russia)$")
 
 
 class PoolReservationResponse(BaseModel):
@@ -20,9 +21,6 @@ class PoolReservationResponse(BaseModel):
     node_name: str
     region_code: str
     config: str
-    # Internal listener details are returned only over the authenticated pool
-    # bridge. The Android client receives a loopback URI and cannot use this
-    # port without passing the device gateway.
     client_port: int
     device_gate_required: bool
     device_gate_host: str
