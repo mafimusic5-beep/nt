@@ -28,6 +28,24 @@ def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
     assert 'elif policy != "international"' in script
 
 
+def test_russia_policy_has_explicit_major_blocked_service_fallbacks():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    for domain in (
+        "domain:facebook.com",
+        "domain:instagram.com",
+        "domain:x.com",
+        "domain:twitter.com",
+        "domain:linkedin.com",
+        "domain:discord.com",
+        "domain:signal.org",
+        "domain:viber.com",
+        "domain:youtube.com",
+    ):
+        assert f'"{domain}"' in script
+
+
 def test_manual_vps_bootstrap_has_no_server_wide_regional_filter():
     script = ManualNodeBootstrapService._bootstrap_script(
         port=443,
