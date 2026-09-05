@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -35,6 +36,60 @@ from src.common.config import settings
 from src.common.models import VpnNode
 
 logger = logging.getLogger(__name__)
+
+_PUBLIC_PROVIDER_MARKERS = (
+    "firstvds",
+    "ionos",
+    "vps1dollar",
+    "data center",
+    "datacenter",
+    "hosting",
+    "hoster",
+    "vps",
+)
+
+
+def _contains_public_provider_marker(value: str) -> bool:
+    lowered = value.casefold()
+    return any(marker in lowered for marker in _PUBLIC_PROVIDER_MARKERS)
+
+
+def _sanitize_public_server_label(value: str, fallback: str = "Skryon") -> str:
+    label = str(value or "").strip()
+    fallback_label = str(fallback or "Skryon").strip() or "Skryon"
+    if not label:
+        return fallback_label
+    if not _contains_public_provider_marker(label):
+        return label
+
+    parenthesized = re.search(r"\(([^()]{2,64})\)\s*$", label)
+    if parenthesized:
+        candidate = parenthesized.group(1).strip()
+        if candidate and not _contains_public_provider_marker(candidate):
+            return candidate
+
+    cleaned = label
+    for marker in _PUBLIC_PROVIDER_MARKERS:
+        cleaned = re.sub(re.escape(marker), " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[\s_\-:()]+", " ", cleaned).strip()
+    cleaned = re.sub(r"\b\d{4,}\b", "", cleaned).strip()
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    if cleaned and not _contains_public_provider_marker(cleaned):
+        return cleaned
+    return fallback_label
+
+
+def _sanitize_public_import_text(import_text: str) -> str:
+    """Keep VPN transport fields intact and replace only the client-visible VLESS remark."""
+    lines: list[str] = []
+    for raw_line in str(import_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("vless://"):
+            line = f"{line.split('#', 1)[0]}#Skryon"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 class SubscriptionService:
@@ -102,7 +157,7 @@ class SubscriptionService:
             "node_id": prepared.node_id,
             "node_name": prepared.node_name,
             "region_code": prepared.region_code,
-            "import_text": prepared.config,
+            "import_text": _sanitize_public_import_text(prepared.config),
             "node_health_status": "healthy",
         }
 
@@ -251,6 +306,7 @@ class SubscriptionService:
             return VpnConfigResponse(error=str(exc.detail))
         self.audit.write("user", str(user.id), "vpn_config_requested", "vpn_node", str(cfg["node_id"]))
         self.db.commit()
+        public_import_text = _sanitize_public_import_text(cfg["import_text"])
         agent_log(
             hypothesis_id="H2",
             location="subscription_service.py:get_vpn_config",
@@ -258,10 +314,10 @@ class SubscriptionService:
             data={
                 "subscription_id": sub.id,
                 "node_id": cfg.get("node_id"),
-                "import_text_len": len(cfg.get("import_text", "")),
+                "import_text_len": len(public_import_text),
             },
         )
-        return VpnConfigResponse(import_text=cfg["import_text"])
+        return VpnConfigResponse(import_text=public_import_text)
 
     def get_vpn_pool_config(self, access_key: str) -> dict:
         code, sub = self.resolve_subscription_by_access_key(access_key)
@@ -274,7 +330,7 @@ class SubscriptionService:
             raise HTTPException(status_code=404, detail="no_pool_config")
         self.audit.write("user", str(code.user_id), "vpn_pool_config_requested", "subscription", str(sub.id))
         self.db.commit()
-        return {"importText": import_text}
+        return {"importText": _sanitize_public_import_text(import_text)}
 
     def list_user_devices(self, telegram_id: int) -> list[dict]:
         user = self.repo.get_or_create_user(telegram_id)
@@ -324,13 +380,20 @@ class SubscriptionService:
 
     def list_vpn_servers(self) -> list[dict]:
         rows = self.node_orchestrator.list_region_entries()
+        public_rows: list[dict] = []
+        for row in rows:
+            public_label = _sanitize_public_server_label(
+                str(row.get("city") or row.get("region_name") or ""),
+                fallback="Skryon",
+            )
+            public_rows.append({**row, "city": public_label, "region_name": public_label})
         agent_log(
             hypothesis_id="H1",
             location="subscription_service.py:list_vpn_servers",
             message="vpn regions listed",
-            data={"count": len(rows)},
+            data={"count": len(public_rows)},
         )
-        return rows
+        return public_rows
 
     def connect_to_server(self, access_key: str, server_id: int, device_fingerprint: str | None = None) -> dict:
         code, sub = self.resolve_subscription_by_access_key(access_key)
@@ -357,17 +420,18 @@ class SubscriptionService:
             cfg = self.node_orchestrator.build_user_config_for_node(sub.id, server_id, device)
         self.audit.write("user", str(code.user_id), "vpn_connect_requested", "vpn_node", str(server_id))
         self.db.commit()
+        public_import_text = _sanitize_public_import_text(cfg["import_text"])
         agent_log(
             hypothesis_id="H4",
             location="subscription_service.py:connect_to_server",
             message="vpn connect payload built",
-            data={"server_id": server_id, "region_code": cfg["node"].region_code, "import_len": len(cfg["import_text"])},
+            data={"server_id": server_id, "region_code": cfg["node"].region_code, "import_len": len(public_import_text)},
         )
         return {
             "server_id": cfg["node"].id,
             "city": cfg["node"].region_code,
             "region_code": cfg["node"].region_code,
-            "import_text": cfg["import_text"],
+            "import_text": public_import_text,
         }
 
     @staticmethod
