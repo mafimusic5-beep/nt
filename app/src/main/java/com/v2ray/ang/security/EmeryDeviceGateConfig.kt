@@ -14,6 +14,7 @@ object EmeryDeviceGateConfig {
     const val LOCAL_PORT = 17890
     private const val PREF_PREFIX = "pref_emery_device_gate_"
     private const val PROTOCOL_VERSION = 1
+    private const val PUBLIC_PROFILE_NAME = "Skryon"
     private val safeHost = Regex("^[A-Za-z0-9.-]{1,255}$")
     private val safePin = Regex("^[a-f0-9]{64}$")
 
@@ -32,15 +33,14 @@ object EmeryDeviceGateConfig {
         require(lines.isNotEmpty()) { "Empty VPN configuration" }
         val gatedCount = lines.count { hasGateMarker(it) }
         require(gatedCount == 0 || gatedCount == lines.size) { "Mixed gated and direct VPN profiles" }
-        if (gatedCount == 0) {
-            return importText
+        return lines.joinToString(separator = "\n") { line ->
+            if (hasGateMarker(line)) prepareVlessUri(line) else sanitizePublicRemark(line)
         }
-        return lines.joinToString(separator = "\n") { prepareVlessUri(it) }
     }
 
     fun prepareVlessUri(rawConfig: String): String {
         if (!hasGateMarker(rawConfig)) {
-            return rawConfig
+            return sanitizePublicRemark(rawConfig)
         }
         val uri = URI(rawConfig.trim())
         require(uri.scheme.equals("vless", ignoreCase = true)) { "Device gate requires VLESS" }
@@ -95,7 +95,6 @@ object EmeryDeviceGateConfig {
 
         val userInfo = uri.rawUserInfo ?: error("Missing VLESS credential")
         val query = retained.joinToString("&")
-        val fragment = uri.rawFragment?.let { "#$it" }.orEmpty()
         return buildString {
             append("vless://")
             append(userInfo)
@@ -107,7 +106,8 @@ object EmeryDeviceGateConfig {
                 append('?')
                 append(query)
             }
-            append(fragment)
+            append('#')
+            append(PUBLIC_PROFILE_NAME)
         }
     }
 
@@ -146,6 +146,14 @@ object EmeryDeviceGateConfig {
                 require(descriptor.localPort == LOCAL_PORT)
             }
         }.getOrNull()
+    }
+
+    private fun sanitizePublicRemark(value: String): String {
+        val trimmed = value.trim()
+        if (!trimmed.startsWith("vless://", ignoreCase = true)) {
+            return trimmed
+        }
+        return "${trimmed.substringBefore('#')}#$PUBLIC_PROFILE_NAME"
     }
 
     private fun hasGateMarker(value: String): Boolean =
