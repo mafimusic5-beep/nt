@@ -200,7 +200,7 @@ class OrderService:
         )
         order.subscription_id = subscription.id
         order.status = "paid"
-        plain_code = generate_activation_code(12)
+        plain_code = generate_activation_code()
         code_hash = hash_activation_code(plain_code)
         self.order_repo.create_activation_code(order.user_id, subscription.id, code_hash)
         payment = self.order_repo.create_payment(
