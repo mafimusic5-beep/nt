@@ -21,15 +21,17 @@ def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
     )
     assert 'tag_prefix = "emery-device-%d-" % assignment_id' in script
     assert '"inboundTag": [inbound_tag]' in script
-    assert '"geosite:ru-blocked-all"' in script
-    assert '"geoip:ru-blocked-community"' in script
+    assert '"geosite:antifilter-download"' in script
+    assert '"geoip:ru-blocked"' in script
+    assert '"geosite:ru-blocked-all"' not in script
+    assert '"geoip:ru-blocked-community"' not in script
     assert 'elif policy != "international"' in script
 
 
 def test_manual_vps_bootstrap_has_no_server_wide_regional_filter():
     script = ManualNodeBootstrapService._bootstrap_script(
         port=443,
-        server_name="apple.com",
+        server_name="www.cloudflare.com",
         node_public_key="",
         neutral_hostname="server-1",
     )
@@ -38,3 +40,5 @@ def test_manual_vps_bootstrap_has_no_server_wide_regional_filter():
     assert '"emery-blocked"' in script
     assert '"25,465,587"' in script
     assert '"geoip:private"' in script
+    assert '"www.cloudflare.com:443"' in script
+    assert '"www.cloudflare.com"' in script
