@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import ipaddress
 import logging
 import re
@@ -41,7 +42,7 @@ class ManualIspEgressService:
     def _valid_wireguard_key(value: str) -> bool:
         try:
             decoded = base64.b64decode(value.strip(), validate=True)
-        except (ValueError, base64.binascii.Error):
+        except (ValueError, binascii.Error):
             return False
         return len(decoded) == 32
 
@@ -232,14 +233,14 @@ cat >/usr/local/sbin/skryon-isp-egress-nat <<EOF
 set -euo pipefail
 TUNNEL_CIDR='$TUNNEL_CIDR'
 WG_IFACE='$IFACE'
-WAN_IF=\"\$(ip -4 route show default | awk 'NR==1 {{for (i=1;i<=NF;i++) if (\$i==\"dev\") {{print \$(i+1); exit}}}}')\"
-[[ -n \"\$WAN_IF\" ]]
+WAN_IF=\"\\$(ip -4 route show default | awk 'NR==1 {{for (i=1;i<=NF;i++) if (\\$i==\"dev\") {{print \\$(i+1); exit}}}}')\"
+[[ -n \"\\$WAN_IF\" ]]
 nft delete table ip skryon_isp_egress_nat >/dev/null 2>&1 || true
 nft -f - <<NFT
  table ip skryon_isp_egress_nat {{
    chain postrouting {{
      type nat hook postrouting priority srcnat; policy accept;
-     ip saddr \$TUNNEL_CIDR oifname \"\$WAN_IF\" masquerade
+     ip saddr \\$TUNNEL_CIDR oifname \"\\$WAN_IF\" masquerade
    }}
  }}
 NFT
