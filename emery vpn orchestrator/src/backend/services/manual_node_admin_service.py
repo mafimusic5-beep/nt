@@ -69,16 +69,18 @@ class ManualNodeAdminService:
         node.status = "active"
         node.health_status = "healthy"
         node.provider = "manual"
+        isp_egress_enabled = bool(result.get("isp_egress_enabled"))
         self.audit.write(
             "admin",
             "api",
             "manual_node_bootstrapped",
             "vpn_node",
             str(node.id),
-            {"policy_ready": True},
+            {"policy_ready": True, "isp_egress_enabled": isp_egress_enabled},
         )
         self.db.commit()
         return ManualNodeBootstrapResponse(
             node=self.admin._node_response(node),
             policy_ready=True,
+            isp_egress_enabled=isp_egress_enabled,
         )
