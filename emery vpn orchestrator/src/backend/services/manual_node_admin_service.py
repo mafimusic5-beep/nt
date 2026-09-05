@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import time
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -18,6 +19,9 @@ from src.backend.services.manual_node_bootstrap_service import ManualNodeBootstr
 from src.backend.services.xray_credential_service import ScriptOrSshXrayCredentialTransport
 from src.common.config import settings
 from src.common.models import VpnAssignment, VpnNode
+
+
+_XRAY_RESTORE_SETTLE_SECONDS = 2.5
 
 
 class ManualNodeAdminService:
@@ -78,7 +82,11 @@ class ManualNodeAdminService:
         )
 
     def _fail_bootstrap(self, node: VpnNode, detail: str) -> None:
-        safe_detail = (detail or "manual_bootstrap_failed").replace("\n", " ")[:120]
+        raw_detail = (detail or "manual_bootstrap_failed").replace("\n", " ")
+        if len(raw_detail) > 300:
+            safe_detail = f"{raw_detail[:90]} ... {raw_detail[-205:]}"
+        else:
+            safe_detail = raw_detail
         node.status = "provision_failed"
         node.health_status = "down"
         self.audit.write(
@@ -105,7 +113,8 @@ class ManualNodeAdminService:
             return 0
 
         transport = ScriptOrSshXrayCredentialTransport()
-        for assignment in assignments:
+        last_index = len(assignments) - 1
+        for index, assignment in enumerate(assignments):
             try:
                 result = transport.install(node, assignment)
             except Exception as exc:  # noqa: BLE001
@@ -126,6 +135,14 @@ class ManualNodeAdminService:
                     node,
                     f"assignment_restore_failed:{assignment.id}:{result.detail}",
                 )
+
+            # Each credential upsert currently validates and restarts Xray. A
+            # reimaged node can have many existing assignments, and restarting
+            # Xray for all of them back-to-back can trip systemd's start-rate
+            # limiter even though every individual assignment is valid. Pace
+            # the restore so the service remains inside a safe restart cadence.
+            if index < last_index:
+                time.sleep(_XRAY_RESTORE_SETTLE_SECONDS)
 
         # Only after every remote upsert attests all protections do we expose a
         # new revision to clients. UUIDs, ports and assignment identities stay
