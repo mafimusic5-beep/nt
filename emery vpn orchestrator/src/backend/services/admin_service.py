@@ -8,15 +8,12 @@ from src.backend.repositories.admin_repo import AdminRepository
 from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.repositories.order_repo import OrderRepository
 from src.backend.repositories.subscription_repo import SubscriptionRepository
-from src.backend.services.manual_node_bootstrap_service import ManualNodeBootstrapService
 from src.backend.services.node_adapters import FirstVdsBillManagerProvisioningService
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.utils.security import generate_activation_code, hash_activation_code
 from src.backend.schemas.admin import (
     GrantSubscriptionRequest,
     GrantSubscriptionResponse,
-    ManualNodeBootstrapRequest,
-    ManualNodeBootstrapResponse,
     VpnNodeDeviceGateRequest,
     VpnNodeResponse,
     VpnNodeUpsertRequest,
@@ -40,8 +37,20 @@ class AdminService:
         if req.months <= 0:
             raise HTTPException(status_code=400, detail="invalid_months")
         user = self.sub_repo.get_or_create_user(req.telegram_id)
-        sub = self.order_repo.create_or_extend_subscription(user.id, req.months, settings.max_devices_per_subscription, req.region_code)
-        self.audit_repo.write("admin", "api", "grant_subscription", "subscription", str(sub.id), {"months": req.months})
+        sub = self.order_repo.create_or_extend_subscription(
+            user.id,
+            req.months,
+            settings.max_devices_per_subscription,
+            req.region_code,
+        )
+        self.audit_repo.write(
+            "admin",
+            "api",
+            "grant_subscription",
+            "subscription",
+            str(sub.id),
+            {"months": req.months},
+        )
         self.db.commit()
         return GrantSubscriptionResponse(subscription_id=sub.id, ends_at=sub.ends_at)
 
@@ -105,7 +114,9 @@ class AdminService:
             ssh_key_fingerprint=n.ssh_key_fingerprint,
             ssh_key_status=n.ssh_key_status,
             ssh_host_key_pinned=bool(n.ssh_host_key),
-            has_valid_config=FirstVdsBillManagerProvisioningService.is_config_payload_valid(n.config_payload or ""),
+            has_valid_config=FirstVdsBillManagerProvisioningService.is_config_payload_valid(
+                n.config_payload or ""
+            ),
             consecutive_health_failures=n.consecutive_health_failures,
             recovery_status=n.recovery_status,
             recovery_lock_until=n.recovery_lock_until,
@@ -120,7 +131,9 @@ class AdminService:
             raise HTTPException(status_code=400, detail="region_required")
         if not req.endpoint.strip():
             raise HTTPException(status_code=400, detail="endpoint_required")
-        if req.config_payload.strip() and not FirstVdsBillManagerProvisioningService.is_config_payload_valid(req.config_payload):
+        if req.config_payload.strip() and not FirstVdsBillManagerProvisioningService.is_config_payload_valid(
+            req.config_payload
+        ):
             raise HTTPException(status_code=400, detail="invalid_vless_config")
         gate_host, gate_port, gate_server_name, gate_spki = self._validated_gate_fields(
             host=req.device_gate_host,
@@ -159,81 +172,16 @@ class AdminService:
             gate_server_name,
             gate_spki,
         )
-        self.audit_repo.write("admin", "api", "create_node", "vpn_node", str(node.id), {"region": node.region_code, "provider": node.provider})
-        self.db.commit()
-        return self._node_response(node)
-
-    def bootstrap_node_with_password(self, req: ManualNodeBootstrapRequest) -> ManualNodeBootstrapResponse:
-        bootstrapper = ManualNodeBootstrapService()
-        try:
-            policy = bootstrapper.resolve_policy(req.region_code, req.policy)
-            blocked_domains = bootstrapper.blocked_domains_for_policy(policy)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        draft = self.create_node(
-            VpnNodeUpsertRequest(
-                name=req.name.strip() or "Server",
-                region_code=req.region_code.strip().lower(),
-                endpoint=req.endpoint.strip(),
-                config_payload="",
-                device_gate_host=req.device_gate_host,
-                device_gate_port=req.device_gate_port,
-                device_gate_server_name=req.device_gate_server_name,
-                device_gate_spki_sha256=req.device_gate_spki_sha256,
-                provider="manual",
-                status="provisioning",
-                health_status="unknown",
-                load_score=100,
-                priority=0,
-                capacity_clients=req.capacity_clients,
-                bandwidth_limit_mbps=req.bandwidth_limit_mbps,
-                current_clients=0,
-                per_device_speed_limit_mbps=req.per_device_speed_limit_mbps,
-            )
-        )
-        node = self.admin_repo.get_node(draft.id)
-        if not node:
-            raise HTTPException(status_code=500, detail="bootstrap_node_create_failed")
-
-        result = bootstrapper.bootstrap_with_password(
-            node,
-            ssh_user=req.ssh_user,
-            ssh_password=req.ssh_password.get_secret_value(),
-            policy=policy,
-        )
-        if result.get("status") != "ok":
-            node.status = "provision_failed"
-            node.health_status = "down"
-            safe_detail = str(result.get("detail") or "manual_bootstrap_failed")[:120]
-            self.audit_repo.write(
-                "admin",
-                "api",
-                "manual_node_bootstrap_failed",
-                "vpn_node",
-                str(node.id),
-                {"policy": policy, "detail": safe_detail},
-            )
-            self.db.commit()
-            raise HTTPException(status_code=502, detail=safe_detail)
-
-        node.status = "active"
-        node.health_status = "healthy"
-        node.provider = "manual"
         self.audit_repo.write(
             "admin",
             "api",
-            "manual_node_bootstrapped",
+            "create_node",
             "vpn_node",
             str(node.id),
-            {"policy": policy, "blocked_domains": len(blocked_domains)},
+            {"region": node.region_code, "provider": node.provider},
         )
         self.db.commit()
-        return ManualNodeBootstrapResponse(
-            node=self._node_response(node),
-            policy=policy,
-            blocked_domains=len(blocked_domains),
-        )
+        return self._node_response(node)
 
     def configure_node_device_gate(
         self,
@@ -279,7 +227,13 @@ class AdminService:
             raise HTTPException(status_code=404, detail="active_subscription_not_found")
         plain = generate_activation_code(12)
         self.order_repo.create_activation_code(user.id, sub.id, hash_activation_code(plain))
-        self.audit_repo.write("admin", "api", "manual_activation_code_generated", "subscription", str(sub.id))
+        self.audit_repo.write(
+            "admin",
+            "api",
+            "manual_activation_code_generated",
+            "subscription",
+            str(sub.id),
+        )
         self.db.commit()
         return {"activation_code": plain, "subscription_id": sub.id}
 
