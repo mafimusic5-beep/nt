@@ -7,7 +7,7 @@ hostname -I | grep -qw "$CONTROL_IP"
 
 service_name="emery-backend.service"
 live_root="/opt/nt/emery vpn orchestrator"
-release_root="${RELEASE_ROOT:-/opt/nt-releases/pr37-20260824-191339/emery vpn orchestrator}"
+release_root="${RELEASE_ROOT:-$live_root}"
 runtime_python="/opt/nt/.runtime/modern/bin/python"
 runtime_uvicorn="/opt/nt/.runtime/modern/bin/uvicorn"
 database="$live_root/data/app.db"
