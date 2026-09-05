@@ -8,12 +8,15 @@ from src.backend.repositories.admin_repo import AdminRepository
 from src.backend.repositories.audit_repo import AuditRepository
 from src.backend.repositories.order_repo import OrderRepository
 from src.backend.repositories.subscription_repo import SubscriptionRepository
+from src.backend.services.manual_node_bootstrap_service import ManualNodeBootstrapService
 from src.backend.services.node_adapters import FirstVdsBillManagerProvisioningService
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
 from src.backend.utils.security import generate_activation_code, hash_activation_code
 from src.backend.schemas.admin import (
     GrantSubscriptionRequest,
     GrantSubscriptionResponse,
+    ManualNodeBootstrapRequest,
+    ManualNodeBootstrapResponse,
     VpnNodeDeviceGateRequest,
     VpnNodeResponse,
     VpnNodeUpsertRequest,
@@ -159,6 +162,78 @@ class AdminService:
         self.audit_repo.write("admin", "api", "create_node", "vpn_node", str(node.id), {"region": node.region_code, "provider": node.provider})
         self.db.commit()
         return self._node_response(node)
+
+    def bootstrap_node_with_password(self, req: ManualNodeBootstrapRequest) -> ManualNodeBootstrapResponse:
+        bootstrapper = ManualNodeBootstrapService()
+        try:
+            policy = bootstrapper.resolve_policy(req.region_code, req.policy)
+            blocked_domains = bootstrapper.blocked_domains_for_policy(policy)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        draft = self.create_node(
+            VpnNodeUpsertRequest(
+                name=req.name.strip() or "Server",
+                region_code=req.region_code.strip().lower(),
+                endpoint=req.endpoint.strip(),
+                config_payload="",
+                device_gate_host=req.device_gate_host,
+                device_gate_port=req.device_gate_port,
+                device_gate_server_name=req.device_gate_server_name,
+                device_gate_spki_sha256=req.device_gate_spki_sha256,
+                provider="manual",
+                status="provisioning",
+                health_status="unknown",
+                load_score=100,
+                priority=0,
+                capacity_clients=req.capacity_clients,
+                bandwidth_limit_mbps=req.bandwidth_limit_mbps,
+                current_clients=0,
+                per_device_speed_limit_mbps=req.per_device_speed_limit_mbps,
+            )
+        )
+        node = self.admin_repo.get_node(draft.id)
+        if not node:
+            raise HTTPException(status_code=500, detail="bootstrap_node_create_failed")
+
+        result = bootstrapper.bootstrap_with_password(
+            node,
+            ssh_user=req.ssh_user,
+            ssh_password=req.ssh_password.get_secret_value(),
+            policy=policy,
+        )
+        if result.get("status") != "ok":
+            node.status = "provision_failed"
+            node.health_status = "down"
+            safe_detail = str(result.get("detail") or "manual_bootstrap_failed")[:120]
+            self.audit_repo.write(
+                "admin",
+                "api",
+                "manual_node_bootstrap_failed",
+                "vpn_node",
+                str(node.id),
+                {"policy": policy, "detail": safe_detail},
+            )
+            self.db.commit()
+            raise HTTPException(status_code=502, detail=safe_detail)
+
+        node.status = "active"
+        node.health_status = "healthy"
+        node.provider = "manual"
+        self.audit_repo.write(
+            "admin",
+            "api",
+            "manual_node_bootstrapped",
+            "vpn_node",
+            str(node.id),
+            {"policy": policy, "blocked_domains": len(blocked_domains)},
+        )
+        self.db.commit()
+        return ManualNodeBootstrapResponse(
+            node=self._node_response(node),
+            policy=policy,
+            blocked_domains=len(blocked_domains),
+        )
 
     def configure_node_device_gate(
         self,
