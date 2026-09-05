@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     renewal_planning_horizon_days: int = 14
     renewal_planning_interval_seconds: int = 21600
 
+    # Manual VPS bootstrap from the admin bot. The supplied SSH password is
+    # used only for the initial connection and is never persisted.
+    manual_bootstrap_ssh_timeout_seconds: int = 30
+    manual_bootstrap_vless_port: int = 443
+    manual_bootstrap_reality_sni: str = "apple.com"
+    # Comma/newline separated domains. RU nodes fail closed when this list is empty.
+    ru_policy_blocked_domains: str = ""
+
     # Dedicated recovery-agent. It probes the current VLESS listener and first
     # repairs the existing VPS; replacement capacity is a later fallback.
     recovery_probe_interval_seconds: int = 15
@@ -140,6 +148,11 @@ class Settings(BaseSettings):
     def admin_id_list(self) -> list[int]:
         raw = [item.strip() for item in self.admin_ids.split(",") if item.strip()]
         return [int(item) for item in raw]
+
+    @cached_property
+    def ru_policy_blocked_domain_list(self) -> list[str]:
+        normalized = self.ru_policy_blocked_domains.replace("\r", "\n").replace("\n", ",")
+        return [item.strip() for item in normalized.split(",") if item.strip()]
 
     @cached_property
     def firstvds_order_addons(self) -> dict[str, str]:
