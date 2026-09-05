@@ -225,7 +225,7 @@ class AdminService:
         sub = self.sub_repo.get_active_subscription(user.id)
         if not sub:
             raise HTTPException(status_code=404, detail="active_subscription_not_found")
-        plain = generate_activation_code(12)
+        plain = generate_activation_code()
         self.order_repo.create_activation_code(user.id, sub.id, hash_activation_code(plain))
         self.audit_repo.write(
             "admin",
