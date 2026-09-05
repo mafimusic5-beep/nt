@@ -30,7 +30,10 @@ async def run() -> None:
     dp.include_router(admin_codes_router)
     dp.include_router(server_setup_router)
     dp.include_router(admin_router)
-    await dp.start_polling(bot)
+    # Make command updates independent tasks explicitly. Long-running admin
+    # operations (notably VPS provisioning) must never serialize all Telegram
+    # updates behind one handler.
+    await dp.start_polling(bot, handle_as_tasks=True)
 
 
 if __name__ == "__main__":
