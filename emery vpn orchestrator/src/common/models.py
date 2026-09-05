@@ -132,7 +132,6 @@ class VpnAssignment(Base):
     client_uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     client_port: Mapped[int] = mapped_column(Integer, nullable=False)
     speed_limit_mbps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
-    traffic_policy: Mapped[str] = mapped_column(String(16), nullable=False, default="international")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="installing", index=True)
     config_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     confirmation_token_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
