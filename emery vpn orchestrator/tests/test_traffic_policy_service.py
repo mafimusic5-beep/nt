@@ -60,3 +60,16 @@ def test_manual_vps_bootstrap_has_no_server_wide_regional_filter():
     assert '"geoip:private"' in script
     assert '"www.cloudflare.com:443"' in script
     assert '"www.cloudflare.com"' in script
+
+
+def test_manual_vps_direct_bootstrap_uses_single_ipv4_egress_family():
+    script = ManualNodeBootstrapService._bootstrap_script(
+        port=443,
+        server_name="www.cloudflare.com",
+        node_public_key="",
+        neutral_hostname="server-1",
+    )
+    assert '"ip":["::/0"],"outboundTag":"emery-blocked"' in script
+    assert '"settings":{"domainStrategy":"UseIPv4"}' in script
+    assert "sendThrough" not in script
+    assert "wg-quick@" not in script
