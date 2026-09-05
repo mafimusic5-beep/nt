@@ -7,6 +7,7 @@ from aiogram.types import ErrorEvent
 
 from src.bot.handlers.admin import router as admin_router
 from src.bot.handlers.admin_codes import router as admin_codes_router
+from src.bot.handlers.compat_commands import router as compat_commands_router
 from src.bot.handlers.server_setup import router as server_setup_router
 from src.bot.handlers.start import router as start_router
 from src.bot.handlers.subscription import router as subscription_router
@@ -55,6 +56,7 @@ async def run() -> None:
     dp.include_router(subscription_router)
     dp.include_router(admin_codes_router)
     dp.include_router(server_setup_router)
+    dp.include_router(compat_commands_router)
     dp.include_router(admin_router)
     # Make command updates independent tasks explicitly. Long-running admin
     # operations (notably VPS provisioning) must never serialize all Telegram
