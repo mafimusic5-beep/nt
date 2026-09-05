@@ -2,10 +2,13 @@ from fastapi import HTTPException
 import pytest
 
 from src.backend.schemas.admin import (
+    ManualNodeBootstrapRequest,
     VpnNodeDeviceGateRequest,
     VpnNodeUpsertRequest,
 )
 from src.backend.services.admin_service import AdminService
+from src.backend.services.manual_node_admin_service import ManualNodeAdminService
+from src.backend.services.manual_node_bootstrap_service import ManualNodeBootstrapService
 from src.common.config import settings
 
 
@@ -78,3 +81,40 @@ def test_gate_enabled_requires_complete_node_configuration(db_session, monkeypat
         AdminService(db_session).create_node(_node_request())
 
     assert error.value.detail == "device_gate_endpoint_required"
+
+
+def test_rebootstrap_reuses_existing_gate_when_short_command_omits_it(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "device_bound_gate_enabled", True)
+    service = AdminService(db_session)
+    existing = service.create_node(
+        _node_request(
+            device_gate_host="gate.example.com",
+            device_gate_port=8447,
+            device_gate_server_name="gate.example.com",
+            device_gate_spki_sha256="a" * 64,
+        )
+    )
+
+    monkeypatch.setattr(
+        ManualNodeBootstrapService,
+        "bootstrap_with_password",
+        lambda self, node, *, ssh_user, ssh_password: {
+            "status": "ok",
+            "isp_egress_enabled": False,
+        },
+    )
+
+    result = ManualNodeAdminService(db_session).bootstrap(
+        ManualNodeBootstrapRequest(
+            name="Server",
+            region_code="de",
+            endpoint="203.0.113.10",
+            ssh_password="temporary-password",
+        )
+    )
+
+    assert result.node.id == existing.id
+    assert result.node.device_gate_host == "gate.example.com"
+    assert result.node.device_gate_port == 8447
+    assert result.node.device_gate_server_name == "gate.example.com"
+    assert result.node.device_gate_spki_sha256 == "a" * 64
