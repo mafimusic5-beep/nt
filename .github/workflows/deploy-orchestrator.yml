@@ -279,6 +279,7 @@ jobs:
             --exclude='emery vpn orchestrator/.venv' \
             --exclude='emery vpn orchestrator/data' \
             --exclude='emery vpn orchestrator/**/__pycache__' \
+            --exclude='emery vpn orchestrator/debug-*.log' \
             -czf "$backup/code-before-deploy.tgz" \
             -C "$repo" \
             orchestrator \
@@ -383,7 +384,8 @@ jobs:
           remote_phase=daemon_reload
           systemctl daemon-reload
           remote_phase=backend_start
-          systemctl enable --now emery-backend.service
+          systemctl enable emery-backend.service
+          systemctl restart emery-backend.service
           remote_phase=api_restart
           systemctl restart skryon-api.service
           remote_phase=bot_restart
