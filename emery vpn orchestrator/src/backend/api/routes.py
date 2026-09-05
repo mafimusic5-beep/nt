@@ -15,6 +15,8 @@ from src.backend.schemas.admin import (
     GrantSubscriptionResponse,
     HealthcheckRunResponse,
     ManualCodeResponse,
+    ManualNodeBootstrapRequest,
+    ManualNodeBootstrapResponse,
     NodeActionResponse,
     ProblemActivationResponse,
     VpnNodeResponse,
@@ -47,10 +49,12 @@ from src.backend.schemas.subscription import (
 )
 from src.backend.services.admin_service import AdminService
 from src.backend.services.capacity_service import CapacityService
+from src.backend.services.manual_node_admin_service import ManualNodeAdminService
 from src.backend.services.order_service import OrderService
 from src.backend.services.pool_assignment_service import PoolAssignmentService
 from src.backend.services.renewal_planner_service import RenewalPlannerService
 from src.backend.services.subscription_service import SubscriptionService
+from src.backend.services.traffic_policy_service import TrafficPolicyService
 from src.backend.utils.app_version import (
     APP_VERSION_HEADER,
     app_update_required,
@@ -94,8 +98,6 @@ def heartbeat_device(payload: HeartbeatRequest, db: Session = Depends(get_db)):
 
 @router.post("/device/unbind")
 def unbind_device(payload: UnbindDeviceRequest, db: Session = Depends(get_db)):
-    # Keep the route for old clients, but fail closed: paid device slots are
-    # permanent and cannot be recycled by the user.
     raise HTTPException(status_code=403, detail="device_unbind_disabled")
 
 
@@ -105,14 +107,12 @@ def get_vpn_config(
     x_emery_device_id: str = Header(default="", alias="X-Emery-Device-Id"),
     db: Session = Depends(get_db),
 ):
-    # #region agent log
     agent_log(
         hypothesis_id="H2",
         location="routes.py:get_vpn_config",
         message="vpn_config_requested",
         data={"telegram_id": telegram_id},
     )
-    # #endregion
     return SubscriptionService(db).get_vpn_config(telegram_id, x_emery_device_id or None)
 
 
@@ -137,11 +137,16 @@ def connect_vpn_server(
     x_emery_device_id: str = Header(default="", alias="X-Emery-Device-Id"),
     db: Session = Depends(get_db),
 ):
-    return SubscriptionService(db).connect_to_server(
+    result = SubscriptionService(db).connect_to_server(
         payload.access_key,
         payload.server_id,
         x_emery_device_id or None,
     )
+    TrafficPolicyService(db).apply_from_import_text(
+        result.get("import_text", ""),
+        payload.traffic_policy,
+    )
+    return result
 
 
 @router.get("/user/devices", response_model=list[UserDeviceResponse])
@@ -165,7 +170,6 @@ def internal_create_order(payload: CreateOrderRequest, db: Session = Depends(get
     dependencies=[Depends(require_internal_api_key)],
 )
 def internal_confirm_payment(payload: ConfirmPaymentRequest, db: Session = Depends(get_db)):
-    # #region agent log
     agent_log(
         hypothesis_id="H1",
         location="routes.py:internal_confirm_payment",
@@ -176,7 +180,6 @@ def internal_confirm_payment(payload: ConfirmPaymentRequest, db: Session = Depen
             "provider_payment_id_prefix": payload.provider_payment_id[:8],
         },
     )
-    # #endregion
     return OrderService(db).confirm_payment(payload)
 
 
@@ -226,6 +229,18 @@ def admin_list_nodes(db: Session = Depends(get_db)):
 @router.post("/admin/nodes", response_model=VpnNodeResponse, dependencies=[Depends(require_admin_api_key)])
 def admin_create_node(payload: VpnNodeUpsertRequest, db: Session = Depends(get_db)):
     return AdminService(db).create_node(payload)
+
+
+@router.post(
+    "/admin/nodes/bootstrap",
+    response_model=ManualNodeBootstrapResponse,
+    dependencies=[Depends(require_admin_api_key)],
+)
+def admin_bootstrap_node(
+    payload: ManualNodeBootstrapRequest,
+    db: Session = Depends(get_db),
+):
+    return ManualNodeAdminService(db).bootstrap(payload)
 
 
 @router.put(
