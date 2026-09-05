@@ -3,10 +3,11 @@ import secrets
 import string
 
 
+ACTIVATION_CODE_LENGTH = 11
 _ALPHABET = string.ascii_uppercase + string.digits
 
 
-def generate_activation_code(length: int = 12) -> str:
+def generate_activation_code(length: int = ACTIVATION_CODE_LENGTH) -> str:
     return "".join(secrets.choice(_ALPHABET) for _ in range(length))
 
 
