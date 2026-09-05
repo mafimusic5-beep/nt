@@ -119,5 +119,6 @@ async def setup_server_handler(message: Message) -> None:
         f"Endpoint: {node.get('endpoint')}\n"
         f"Выход: {egress_label}\n"
         f"Статус: {node.get('status')} / {node.get('health_status')}\n"
-        f"Ёмкость: {node.get('current_clients')}/{node.get('capacity_clients')}"
+        f"Слоты пула: {node.get('current_clients')}/{node.get('capacity_clients')}\n"
+        "(это выданные device assignments, не число пользователей онлайн)"
     )
