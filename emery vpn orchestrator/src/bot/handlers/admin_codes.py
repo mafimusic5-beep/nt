@@ -1,9 +1,12 @@
 import logging
 from html import escape
+
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
+
 from src.bot.api.backend_client import BackendClient, BackendClientError
 from src.bot.ui.keyboards import admin_code_detail_keyboard, admin_codes_keyboard, admin_menu_keyboard
 from src.bot.utils.access import is_admin
@@ -14,17 +17,22 @@ router = Router(name="admin_codes")
 client = BackendClient()
 PAGE_SIZE = 1
 
+
 class CodeSearchState(StatesGroup):
     waiting_query = State()
+
 
 def _admin(user_id):
     return bool(user_id) and is_admin(user_id)
 
+
 def _hash_short(value):
     return f"{value[:10]}..." if value else "-"
 
+
 async def _admin_request(method, path, params=None):
     return await client._request(method, path, params=params, headers={"X-Admin-Api-Key": client.admin_api_key})
+
 
 def _list_text(payload, query=None):
     items = payload.get("items", [])
@@ -48,6 +56,7 @@ def _list_text(payload, query=None):
         "Use arrows or open current key.",
     ])
 
+
 def _detail_text(code):
     return "\n".join([
         f"Key #{code['id']}",
@@ -63,6 +72,7 @@ def _detail_text(code):
         "",
         "Plain key cannot be restored from hash.",
     ])
+
 
 async def _show_list(target, state: FSMContext, page: int, query=None, edit=True):
     offset = max(page, 0) * PAGE_SIZE
@@ -82,7 +92,17 @@ async def _show_list(target, state: FSMContext, page: int, query=None, edit=True
     else:
         await target.answer(text, parse_mode="HTML", reply_markup=markup)
 
-@router.message(CodeSearchState.waiting_query)
+
+@router.message(CodeSearchState.waiting_query, Command("cancel"))
+async def code_search_cancel(message: Message, state: FSMContext):
+    if not _admin(message.from_user.id):
+        await message.answer("Access denied.")
+        return
+    await state.clear()
+    await message.answer("Search canceled.", reply_markup=admin_menu_keyboard())
+
+
+@router.message(CodeSearchState.waiting_query, F.text & ~F.text.startswith("/"))
 async def code_search_input(message: Message, state: FSMContext):
     if not _admin(message.from_user.id):
         await message.answer("Access denied.")
@@ -91,7 +111,7 @@ async def code_search_input(message: Message, state: FSMContext):
     if not query:
         await message.answer("Empty query.")
         return
-    if query.lower() in {"cancel", "/cancel", "отмена"}:
+    if query.lower() in {"cancel", "отмена"}:
         await state.clear()
         await message.answer("Search canceled.", reply_markup=admin_menu_keyboard())
         return
@@ -101,6 +121,7 @@ async def code_search_input(message: Message, state: FSMContext):
         logger.warning("admin code search failed: %s", exc.detail)
         await message.answer(f"Backend error: {exc.detail}")
 
+
 @router.callback_query(F.data == "admin_codes_search")
 async def code_search_start(callback: CallbackQuery, state: FSMContext):
     if not _admin(callback.from_user.id):
@@ -108,8 +129,9 @@ async def code_search_start(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(CodeSearchState.waiting_query)
     await state.update_data(code_query="")
-    await callback.message.edit_text("Send search query. Use id, telegram id, subscription id, status or hash part. Send cancel to stop.", reply_markup=admin_menu_keyboard())
+    await callback.message.edit_text("Send search query. Use id, telegram id, subscription id, status or hash part. Send /cancel to stop.", reply_markup=admin_menu_keyboard())
     await callback.answer()
+
 
 @router.callback_query(F.data == "admin_codes")
 async def code_list_open(callback: CallbackQuery, state: FSMContext):
@@ -123,6 +145,7 @@ async def code_list_open(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(f"Backend error: {exc.detail}", reply_markup=admin_menu_keyboard())
         await callback.answer()
 
+
 @router.callback_query(F.data.startswith("admin_codes_page:"))
 async def code_list_page(callback: CallbackQuery, state: FSMContext):
     if not _admin(callback.from_user.id):
@@ -135,6 +158,7 @@ async def code_list_page(callback: CallbackQuery, state: FSMContext):
     await _show_list(callback.message, state, int(page_raw), query)
     await callback.answer()
 
+
 @router.callback_query(F.data.startswith("admin_code_open:"))
 async def code_open(callback: CallbackQuery):
     if not _admin(callback.from_user.id):
@@ -144,6 +168,7 @@ async def code_open(callback: CallbackQuery):
     code = await _admin_request("GET", f"/api/v1/admin/codes/{int(code_id_raw)}")
     await callback.message.edit_text(_detail_text(code), parse_mode="HTML", reply_markup=admin_code_detail_keyboard(int(code_id_raw), code.get("status", ""), mode=mode, page=int(page_raw)))
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("admin_code_action:"))
 async def code_action(callback: CallbackQuery, state: FSMContext):
@@ -166,6 +191,7 @@ async def code_action(callback: CallbackQuery, state: FSMContext):
     prefix = "Revoked.\n\n" if action == "revoke" else "Activated.\n\n"
     await callback.message.edit_text(prefix + _detail_text(code), parse_mode="HTML", reply_markup=admin_code_detail_keyboard(code_id, code.get("status", ""), mode=mode, page=page))
     await callback.answer()
+
 
 @router.callback_query(F.data.startswith("admin_codes_back:"))
 async def code_back(callback: CallbackQuery, state: FSMContext):
