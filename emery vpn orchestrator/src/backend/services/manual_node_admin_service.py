@@ -22,6 +22,8 @@ from src.common.models import VpnAssignment, VpnNode
 
 
 _XRAY_RESTORE_SETTLE_SECONDS = 2.5
+_DEVICE_GATE_PACKAGE_LOCK_RETRY_SECONDS = 15.0
+_DEVICE_GATE_PACKAGE_LOCK_ATTEMPTS = 8
 
 
 class ManualNodeAdminService:
@@ -99,6 +101,40 @@ class ManualNodeAdminService:
         )
         self.db.commit()
         raise HTTPException(status_code=502, detail=safe_detail)
+
+    @staticmethod
+    def _is_package_manager_lock_failure(detail: str) -> bool:
+        lowered = (detail or "").casefold()
+        return any(
+            marker in lowered
+            for marker in (
+                "could not get lock",
+                "unable to acquire the dpkg frontend lock",
+                "/var/lib/dpkg/lock",
+                "/var/lib/dpkg/lock-frontend",
+                "unattended-upgr",
+            )
+        )
+
+    def _bootstrap_device_gate(self, node: VpnNode) -> dict[str, object]:
+        service = ManualDeviceGateService()
+        result: dict[str, object] = {"status": "failed", "detail": "device_gate_bootstrap_failed"}
+        for attempt in range(_DEVICE_GATE_PACKAGE_LOCK_ATTEMPTS):
+            result = service.bootstrap(node)
+            if result.get("status") == "ok":
+                return result
+            detail = str(result.get("detail") or "device_gate_bootstrap_failed")
+            if (
+                not self._is_package_manager_lock_failure(detail)
+                or attempt + 1 >= _DEVICE_GATE_PACKAGE_LOCK_ATTEMPTS
+            ):
+                return result
+            # Fresh Ubuntu/Debian images commonly start unattended-upgrades on
+            # first boot. Do not fail /setup_server just because dpkg is briefly
+            # busy; retry only this known transient and keep all other gate
+            # failures fail-closed.
+            time.sleep(_DEVICE_GATE_PACKAGE_LOCK_RETRY_SECONDS)
+        return result
 
     def _restore_active_assignments(self, node: VpnNode) -> int:
         assignments = self.db.scalars(
@@ -250,7 +286,7 @@ class ManualNodeAdminService:
 
         restored_assignments = 0
         if settings.device_bound_gate_enabled:
-            gate_result = ManualDeviceGateService().bootstrap(node)
+            gate_result = self._bootstrap_device_gate(node)
             if gate_result.get("status") != "ok":
                 self._fail_bootstrap(
                     node,
