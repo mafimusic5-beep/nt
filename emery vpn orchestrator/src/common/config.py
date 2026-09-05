@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     device_bound_gate_enabled: bool = False
     device_gate_client_loopback_port: int = 17890
     device_gate_service_name: str = "emery-device-gate"
+    device_gate_api_key: str = ""
     pool_bridge_api_key: str = ""
     pool_assignment_prepare_ttl_seconds: int = 300
     pool_assignment_maintenance_interval_seconds: int = 60
@@ -75,6 +76,8 @@ class Settings(BaseSettings):
     manual_bootstrap_ssh_timeout_seconds: int = 30
     manual_bootstrap_vless_port: int = 443
     manual_bootstrap_reality_sni: str = "www.cloudflare.com"
+    manual_bootstrap_device_gate_port: int = 8447
+    manual_bootstrap_device_gate_authorize_url: str = "https://skryon.ru/api/device-gate/authorize"
 
     # Optional high-quality ISP egress. When enabled, /setup_server still needs
     # only the new VPS IP/password: the control backend allocates a unique
