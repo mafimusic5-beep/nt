@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,12 +8,25 @@ import httpx
 
 from src.common.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 class BackendClientError(Exception):
-    def __init__(self, detail: str, status_code: int = 500):
+    def __init__(
+        self,
+        detail: str,
+        status_code: int = 500,
+        *,
+        method: str = "",
+        path: str = "",
+        base_url: str = "",
+    ):
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+        self.method = method
+        self.path = path
+        self.base_url = base_url
 
 
 @dataclass(slots=True)
@@ -30,14 +44,31 @@ class BackendClient:
         params: dict | None = None,
         headers: dict | None = None,
         timeout_seconds: float = 20.0,
+        base_url: str | None = None,
     ) -> Any:
-        url = f"{self.base_url}{path}"
+        target_base_url = (base_url or self.base_url).rstrip("/")
+        url = f"{target_base_url}{path}"
         req_headers = headers or {}
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             try:
                 response = await client.request(method, url, json=json_data, params=params, headers=req_headers)
             except httpx.HTTPError as exc:
-                raise BackendClientError("backend_unreachable", 503) from exc
+                # Never log request payloads or headers here: /setup_server carries
+                # a root password and admin calls carry API keys.
+                logger.error(
+                    "backend request failed method=%s path=%s base_url=%s error=%s",
+                    method,
+                    path,
+                    target_base_url,
+                    type(exc).__name__,
+                )
+                raise BackendClientError(
+                    "backend_unreachable",
+                    503,
+                    method=method,
+                    path=path,
+                    base_url=target_base_url,
+                ) from exc
         payload = {}
         if response.content:
             try:
@@ -46,7 +77,21 @@ class BackendClient:
                 payload = {"detail": "invalid_backend_payload"}
         if response.status_code >= 400:
             detail = payload.get("detail") if isinstance(payload, dict) else "backend_error"
-            raise BackendClientError(str(detail), response.status_code)
+            logger.warning(
+                "backend rejected request method=%s path=%s base_url=%s status=%s detail=%s",
+                method,
+                path,
+                target_base_url,
+                response.status_code,
+                str(detail)[:160],
+            )
+            raise BackendClientError(
+                str(detail),
+                response.status_code,
+                method=method,
+                path=path,
+                base_url=target_base_url,
+            )
         return payload
 
     async def get_subscription_status(self, telegram_id: int) -> dict:
@@ -97,13 +142,32 @@ class BackendClient:
         )
 
     async def admin_bootstrap_node(self, payload: dict) -> dict:
-        return await self._request(
-            "POST",
-            "/api/v1/admin/nodes/bootstrap",
-            json_data=payload,
-            headers={"X-Admin-Api-Key": self.admin_api_key},
-            timeout_seconds=300.0,
-        )
+        path = "/api/v1/admin/nodes/bootstrap"
+        request_kwargs = {
+            "json_data": payload,
+            "headers": {"X-Admin-Api-Key": self.admin_api_key},
+            "timeout_seconds": 300.0,
+        }
+        try:
+            return await self._request("POST", path, **request_kwargs)
+        except BackendClientError as exc:
+            local_backend = "http://127.0.0.1:9330"
+            # Production bot and modern backend run on the same control VPS. If
+            # an old BACKEND_BASE_URL still points at the legacy compatibility
+            # API, a 404 here should not block VPS provisioning.
+            if exc.status_code != 404 or self.base_url.rstrip("/") == local_backend:
+                raise
+            logger.warning(
+                "bootstrap endpoint missing on configured backend; retrying local modern backend configured=%s fallback=%s",
+                self.base_url,
+                local_backend,
+            )
+            return await self._request(
+                "POST",
+                path,
+                **request_kwargs,
+                base_url=local_backend,
+            )
 
     async def admin_disable_node(self, node_id: int) -> dict:
         return await self._request(
