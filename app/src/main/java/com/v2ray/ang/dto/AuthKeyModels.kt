@@ -62,6 +62,7 @@ data class VpnServerItemApiResponseBody(
 data class VpnConnectRequestBody(
     @SerializedName("access_key") val accessKey: String,
     @SerializedName("server_id") val serverId: Long,
+    @SerializedName("traffic_policy") val trafficPolicy: String,
 )
 
 data class VpnConnectApiResponseBody(
