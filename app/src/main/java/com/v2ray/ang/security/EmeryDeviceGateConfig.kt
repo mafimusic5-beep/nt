@@ -14,7 +14,7 @@ object EmeryDeviceGateConfig {
     const val LOCAL_PORT = 17890
     private const val PREF_PREFIX = "pref_emery_device_gate_"
     private const val PROTOCOL_VERSION = 1
-    private const val PUBLIC_PROFILE_NAME = "Skryon"
+    private const val PUBLIC_PROFILE_NAME = "Server"
     private val safeHost = Regex("^[A-Za-z0-9.-]{1,255}$")
     private val safePin = Regex("^[a-f0-9]{64}$")
 
