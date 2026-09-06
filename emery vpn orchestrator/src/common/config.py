@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     node_deprovision_script: str = ""
     node_healthcheck_script: str = ""
 
+    # Automatic node-region detection. Provider metadata is preferred; public-IP
+    # geolocation is used only as a fallback. Unknown regions stay out of pools.
+    node_region_autodetect_enabled: bool = True
+    node_region_geo_url_template: str = "https://ipwho.is/{ip}"
+    node_region_geo_timeout_seconds: float = 5.0
+
     # Legacy placeholders kept for compatibility.
     firstvds_api_url: str = "https://api.firstvds.ru"
     firstvds_api_token: str = ""
