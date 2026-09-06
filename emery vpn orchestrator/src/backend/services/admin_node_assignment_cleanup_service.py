@@ -15,6 +15,9 @@ from src.common.models import VpnAssignment, VpnNode
 
 _XRAY_CLEANUP_SETTLE_SECONDS = 2.5
 _CLEANUP_LEASE_MINUTES = 10
+_REMOVE_ATTEMPTS = 3
+_REMOVE_RETRY_SECONDS = 5.0
+_REVOCATION_STATUSES = {"revocation_pending", "revoking"}
 
 
 class AdminNodeAssignmentCleanupService:
@@ -52,6 +55,24 @@ class AdminNodeAssignmentCleanupService:
             )
             or 0
         )
+
+    def _remove_with_retry(self, node: VpnNode, assignment: VpnAssignment):
+        result = None
+        error_detail = "credential_remove_failed"
+        for attempt in range(1, _REMOVE_ATTEMPTS + 1):
+            try:
+                result = self.transport.remove(node, assignment)
+            except Exception as exc:  # noqa: BLE001
+                result = None
+                error_detail = f"credential_remove_failed:{type(exc).__name__}"
+            else:
+                if result.ok:
+                    return result, ""
+                error_detail = result.detail or "credential_remove_failed"
+
+            if attempt < _REMOVE_ATTEMPTS:
+                self.sleep_fn(_REMOVE_RETRY_SECONDS)
+        return result, error_detail
 
     def clear(self, node_id: int) -> dict[str, object]:
         node = self.db.get(VpnNode, node_id)
@@ -93,8 +114,21 @@ class AdminNodeAssignmentCleanupService:
             ):
                 raise HTTPException(status_code=409, detail="node_assignment_cleanup_in_progress")
 
+        # If the only counted rows left are revocation rows and the node was left
+        # maintenance/down by an earlier failed cleanup, a successful retry must
+        # return it to service. This is exactly the state produced by fail-closed
+        # cleanup; intentional maintenance with ordinary active rows is preserved.
+        resume_failed_cleanup = (
+            node.status == "maintenance"
+            and node.health_status == "down"
+            and all(assignment.status in _REVOCATION_STATUSES for assignment in assignments)
+        )
         previous_status = node.status
         previous_health = node.health_status
+        restore_active = (
+            node.status == "active" and node.health_status in {"healthy", "degraded"}
+        ) or resume_failed_cleanup
+
         assignment_ids = [assignment.id for assignment in assignments]
         lease_expires_at = now + timedelta(minutes=_CLEANUP_LEASE_MINUTES)
 
@@ -146,13 +180,7 @@ class AdminNodeAssignmentCleanupService:
         failed = 0
         last_index = len(assignments) - 1
         for index, assignment in enumerate(assignments):
-            try:
-                result = self.transport.remove(node, assignment)
-            except Exception as exc:  # noqa: BLE001
-                result = None
-                error_detail = f"credential_remove_failed:{type(exc).__name__}"
-            else:
-                error_detail = "" if result.ok else (result.detail or "credential_remove_failed")
+            result, error_detail = self._remove_with_retry(node, assignment)
 
             if result is not None and result.ok:
                 assignment.status = "revoked"
@@ -175,9 +203,13 @@ class AdminNodeAssignmentCleanupService:
 
         remaining = self._remaining_count(node.id)
         node.current_clients = remaining
-        if failed == 0:
-            node.status = previous_status
-            node.health_status = previous_health
+        if failed == 0 and remaining == 0:
+            if restore_active:
+                node.status = "active"
+                node.health_status = "healthy"
+            else:
+                node.status = previous_status
+                node.health_status = previous_health
         else:
             # Fail closed if any stale credential could not be removed.
             node.status = "maintenance"
