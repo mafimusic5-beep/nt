@@ -71,8 +71,9 @@ class NodeSelfHealingService:
             if event:
                 actions.append(event)
 
-        if actions:
-            self.db.commit()
+        # Quarantine/restoration must be persisted even when no repair action was
+        # triggered yet (for example failure 1/3 or cooldown).
+        self.db.commit()
         return {"enabled": True, "actions": actions}
 
     def _observe_node(self, node: Any, row: dict) -> dict | None:
@@ -188,12 +189,14 @@ class NodeSelfHealingService:
                 }
 
         provider_reboot = self._reboot_via_provider(node, attempt=attempt)
-        if provider_reboot:
+        if provider_reboot and provider_reboot.get("status") != "failed":
             return provider_reboot
 
         script_recovery = self._run_recovery_script(node, reason=reason, attempt=attempt)
         if script_recovery:
             return script_recovery
+        if provider_reboot:
+            return provider_reboot
 
         return {
             "status": "failed",
