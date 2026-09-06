@@ -151,6 +151,7 @@ class AdminNodeAssignmentCleanupService:
                 prepare_expires_at=lease_expires_at,
                 last_error="",
             )
+            .execution_options(synchronize_session=False)
         ).rowcount or 0
         if claimed != len(assignment_ids):
             self.db.rollback()
