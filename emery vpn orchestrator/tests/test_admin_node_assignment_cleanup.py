@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+from fastapi import HTTPException
+
 from src.backend.services.admin_node_assignment_cleanup_service import (
     AdminNodeAssignmentCleanupService,
 )
@@ -125,3 +128,46 @@ def test_cleanup_fails_closed_when_remote_credential_removal_fails(db_session):
     assert node.current_clients == 1
     assert node.status == "maintenance"
     assert node.health_status == "down"
+
+
+def test_cleanup_rejects_second_run_while_lease_is_active(db_session):
+    node = _node(db_session, current_clients=1)
+    assignment = _assignment(db_session, node, "device-a", 20000)
+    assignment.status = "revoking"
+    assignment.prepare_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    db_session.commit()
+    transport = FakeTransport()
+
+    with pytest.raises(HTTPException) as exc_info:
+        AdminNodeAssignmentCleanupService(
+            db_session,
+            transport=transport,
+            sleep_fn=lambda _seconds: None,
+        ).clear(node.id)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "node_assignment_cleanup_in_progress"
+    assert transport.removed == []
+
+
+def test_cleanup_resumes_expired_revoking_lease(db_session):
+    node = _node(db_session, current_clients=1)
+    assignment = _assignment(db_session, node, "device-a", 20000)
+    assignment.status = "revoking"
+    assignment.prepare_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db_session.commit()
+    transport = FakeTransport()
+
+    result = AdminNodeAssignmentCleanupService(
+        db_session,
+        transport=transport,
+        sleep_fn=lambda _seconds: None,
+    ).clear(node.id)
+
+    db_session.refresh(assignment)
+    db_session.refresh(node)
+    assert result["cleared"] == 1
+    assert result["remaining"] == 0
+    assert transport.removed == [assignment.id]
+    assert assignment.status == "revoked"
+    assert node.current_clients == 0
