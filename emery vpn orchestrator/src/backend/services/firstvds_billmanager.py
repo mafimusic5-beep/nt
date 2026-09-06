@@ -154,6 +154,15 @@ class FirstVdsBillManagerClient:
     def delete_vds(self, vps_id: str) -> dict[str, Any]:
         return self.request("vds.delete", elid=vps_id)
 
+    def reboot_vds(self, vps_id: str, *, hard: bool = False) -> dict[str, Any]:
+        """Reboot a VDS service through BILLmanager.
+
+        Normal self-healing uses a soft reboot first. A hard reboot is reserved
+        for repeated failed recovery attempts.
+        """
+        func = "service.hardreboot" if hard else "service.reboot"
+        return self.request(func, elid=vps_id)
+
     def set_service_password(self, vps_id: str, new_password: str) -> dict[str, Any]:
         return self.request("service.set_password", elid=vps_id, passwd=new_password, confirm=new_password, sok="ok")
 
