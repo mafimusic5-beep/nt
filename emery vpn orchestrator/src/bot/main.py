@@ -7,6 +7,7 @@ from aiogram.types import ErrorEvent
 
 from src.bot.handlers.admin import router as admin_router
 from src.bot.handlers.admin_codes import router as admin_codes_router
+from src.bot.handlers.admin_node_delete import router as admin_node_delete_router
 from src.bot.handlers.admin_slots import router as admin_slots_router
 from src.bot.handlers.compat_commands import router as compat_commands_router
 from src.bot.handlers.server_setup import router as server_setup_router
@@ -57,6 +58,9 @@ async def run() -> None:
     dp.include_router(subscription_router)
     dp.include_router(admin_codes_router)
     dp.include_router(server_setup_router)
+    # `/delconfig` is an explicit delete operation; keep this router ahead of
+    # the legacy admin handler that historically only disabled nodes.
+    dp.include_router(admin_node_delete_router)
     # Keep the explicit slot semantics ahead of legacy /configs aliases so the
     # bot never presents reserved assignment slots as live connected clients.
     dp.include_router(admin_slots_router)
