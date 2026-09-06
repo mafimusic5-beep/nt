@@ -16,7 +16,8 @@ class GrantSubscriptionResponse(BaseModel):
 
 class VpnNodeUpsertRequest(BaseModel):
     name: str
-    region_code: str = "moscow"
+    # Legacy/manual fallback. With auto-detection enabled this value is ignored.
+    region_code: str = ""
     endpoint: str
     config_payload: str
     status: str = "active"
@@ -77,6 +78,9 @@ class NodeActionResponse(BaseModel):
     status: str
     detail: str | None = None
     returncode: int | None = None
+    region_code: str | None = None
+    region_name: str | None = None
+    region_source: str | None = None
 
 
 class BestNodeResponse(BaseModel):
