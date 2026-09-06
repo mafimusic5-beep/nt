@@ -76,8 +76,8 @@ def _slugify(value: str, max_length: int = 16) -> str:
 class RegionDetectionService:
     """Resolve a VPN node to a stable region pool without manual region input.
 
-    Provider metadata is preferred. Public-IP geolocation is a fallback. A failed
-    lookup never guesses a pool: callers should keep the node out of active pools.
+    Provider metadata is preferred. Endpoint/IP evidence comes next. The configured
+    provider datacenter is only a final fallback. Failed lookup never guesses a pool.
     """
 
     def detect(
@@ -95,20 +95,23 @@ class RegionDetectionService:
         if provider_hit:
             return provider_hit
 
-        datacenter_hit = self._from_text(configured_datacenter, source="provider_datacenter", confidence=0.95)
-        if datacenter_hit:
-            return datacenter_hit
-
-        host_hit = self._from_text(endpoint, source="endpoint_name", confidence=0.70)
+        host_hit = self._from_text(endpoint, source="endpoint_name", confidence=0.90)
         if host_hit:
             return host_hit
 
         ip = self._resolve_public_ip(endpoint)
-        if not ip:
-            logger.warning("region detection skipped: endpoint=%s has no public IP", endpoint)
-            return None
+        if ip:
+            geo_hit = self._from_ip_geo(ip)
+            if geo_hit:
+                return geo_hit
+        elif endpoint:
+            logger.warning("region detection: endpoint=%s has no public IP", endpoint)
 
-        return self._from_ip_geo(ip)
+        datacenter_hit = self._from_text(configured_datacenter, source="provider_datacenter", confidence=0.75)
+        if datacenter_hit:
+            return datacenter_hit
+
+        return None
 
     @staticmethod
     def _metadata_text(metadata: dict[str, Any]) -> str:
@@ -138,11 +141,11 @@ class RegionDetectionService:
     def _from_text(value: str, *, source: str, confidence: float) -> DetectedRegion | None:
         if not value:
             return None
-        normalized = f" {_normalize_text(value)} "
+        normalized = _normalize_text(value)
         for aliases, code, name in _CITY_ALIASES:
             for alias in aliases:
                 needle = _normalize_text(alias)
-                if needle and re.search(rf"(?:^|\s){re.escape(needle)}(?:\s|$)", normalized.strip()):
+                if needle and re.search(rf"(?:^|\s){re.escape(needle)}(?:\s|$)", normalized):
                     return DetectedRegion(code=code, name=name, source=source, confidence=confidence)
         return None
 
