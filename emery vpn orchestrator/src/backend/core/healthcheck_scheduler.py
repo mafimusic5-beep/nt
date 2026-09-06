@@ -5,6 +5,7 @@ import logging
 from contextlib import suppress
 
 from src.backend.services.node_orchestration_service import NodeOrchestrationService
+from src.backend.services.node_self_healing_service import NodeSelfHealingService
 from src.common.config import settings
 from src.common.db import SessionLocal
 
@@ -29,22 +30,42 @@ _task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
 
 
+def _run_healthcheck_tick() -> dict:
+    # Keep all synchronous DB/network work in the worker thread. This also means
+    # recovery actions (SSH/provider reboot) never block the FastAPI event loop.
+    db = SessionLocal()
+    try:
+        orchestrator = NodeOrchestrationService(db)
+        result = orchestrator.run_healthcheck()
+        self_heal = NodeSelfHealingService(db, orchestrator.provisioning).process(result)
+        return {**result, "self_heal": self_heal}
+    finally:
+        db.close()
+
+
 async def _runner() -> None:
     while _stop_event and not _stop_event.is_set():
-        db = SessionLocal()
         try:
-            result = await asyncio.to_thread(NodeOrchestrationService(db).run_healthcheck)
-            logger.debug("scheduled healthcheck tick completed: checked=%s", result.get("checked", 0))
+            result = await asyncio.to_thread(_run_healthcheck_tick)
+            actions = result.get("self_heal", {}).get("actions", [])
+            logger.debug(
+                "scheduled healthcheck tick completed: checked=%s self_heal_actions=%s",
+                result.get("checked", 0),
+                len(actions),
+            )
             # #region agent log
-            _debug_log("H1", "healthcheck_scheduler.py:_runner", "tick_ok", {"checked": result.get("checked", 0)})
+            _debug_log(
+                "H1",
+                "healthcheck_scheduler.py:_runner",
+                "tick_ok",
+                {"checked": result.get("checked", 0), "self_heal_actions": len(actions)},
+            )
             # #endregion
         except Exception as exc:
             logger.warning("scheduled healthcheck tick failed: %s: %s", type(exc).__name__, exc)
             # #region agent log
             _debug_log("H1", "healthcheck_scheduler.py:_runner", "tick_failed", {"error": f"{type(exc).__name__}: {exc}"})
             # #endregion
-        finally:
-            db.close()
         await asyncio.sleep(max(settings.healthcheck_interval_seconds, 10))
 
 
