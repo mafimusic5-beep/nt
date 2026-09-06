@@ -55,14 +55,16 @@ class AdminService:
         )
 
     def create_node(self, req: VpnNodeUpsertRequest) -> VpnNodeResponse:
-        if req.region_code != "moscow":
-            raise HTTPException(status_code=400, detail="only_moscow_region_supported")
+        auto_region = settings.node_region_autodetect_enabled
+        initial_region = "unknown" if auto_region else (req.region_code.strip() or settings.default_region_code)
+        initial_status = "draft" if auto_region else req.status
+
         node = self.admin_repo.create_node(
             req.name,
-            req.region_code,
+            initial_region,
             req.endpoint,
             req.config_payload,
-            req.status,
+            initial_status,
             req.health_status,
             req.load_score,
             req.priority,
@@ -74,7 +76,27 @@ class AdminService:
             req.ssh_key_fingerprint,
             req.ssh_key_status,
         )
-        self.audit_repo.write("admin", "api", "create_node", "vpn_node", str(node.id), {"region": node.region_code})
+
+        detected = None
+        if auto_region and node.endpoint:
+            detected = self.node_orchestrator.detect_and_assign_region(node)
+            if detected:
+                node.status = req.status
+                node.health_status = req.health_status
+
+        self.audit_repo.write(
+            "admin",
+            "api",
+            "create_node",
+            "vpn_node",
+            str(node.id),
+            {
+                "region": node.region_code,
+                "region_autodetect": auto_region,
+                "region_source": detected.source if detected else None,
+                "status": node.status,
+            },
+        )
         self.db.commit()
         return self._node_response(node)
 
