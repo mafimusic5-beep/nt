@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from src.backend.repositories.audit_repo import AuditRepository
@@ -14,6 +14,7 @@ from src.common.models import VpnAssignment, VpnNode
 
 
 _XRAY_CLEANUP_SETTLE_SECONDS = 2.5
+_CLEANUP_LEASE_MINUTES = 10
 
 
 class AdminNodeAssignmentCleanupService:
@@ -34,6 +35,12 @@ class AdminNodeAssignmentCleanupService:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     def _remaining_count(self, node_id: int) -> int:
         return int(
@@ -73,8 +80,48 @@ class AdminNodeAssignmentCleanupService:
                 "health_status": node.health_status,
             }
 
+        now = self._now()
+        # A second /clear_slots must never run against the same credentials while
+        # the first cleanup is still removing them remotely. The lease also lets
+        # an interrupted cleanup be retried safely after it expires.
+        for assignment in assignments:
+            expires_at = assignment.prepare_expires_at
+            if (
+                assignment.status == "revoking"
+                and expires_at is not None
+                and self._as_utc(expires_at) > now
+            ):
+                raise HTTPException(status_code=409, detail="node_assignment_cleanup_in_progress")
+
         previous_status = node.status
         previous_health = node.health_status
+        assignment_ids = [assignment.id for assignment in assignments]
+        lease_expires_at = now + timedelta(minutes=_CLEANUP_LEASE_MINUTES)
+
+        # Claim the whole cleanup set atomically before the first SSH mutation.
+        # If another worker claimed any row after our SELECT, roll back and fail
+        # fast instead of letting two cleanup loops restart Xray concurrently.
+        claimed = self.db.execute(
+            update(VpnAssignment)
+            .where(
+                VpnAssignment.id.in_(assignment_ids),
+                VpnAssignment.status.in_(tuple(PoolAssignmentService.COUNTED_STATUSES)),
+                or_(
+                    VpnAssignment.status != "revoking",
+                    VpnAssignment.prepare_expires_at.is_(None),
+                    VpnAssignment.prepare_expires_at <= now,
+                ),
+            )
+            .values(
+                status="revoking",
+                prepare_expires_at=lease_expires_at,
+                last_error="",
+            )
+        ).rowcount or 0
+        if claimed != len(assignment_ids):
+            self.db.rollback()
+            raise HTTPException(status_code=409, detail="node_assignment_cleanup_in_progress")
+
         # Stop the pool from assigning new devices while credentials are being
         # removed and the counter is being reconciled.
         node.status = "maintenance"
@@ -85,21 +132,20 @@ class AdminNodeAssignmentCleanupService:
             "admin_node_assignment_cleanup_started",
             "vpn_node",
             str(node.id),
-            {"count": len(assignments)},
+            {"count": len(assignment_ids)},
         )
         self.db.commit()
+
+        assignments = self.db.scalars(
+            select(VpnAssignment)
+            .where(VpnAssignment.id.in_(assignment_ids))
+            .order_by(VpnAssignment.id.asc())
+        ).all()
 
         cleared = 0
         failed = 0
         last_index = len(assignments) - 1
         for index, assignment in enumerate(assignments):
-            # Claim the row first so a concurrent prepare cannot hand the stale
-            # credential back to a client while we are removing it remotely.
-            assignment.status = "revoking"
-            assignment.prepare_expires_at = self._now() + timedelta(minutes=5)
-            assignment.last_error = ""
-            self.db.commit()
-
             try:
                 result = self.transport.remove(node, assignment)
             except Exception as exc:  # noqa: BLE001
