@@ -40,6 +40,18 @@ class Settings(BaseSettings):
     node_provision_script: str = ""
     node_deprovision_script: str = ""
     node_healthcheck_script: str = ""
+    node_self_heal_script: str = ""
+
+    # Automatic health self-healing. Every node is checked by the scheduler.
+    # A bad node is removed from pools immediately, but repair only starts after
+    # several consecutive failures to avoid reacting to one transient timeout.
+    health_self_heal_enabled: bool = True
+    health_self_heal_failure_threshold: int = 3
+    health_self_heal_cooldown_seconds: int = 120
+    health_self_heal_recheck_seconds: float = 2.0
+    health_self_heal_max_attempts: int = 3
+    health_self_heal_retry_window_seconds: int = 1800
+    health_self_heal_hard_reboot_after_attempt: int = 3
 
     # Automatic node-region detection. Provider metadata is preferred; public-IP
     # geolocation is used only as a fallback. Unknown regions stay out of pools.
