@@ -22,6 +22,18 @@ class FakeTransport:
         return CredentialMutationResult(True, "ok")
 
 
+class FlakyTransport:
+    def __init__(self, failures_before_success: int) -> None:
+        self.failures_before_success = failures_before_success
+        self.calls = 0
+
+    def remove(self, node, assignment):
+        self.calls += 1
+        if self.calls <= self.failures_before_success:
+            return CredentialMutationResult(False, "transient_remove_failed")
+        return CredentialMutationResult(True, "ok")
+
+
 def _node(db_session, *, current_clients: int) -> VpnNode:
     node = VpnNode(
         region_code="auto",
@@ -109,6 +121,28 @@ def test_cleanup_revokes_counted_assignments_and_frees_slots(db_session):
     assert node.current_clients == 0
 
 
+def test_cleanup_retries_transient_credential_removal(db_session):
+    node = _node(db_session, current_clients=1)
+    assignment = _assignment(db_session, node, "device-a", 20000)
+    transport = FlakyTransport(failures_before_success=2)
+
+    result = AdminNodeAssignmentCleanupService(
+        db_session,
+        transport=transport,
+        sleep_fn=lambda _seconds: None,
+    ).clear(node.id)
+
+    db_session.refresh(node)
+    db_session.refresh(assignment)
+    assert transport.calls == 3
+    assert result["failed"] == 0
+    assert result["remaining"] == 0
+    assert assignment.status == "revoked"
+    assert node.current_clients == 0
+    assert node.status == "active"
+    assert node.health_status == "healthy"
+
+
 def test_cleanup_fails_closed_when_remote_credential_removal_fails(db_session):
     node = _node(db_session, current_clients=1)
     assignment = _assignment(db_session, node, "device-a", 20000)
@@ -124,10 +158,44 @@ def test_cleanup_fails_closed_when_remote_credential_removal_fails(db_session):
     db_session.refresh(assignment)
     assert result["failed"] == 1
     assert result["remaining"] == 1
+    assert transport.removed == [assignment.id, assignment.id, assignment.id]
     assert assignment.status == "revocation_pending"
     assert node.current_clients == 1
     assert node.status == "maintenance"
     assert node.health_status == "down"
+
+
+def test_cleanup_successful_retry_reactivates_node_left_down_by_cleanup(db_session):
+    node = _node(db_session, current_clients=1)
+    assignment = _assignment(db_session, node, "device-a", 20000)
+
+    first = AdminNodeAssignmentCleanupService(
+        db_session,
+        transport=FakeTransport(fail_ids={assignment.id}),
+        sleep_fn=lambda _seconds: None,
+    ).clear(node.id)
+    assert first["failed"] == 1
+
+    db_session.refresh(node)
+    db_session.refresh(assignment)
+    assert node.status == "maintenance"
+    assert node.health_status == "down"
+    assert assignment.status == "revocation_pending"
+
+    second = AdminNodeAssignmentCleanupService(
+        db_session,
+        transport=FakeTransport(),
+        sleep_fn=lambda _seconds: None,
+    ).clear(node.id)
+
+    db_session.refresh(node)
+    db_session.refresh(assignment)
+    assert second["failed"] == 0
+    assert second["remaining"] == 0
+    assert assignment.status == "revoked"
+    assert node.current_clients == 0
+    assert node.status == "active"
+    assert node.health_status == "healthy"
 
 
 def test_cleanup_rejects_second_run_while_lease_is_active(db_session):
