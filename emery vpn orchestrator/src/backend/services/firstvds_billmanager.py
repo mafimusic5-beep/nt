@@ -26,6 +26,7 @@ class FirstVdsOrderResult:
     status: str
     vps_id: str | None = None
     endpoint: str | None = None
+    provider_metadata: dict[str, str] | None = None
     raw: dict[str, Any] | None = None
 
 
@@ -112,7 +113,19 @@ class FirstVdsBillManagerClient:
                 return item
         return None
 
-    def order_vds(self, *, domain: str, datacenter: str, pricelist: str, ostempl: str, period: str = "1", recipe: str = "null", itemtype: str = "3", skipbasket: bool = True, addons: dict[str, str] | None = None) -> FirstVdsOrderResult:
+    def order_vds(
+        self,
+        *,
+        domain: str,
+        datacenter: str,
+        pricelist: str,
+        ostempl: str,
+        period: str = "1",
+        recipe: str = "null",
+        itemtype: str = "3",
+        skipbasket: bool = True,
+        addons: dict[str, str] | None = None,
+    ) -> FirstVdsOrderResult:
         params: dict[str, Any] = {
             "elid": "",
             "domain": domain,
@@ -134,6 +147,7 @@ class FirstVdsBillManagerClient:
             status="ok",
             vps_id=found.get("id") if found else None,
             endpoint=found.get("ip") if found else None,
+            provider_metadata=found or None,
             raw=raw,
         )
 
