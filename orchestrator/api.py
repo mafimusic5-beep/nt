@@ -3,6 +3,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -40,6 +41,38 @@ RATE_LIMIT_MAX_ATTEMPTS = 12
 CONFIG_SYNC_WAIT_SECONDS = 25.0
 CONFIG_SYNC_POLL_INTERVAL_SECONDS = 0.5
 _attempts: Dict[str, Deque[float]] = defaultdict(deque)
+
+_RUSSIAN_COUNTRY_BY_CODE = {
+    'at': 'Австрия',
+    'be': 'Бельгия',
+    'bg': 'Болгария',
+    'ca': 'Канада',
+    'ch': 'Швейцария',
+    'cz': 'Чехия',
+    'de': 'Германия',
+    'dk': 'Дания',
+    'es': 'Испания',
+    'fi': 'Финляндия',
+    'fr': 'Франция',
+    'gb': 'Великобритания',
+    'hk': 'Гонконг',
+    'hr': 'Хорватия',
+    'it': 'Италия',
+    'jp': 'Япония',
+    'kz': 'Казахстан',
+    'nl': 'Нидерланды',
+    'no': 'Норвегия',
+    'pl': 'Польша',
+    'pt': 'Португалия',
+    'ro': 'Румыния',
+    'rs': 'Сербия',
+    'ru': 'Россия',
+    'se': 'Швеция',
+    'sg': 'Сингапур',
+    'tr': 'Турция',
+    'ua': 'Украина',
+    'us': 'США',
+}
 
 
 class DeviceRegisterRequest(BaseModel):
@@ -159,12 +192,38 @@ def _auth_error(error: DeviceAuthError):
     )
 
 
+def _country_pool_code(region: str) -> str:
+    normalized = str(region or '').strip().lower()
+    if not normalized:
+        return ''
+    head = normalized.replace('_', '-').split('-', 1)[0]
+    if head == 'uk':
+        return 'gb'
+    if head == 'usa':
+        return 'us'
+    return head if head in _RUSSIAN_COUNTRY_BY_CODE else normalized
+
+
+def _public_region_label(region: str, fallback: str = 'VPN') -> str:
+    code = _country_pool_code(region)
+    return _RUSSIAN_COUNTRY_BY_CODE.get(code, fallback)
+
+
+def _public_config(config: str, label: str) -> str:
+    value = str(config or '').strip()
+    if not value.lower().startswith('vless://'):
+        return value
+    return value.split('#', 1)[0] + '#' + quote(label, safe='')
+
+
 def _pool_assignment_server(assignment: dict) -> dict:
+    region = str(assignment.get('pool_region') or '').strip().lower()
+    label = _public_region_label(region, fallback='VPN')
     return {
         'id': int(assignment.get('pool_node_id') or 0),
-        'name': str(assignment.get('pool_node_name') or 'VPN'),
-        'region': str(assignment.get('pool_region') or ''),
-        'config': str(assignment.get('pool_config') or ''),
+        'name': label,
+        'region': _country_pool_code(region),
+        'config': _public_config(str(assignment.get('pool_config') or ''), label),
     }
 
 
