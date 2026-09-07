@@ -7,6 +7,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from src.backend.utils.node_city import region_display_name
 from src.bot.api.backend_client import BackendClient, BackendClientError
 from src.bot.handlers.admin import _detect_node_location
 from src.bot.utils.access import is_admin
@@ -65,12 +66,24 @@ async def setup_server_handler(message: Message) -> None:
         await message.answer("Формат: /setup_server 1.2.3.4 ROOT_PASSWORD")
         return
 
-    # Everything except endpoint/password is automatic. GeoIP improves the
-    # node label, but a temporary GeoIP failure must not block provisioning.
+    # Country is authoritative for the public pool. Never create an unclassified
+    # `auto` node: a server must have a detected country before it can be exposed
+    # to clients. This keeps Germany/Spain/etc. as stable country pools even when
+    # the GeoIP provider reports different cities for nodes in the same country.
     location = await _detect_node_location(endpoint)
-    region = str((location or {}).get("region_code") or "auto").strip().lower()[:16] or "auto"
-    region_name = str((location or {}).get("region_name") or "").strip()
-    name = region_name or "Server"
+    if not location:
+        await message.answer(
+            "❌ Не смог автоматически определить страну VPS по IP.\n"
+            "Сервер не добавлен в пул, чтобы не создать неправильный регион. "
+            "Повтори команду через минуту."
+        )
+        return
+
+    region = str(location.get("country_code") or "").strip().lower()
+    if not region:
+        await message.answer("❌ GeoIP не вернул код страны. Сервер не добавлен в пул.")
+        return
+    name = region_display_name(region, fallback=region.upper())
 
     payload = {
         "name": name,
@@ -87,7 +100,7 @@ async def setup_server_handler(message: Message) -> None:
         "device_gate_spki_sha256": "",
     }
 
-    await message.answer("⚙️ Настраиваю VPS и добавляю его в пул.")
+    await message.answer(f"⚙️ Определил пул: {name}. Настраиваю VPS.")
     try:
         result = await client.admin_bootstrap_node(payload)
     except BackendClientError as exc:
@@ -111,11 +124,12 @@ async def setup_server_handler(message: Message) -> None:
 
     node = result.get("node") or {}
     egress_label = "ISP / WireGuard" if result.get("isp_egress_enabled") else "VPS direct"
+    node_region = str(node.get("region_code") or region).strip().lower()
+    node_region_name = region_display_name(node_region, fallback=name)
     await message.answer(
         "✅ VPS настроен и добавлен в пул.\n\n"
         f"ID: #{node.get('id')}\n"
-        f"Название: {node.get('name')}\n"
-        f"Регион: {node.get('region_code')}\n"
+        f"Пул: {node_region_name} ({node_region})\n"
         f"Endpoint: {node.get('endpoint')}\n"
         f"Выход: {egress_label}\n"
         f"Статус: {node.get('status')} / {node.get('health_status')}\n"
