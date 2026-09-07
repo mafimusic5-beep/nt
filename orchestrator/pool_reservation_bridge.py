@@ -21,6 +21,7 @@ from config import (
 
 
 _REGION_RE = re.compile(r'^[a-z0-9-]{1,16}$')
+_MAX_POOL_SPEED_LIMIT_MBPS = 50
 
 
 @dataclass
@@ -118,7 +119,7 @@ def _validated_assignment(payload: dict[str, Any]) -> dict[str, Any]:
         raise PoolBridgeError('invalid_pool_assignment_config', 503)
     if str(parsed_uuid) != (parsed.username or '').lower():
         raise PoolBridgeError('invalid_pool_assignment_uuid', 503)
-    if speed <= 0 or speed > 30:
+    if speed <= 0 or speed > _MAX_POOL_SPEED_LIMIT_MBPS:
         raise PoolBridgeError('invalid_pool_speed_limit', 503)
     if not bool(payload.get('device_gate_required')):
         raise PoolBridgeError('device_gate_not_required', 503)
