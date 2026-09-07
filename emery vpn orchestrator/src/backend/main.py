@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from src.backend.api.admin_codes_routes import router as admin_codes_router
 from src.backend.api.admin_node_assignment_cleanup_routes import (
@@ -6,6 +6,7 @@ from src.backend.api.admin_node_assignment_cleanup_routes import (
 )
 from src.backend.api.admin_node_delete_routes import router as admin_node_delete_router
 from src.backend.api.compat_routes import compat_router
+from src.backend.api.error_diagnostics import http_exception_with_diagnostics
 from src.backend.api.routes import router as api_router
 from src.backend.core.bootstrap import seed_plans
 from src.backend.core.healthcheck_scheduler import start_healthcheck_scheduler, stop_healthcheck_scheduler
@@ -15,6 +16,7 @@ from src.common.config import settings
 from src.common.db import SessionLocal
 
 app = FastAPI(title="Emery VPN Orchestrator Backend", version="0.1.0")
+app.add_exception_handler(HTTPException, http_exception_with_diagnostics)
 app.add_middleware(RateLimitMiddleware)
 app.include_router(compat_router)
 app.include_router(api_router)
