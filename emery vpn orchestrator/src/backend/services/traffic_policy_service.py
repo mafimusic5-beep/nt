@@ -153,9 +153,8 @@ assignment_id = int(DATA["assignment_id"])
 policy = str(DATA["traffic_policy"])
 path = str(DATA["config_path"])
 tag_prefix = "emery-device-%d-" % assignment_id
-# The dynamic source remains the registry-backed antifilter feed. Explicit
-# service domains below are a fail-safe for major services whose access has
-# been publicly restricted by Roskomnadzor.
+
+# Policy assets live on the VPS. Android never downloads or owns these files.
 RU_SERVICE_DOMAINS = [
     "domain:facebook.com",
     "domain:fb.com",
@@ -245,6 +244,8 @@ def install_asset(name):
 if policy == "russia":
     install_asset("geosite.dat")
     install_asset("geoip.dat")
+elif policy != "international":
+    raise RuntimeError("invalid_traffic_policy")
 
 folder = os.path.dirname(path) or "."
 lock = open(os.path.join(folder, ".emery-xray-policy.lock"), "a+", encoding="utf-8")
@@ -268,6 +269,8 @@ if not inbound_tag:
     raise RuntimeError("assignment_inbound_missing")
 
 outbounds = list(config.get("outbounds") or [])
+if not any(item.get("tag") == "direct" for item in outbounds):
+    outbounds.append({"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}})
 if not any(item.get("tag") == "emery-blocked" for item in outbounds):
     outbounds.append({"tag": "emery-blocked", "protocol": "blackhole"})
 config["outbounds"] = outbounds
@@ -283,24 +286,59 @@ for item in list(routing.get("rules") or []):
     if not managed:
         rules.append(item)
 
+# These assignment-scoped rules make the selected mode authoritative even if
+# older/global rules remain in the node config. Safety blocks stay ahead of the
+# final direct catch-all so international mode cannot bypass them.
+managed_rules = [
+    {
+        "type": "field",
+        "inboundTag": [inbound_tag],
+        "ip": ["::/0"],
+        "outboundTag": "emery-blocked",
+    },
+    {
+        "type": "field",
+        "inboundTag": [inbound_tag],
+        "port": "25,465,587",
+        "outboundTag": "emery-blocked",
+    },
+    {
+        "type": "field",
+        "inboundTag": [inbound_tag],
+        "ip": ["geoip:private"],
+        "outboundTag": "emery-blocked",
+    },
+]
+
 if policy == "russia":
-    rules = [
-        {
-            "type": "field",
-            "inboundTag": [inbound_tag],
-            "domain": RU_DOMAINS,
-            "outboundTag": "emery-blocked",
-        },
-        {
-            "type": "field",
-            "inboundTag": [inbound_tag],
-            "ip": RU_IPS,
-            "outboundTag": "emery-blocked",
-        },
-    ] + rules
-elif policy != "international":
-    raise RuntimeError("invalid_traffic_policy")
-routing["rules"] = rules
+    managed_rules.extend(
+        [
+            {
+                "type": "field",
+                "inboundTag": [inbound_tag],
+                "domain": RU_DOMAINS,
+                "outboundTag": "emery-blocked",
+            },
+            {
+                "type": "field",
+                "inboundTag": [inbound_tag],
+                "ip": RU_IPS,
+                "outboundTag": "emery-blocked",
+            },
+        ]
+    )
+
+# Always terminate the assignment policy with an explicit direct route. This
+# prevents unrelated stale/global blackhole rules from swallowing normal web
+# traffic, which previously broke international mode.
+managed_rules.append(
+    {
+        "type": "field",
+        "inboundTag": [inbound_tag],
+        "outboundTag": "direct",
+    }
+)
+routing["rules"] = managed_rules + rules
 
 candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\\n"
 if candidate_text == original:
