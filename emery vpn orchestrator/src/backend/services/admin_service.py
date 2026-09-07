@@ -22,6 +22,7 @@ from src.common.config import settings
 
 logger = logging.getLogger(__name__)
 _GATE_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{1,255}$")
+_MAX_POOL_SPEED_LIMIT_MBPS = 50
 
 
 class AdminService:
@@ -83,6 +84,10 @@ class AdminService:
         if not re.fullmatch(r"[a-f0-9]{64}", safe_spki):
             raise HTTPException(status_code=400, detail="device_gate_spki_invalid")
         return safe_host, int(port), safe_server_name, safe_spki
+
+    @staticmethod
+    def _effective_speed_limit(requested_mbps: int) -> int:
+        return min(max(int(requested_mbps), 1), _MAX_POOL_SPEED_LIMIT_MBPS)
 
     @staticmethod
     def _node_response(n) -> VpnNodeResponse:
@@ -154,7 +159,7 @@ class AdminService:
             req.capacity_clients,
             req.bandwidth_limit_mbps,
             req.current_clients,
-            req.per_device_speed_limit_mbps,
+            self._effective_speed_limit(req.per_device_speed_limit_mbps),
             req.firstvds_vps_id,
             req.ssh_key_fingerprint,
             req.ssh_key_status,
