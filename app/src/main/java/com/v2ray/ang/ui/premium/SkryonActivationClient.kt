@@ -35,6 +35,23 @@ internal const val SKRYON_ACTIVATION_CODE_LENGTH = 11
 
 private const val SKRYON_WEBSITE_API_BASE_URL = "https://skryon.ru"
 
+internal data class SkryonActivationDiagnostic(
+    val reason: String,
+    val httpCode: Int = 0,
+    val requestId: String = "",
+    val stage: String = "activation",
+    val capturedAtMillis: Long = System.currentTimeMillis(),
+) {
+    fun asText(): String = buildString {
+        appendLine("stage=$stage")
+        appendLine("reason=${reason.ifBlank { "unknown" }}")
+        appendLine("http=${if (httpCode > 0) httpCode else "n/a"}")
+        appendLine("request_id=${requestId.ifBlank { "n/a" }}")
+        appendLine("app_version_code=${BuildConfig.SKRYON_VERSION_CODE}")
+        append("captured_at_ms=$capturedAtMillis")
+    }
+}
+
 internal data class SkryonActivationResult(
     val ok: Boolean,
     val code: String = "",
@@ -43,6 +60,7 @@ internal data class SkryonActivationResult(
     val revision: Long = -1L,
     val accessProfile: EmeryAccessProfile? = null,
     val error: String = "",
+    val diagnostic: SkryonActivationDiagnostic? = null,
 )
 
 internal data class SkryonConfigSyncResult(
@@ -83,6 +101,7 @@ private data class ActivationHttpResponse(
     val code: Int,
     val successful: Boolean,
     val body: String,
+    val requestId: String,
 )
 
 private fun executeActivationRequest(request: Request): ActivationHttpResponse {
@@ -95,6 +114,9 @@ private fun executeActivationRequest(request: Request): ActivationHttpResponse {
                     code = response.code,
                     successful = response.isSuccessful,
                     body = response.body?.string().orEmpty(),
+                    requestId = response.header("X-Request-Id")
+                        .orEmpty()
+                        .ifBlank { response.header("X-Correlation-Id").orEmpty() },
                 )
             }
         } catch (e: IOException) {
@@ -104,6 +126,26 @@ private fun executeActivationRequest(request: Request): ActivationHttpResponse {
     }
 
     throw lastError ?: IOException("Activation request failed")
+}
+
+private fun activationFailure(
+    error: String,
+    reason: String,
+    response: ActivationHttpResponse? = null,
+): SkryonActivationResult {
+    return SkryonActivationResult(
+        ok = false,
+        error = error,
+        diagnostic = if (BuildConfig.DEBUG) {
+            SkryonActivationDiagnostic(
+                reason = reason,
+                httpCode = response?.code ?: 0,
+                requestId = response?.requestId.orEmpty(),
+            )
+        } else {
+            null
+        },
+    )
 }
 
 /**
@@ -157,70 +199,81 @@ internal suspend fun activateSkryonCode(
 
         if (response.code == 409) {
             val reason = json?.serverReason().orEmpty().ifBlank { "device_limit_reached" }
-            return@withContext SkryonActivationResult(
-                ok = false,
+            return@withContext activationFailure(
                 error = activationReasonText(reason),
+                reason = reason,
+                response = response,
             )
         }
         if (response.code == 429) {
-            return@withContext SkryonActivationResult(
-                ok = false,
+            return@withContext activationFailure(
                 error = "Слишком много попыток. Попробуйте позже",
+                reason = "too_many_attempts",
+                response = response,
             )
         }
         if (!response.successful || json == null) {
-            val reason = json?.serverReason().orEmpty()
-            return@withContext SkryonActivationResult(
-                ok = false,
-                error = if (reason.isBlank()) {
+            val reason = json?.serverReason().orEmpty().ifBlank {
+                if (response.code > 0) "activation_http_${response.code}" else "activation_response_invalid"
+            }
+            return@withContext activationFailure(
+                error = if (json == null || json.serverReason().isBlank()) {
                     "Сервер активации недоступен"
                 } else {
                     activationReasonText(reason)
                 },
+                reason = reason,
+                response = response,
             )
         }
         if (!json.optBoolean("ok", false)) {
-            val reason = json.serverReason()
-            return@withContext SkryonActivationResult(
-                ok = false,
+            val reason = json.serverReason().ifBlank { "activation_rejected" }
+            return@withContext activationFailure(
                 error = json.optString("message").ifBlank { activationReasonText(reason) },
+                reason = reason,
+                response = response,
             )
         }
 
         val confirmedCode = json.optString("code", submittedCode).trim().ifBlank { submittedCode }
         if (normalizeActivationCode(confirmedCode) != normalizeActivationCode(submittedCode)) {
-            return@withContext SkryonActivationResult(
-                ok = false,
+            return@withContext activationFailure(
                 error = activationReasonText("activation_code_mismatch"),
+                reason = "activation_code_mismatch",
+                response = response,
             )
         }
 
         val config = json.optString("config").trim()
         if (!config.startsWith("vless://")) {
-            return@withContext SkryonActivationResult(
-                ok = false,
+            return@withContext activationFailure(
                 error = "Конфиг сервера повреждён",
+                reason = "client_server_config_invalid",
+                response = response,
             )
         }
 
         val devicesUsed = json.optIntOrNull("devices_used", "devicesUsed", "usedDevices")
-            ?: return@withContext SkryonActivationResult(
-                ok = false,
+            ?: return@withContext activationFailure(
                 error = activationReasonText("device_counter_missing"),
+                reason = "device_counter_missing",
+                response = response,
             )
         val devicesLimit = json.optIntOrNull("devices_limit", "devicesLimit", "maxDevices")
-            ?: return@withContext SkryonActivationResult(
-                ok = false,
+            ?: return@withContext activationFailure(
                 error = activationReasonText("device_counter_missing"),
+                reason = "device_counter_missing",
+                response = response,
             )
         val rawPlanName = json.optString("planTitle")
             .ifBlank { json.optString("plan_name") }
             .ifBlank { json.optString("plan") }
         val planName = canonicalPlanName(rawPlanName, devicesLimit)
         if (!validateDeviceLimit(planName, devicesUsed, devicesLimit)) {
-            return@withContext SkryonActivationResult(
-                ok = false,
+            return@withContext activationFailure(
                 error = activationReasonText("plan_limit_mismatch"),
+                reason = "plan_limit_mismatch",
+                response = response,
             )
         }
 
@@ -238,9 +291,10 @@ internal suspend fun activateSkryonCode(
         if (devices.count { it.active } != devicesUsed ||
             devices.none { it.deviceId == proof.deviceId && it.active }
         ) {
-            return@withContext SkryonActivationResult(
-                ok = false,
+            return@withContext activationFailure(
                 error = activationReasonText("device_inventory_mismatch"),
+                reason = "device_inventory_mismatch",
+                response = response,
             )
         }
 
@@ -267,9 +321,15 @@ internal suspend fun activateSkryonCode(
             accessProfile = confirmedProfile,
         )
     } catch (_: IOException) {
-        SkryonActivationResult(ok = false, error = "Нет соединения с сервером")
+        activationFailure(
+            error = "Нет соединения с сервером",
+            reason = "network_io_error",
+        )
     } catch (_: Exception) {
-        SkryonActivationResult(ok = false, error = "Ошибка регистрации устройства")
+        activationFailure(
+            error = "Ошибка регистрации устройства",
+            reason = "client_activation_exception",
+        )
     }
 }
 
@@ -517,8 +577,16 @@ private fun activationReasonText(reason: String): String {
         "device_counter_missing", "device_counter_mismatch" -> "Сервер не подтвердил количество устройств"
         "plan_limit_mismatch" -> "Лимит устройств не соответствует выбранному тарифу"
         "activation_code_mismatch" -> "Сервер вернул конфигурацию для другого кода"
-        "no_server" -> "Сервер ещё не добавлен"
-        "server_capacity_unavailable" -> "Свободных мест сейчас нет. Новый сервер уже подготавливается — попробуйте немного позже"
+        "no_server", "pool_no_nodes", "pool_region_unavailable" ->
+            "VPN-сервер для этого региона пока недоступен. Попробуйте немного позже"
+        "pool_no_active_nodes", "pool_no_healthy_nodes" ->
+            "VPN-сервер временно недоступен. Система уже проверяет его — попробуйте немного позже"
+        "server_capacity_unavailable", "pool_capacity_full", "pool_ports_exhausted" ->
+            "Свободных мест сейчас нет. Новый сервер уже подготавливается — попробуйте немного позже"
+        "pool_gate_not_ready" ->
+            "Сервер завершает безопасную настройку. Попробуйте немного позже"
+        "pool_assignment_race" ->
+            "Место на сервере обновляется. Повторите через несколько секунд"
         "credential_install_failed" -> "Сервер подготавливает персональный доступ. Попробуйте ещё раз позже"
         "pool_backend_unreachable", "pool_confirmation_failed", "pool_assignment_unconfirmed" ->
             "Не удалось подтвердить место на VPN-сервере. Попробуйте ещё раз"
