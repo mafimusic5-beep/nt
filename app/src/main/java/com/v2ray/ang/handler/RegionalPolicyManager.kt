@@ -2,6 +2,9 @@ package com.v2ray.ang.handler
 
 import android.content.Context
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
+import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
 
 internal enum class RegionalPolicyMode(val storageValue: String) {
     International("international"),
@@ -31,6 +34,7 @@ internal object RegionalPolicyManager {
 
     suspend fun apply(context: Context, mode: RegionalPolicyMode): Result<Unit> = runCatching {
         configureClientRouting(context.applicationContext, mode)
+        reassertServerPolicy(mode)
     }
 
     suspend fun prepareForConnection(context: Context): Result<Unit> = runCatching {
@@ -39,12 +43,39 @@ internal object RegionalPolicyManager {
         // upgrade from an older build cannot leave local restriction rules in
         // front of the server-enforced policy.
         configureClientRouting(context.applicationContext, mode)
+
+        // Activated profiles are represented in the UI by a saved local VLESS
+        // link. That path can start the VPN without calling /vpn/connect, while
+        // /vpn/connect is exactly where the backend re-applies the assignment's
+        // server-side traffic policy. Re-assert it here on every connection so
+        // Xray restarts/config rewrites cannot leave a stale blackhole policy in
+        // front of normal traffic. No policy assets are downloaded to Android.
+        reassertServerPolicy(mode)
     }
 
     fun isPolicyReadyForServiceStart(context: Context): Boolean {
         // No policy assets are required on Android anymore. The mode is sent to
         // the backend when a server connection is prepared and enforced there.
         return true
+    }
+
+    private suspend fun reassertServerPolicy(mode: RegionalPolicyMode) {
+        val accessKey = MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CODE_PREF, "")
+            ?.trim()
+            .orEmpty()
+        val serverId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
+        if (accessKey.isBlank() || serverId <= 0L) {
+            return
+        }
+
+        val connected = EmeryBackendClient.connectServer(
+            accessKey = accessKey,
+            serverId = serverId,
+            trafficPolicy = mode.storageValue,
+        ).getOrThrow()
+        if (connected.serverId > 0L && connected.serverId != serverId) {
+            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, connected.serverId)
+        }
     }
 
     private fun configureClientRouting(context: Context, mode: RegionalPolicyMode) {
