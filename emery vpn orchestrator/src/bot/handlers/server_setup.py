@@ -80,7 +80,7 @@ async def setup_server_handler(message: Message) -> None:
         "ssh_password": password,
         "capacity_clients": 5,
         "bandwidth_limit_mbps": 1000,
-        "per_device_speed_limit_mbps": 100,
+        "per_device_speed_limit_mbps": 50,
         "device_gate_host": "",
         "device_gate_port": 24443,
         "device_gate_server_name": "",
