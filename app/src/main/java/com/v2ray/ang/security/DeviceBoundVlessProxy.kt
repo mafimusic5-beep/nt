@@ -2,6 +2,7 @@ package com.v2ray.ang.security
 
 import android.util.Log
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.handler.DeveloperConnectionDiagnostics
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.InputStream
@@ -16,6 +17,7 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
@@ -54,8 +56,11 @@ class DeviceBoundVlessProxy(
     @Synchronized
     fun start(resolved: ResolvedDescriptor): Boolean {
         if (running) {
+            DeveloperConnectionDiagnostics.event("proxy_start", "already_running")
             return true
         }
+        DeveloperConnectionDiagnostics.begin()
+        DeveloperConnectionDiagnostics.event("gate_descriptor", "resolved")
         return runCatching {
             val descriptor = resolved.descriptor
             val listener = ServerSocket().apply {
@@ -70,9 +75,11 @@ class DeviceBoundVlessProxy(
             }
             serverSocket = listener
             running = true
+            DeveloperConnectionDiagnostics.event("proxy_listening", "ok")
             executor.execute { acceptLoop(listener, resolved.gatewayAddress, descriptor) }
             true
         }.getOrElse { error ->
+            DeveloperConnectionDiagnostics.failure("proxy_start", error)
             Log.e(AppConfig.TAG, "Device gate failed to start", error)
             stop()
             false
@@ -87,13 +94,17 @@ class DeviceBoundVlessProxy(
         while (running) {
             val localSocket = try {
                 listener.accept()
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                if (running) {
+                    DeveloperConnectionDiagnostics.failure("proxy_accept", error)
+                }
                 break
             }
             if (!running) {
                 localSocket.closeQuietly()
                 break
             }
+            DeveloperConnectionDiagnostics.event("connection_accepted", "ok")
             openSockets += localSocket
             executor.execute { handleConnection(localSocket, gatewayAddress, descriptor) }
         }
@@ -107,19 +118,26 @@ class DeviceBoundVlessProxy(
         var gatewaySocket: SSLSocket? = null
         var rawGatewaySocket: Socket? = null
         var stage = "socket_create"
+        val upstreamBytes = AtomicLong(0)
+        val downstreamBytes = AtomicLong(0)
         try {
             val rawSocket = Socket()
             rawGatewaySocket = rawSocket
             openSockets += rawSocket
             stage = "socket_bind"
             rawSocket.bind(InetSocketAddress(0))
+            DeveloperConnectionDiagnostics.event("socket_bound", "ok")
+
             stage = "socket_protect"
             check(protectSocket(rawSocket)) { "Unable to protect device-gate socket" }
+            DeveloperConnectionDiagnostics.event("socket_protected", "ok")
+
             stage = "tcp_connect"
             rawSocket.connect(
                 InetSocketAddress(gatewayAddress, descriptor.gatewayPort),
                 CONNECT_TIMEOUT_MILLIS,
             )
+            DeveloperConnectionDiagnostics.event("gateway_tcp_connected", "ok")
 
             stage = "tls_handshake"
             val tlsSocket = (SSLContext.getDefault().socketFactory.createSocket(
@@ -135,12 +153,15 @@ class DeviceBoundVlessProxy(
                 }
                 startHandshake()
             }
+            DeveloperConnectionDiagnostics.event("tls_handshake", "ok")
             gatewaySocket = tlsSocket
             openSockets -= rawSocket
             rawGatewaySocket = null
             openSockets += tlsSocket
+
             stage = "tls_pin"
             verifyGatewayPin(tlsSocket, descriptor.spkiSha256)
+            DeveloperConnectionDiagnostics.event("tls_pin", "ok")
 
             stage = "challenge"
             val challenge = JSONObject(readControlLine(tlsSocket.inputStream))
@@ -151,7 +172,9 @@ class DeviceBoundVlessProxy(
             check(serverNonce.length in 16..128)
             val issuedAtMillis = serverIssuedAt.toLong()
             check(kotlin.math.abs(System.currentTimeMillis() - issuedAtMillis) <= 30_000)
+            DeveloperConnectionDiagnostics.event("gateway_challenge", "ok")
 
+            stage = "proof"
             val proof = EmeryDeviceIdentity.buildGatewayProof(
                 assignmentId = descriptor.assignmentId,
                 nodeId = descriptor.nodeId,
@@ -175,27 +198,54 @@ class DeviceBoundVlessProxy(
                 .put("signature_algorithm", proof.signatureAlgorithm)
             tlsSocket.outputStream.write((proofJson.toString() + "\n").toByteArray(Charsets.UTF_8))
             tlsSocket.outputStream.flush()
+            DeveloperConnectionDiagnostics.event("gateway_proof_sent", "ok")
 
             stage = "authorization"
             val authorization = JSONObject(readControlLine(tlsSocket.inputStream))
             check(authorization.length() == 1 && authorization.optBoolean("ok", false))
+            DeveloperConnectionDiagnostics.event("gateway_authorized", "ok")
             tlsSocket.soTimeout = 0
             localSocket.soTimeout = 0
 
+            stage = "traffic"
             val upstream = executor.submit {
-                runCatching { copy(localSocket.inputStream, tlsSocket.outputStream) }
+                runCatching {
+                    copy(
+                        input = localSocket.inputStream,
+                        output = tlsSocket.outputStream,
+                        counter = upstreamBytes,
+                        firstByteStage = "traffic_up_first_bytes",
+                    )
+                }.onFailure { error ->
+                    DeveloperConnectionDiagnostics.failure("traffic_up", error)
+                }
                 tlsSocket.closeQuietly()
             }
-            runCatching { copy(tlsSocket.inputStream, localSocket.outputStream) }
+            runCatching {
+                copy(
+                    input = tlsSocket.inputStream,
+                    output = localSocket.outputStream,
+                    counter = downstreamBytes,
+                    firstByteStage = "traffic_down_first_bytes",
+                )
+            }.onFailure { error ->
+                DeveloperConnectionDiagnostics.failure("traffic_down", error)
+            }
             upstream.cancel(true)
-        } catch (_: SocketTimeoutException) {
+        } catch (error: SocketTimeoutException) {
+            DeveloperConnectionDiagnostics.failure("timeout_$stage", error)
             Log.w(AppConfig.TAG, "Device gate connection timed out: stage=$stage")
         } catch (error: Exception) {
+            DeveloperConnectionDiagnostics.failure(stage, error)
             Log.w(
                 AppConfig.TAG,
                 "Device gate connection rejected: stage=$stage error=${error.javaClass.simpleName}",
             )
         } finally {
+            DeveloperConnectionDiagnostics.event(
+                "connection_closed",
+                "up=${upstreamBytes.get()} down=${downstreamBytes.get()}",
+            )
             localSocket.closeQuietly()
             gatewaySocket?.closeQuietly()
             rawGatewaySocket?.closeQuietly()
@@ -207,6 +257,9 @@ class DeviceBoundVlessProxy(
 
     @Synchronized
     fun stop() {
+        if (running) {
+            DeveloperConnectionDiagnostics.event("proxy_stopping", "ok")
+        }
         running = false
         serverSocket?.closeQuietly()
         serverSocket = null
@@ -217,12 +270,26 @@ class DeviceBoundVlessProxy(
 
     override fun close() = stop()
 
-    private fun copy(input: InputStream, output: java.io.OutputStream) {
+    private fun copy(
+        input: InputStream,
+        output: java.io.OutputStream,
+        counter: AtomicLong,
+        firstByteStage: String,
+    ) {
         val buffer = ByteArray(64 * 1024)
+        var firstBytesRecorded = false
         while (running) {
             val count = input.read(buffer)
             if (count < 0) {
                 return
+            }
+            if (count == 0) {
+                continue
+            }
+            counter.addAndGet(count.toLong())
+            if (!firstBytesRecorded) {
+                firstBytesRecorded = true
+                DeveloperConnectionDiagnostics.event(firstByteStage, "ok")
             }
             output.write(buffer, 0, count)
             output.flush()
