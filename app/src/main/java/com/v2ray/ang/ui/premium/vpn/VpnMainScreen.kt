@@ -772,8 +772,8 @@ private fun AdvancedPage(
 
         RegionalPolicyCard(
             selectedMode = selectedPolicyMode,
-            updateInProgress = regionalPolicyUpdating,
-            updateError = regionalPolicyError,
+            updateInProgress = policyUpdateInProgress,
+            updateError = policyUpdateError,
             compact = compact,
             tight = tight,
             onPolicyConfirmed = onRegionalPolicyConfirmed,
@@ -1119,7 +1119,7 @@ private fun DnsSettingsCard(
     onSaveClick: () -> Unit,
 ) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
             .background(Color.White.copy(alpha = 0.96f))
