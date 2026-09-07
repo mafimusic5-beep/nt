@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from src.backend.repositories.node_repo import NodeRepository
+from src.backend.utils.node_city import normalize_pool_region_code
 from src.common.config import settings
 
 
@@ -34,8 +35,9 @@ class CapacityService:
     def list_regions(self) -> list[RegionCapacity]:
         grouped: dict[str, list] = defaultdict(list)
         for node in self.node_repo.list_nodes(None):
-            if node.region_code:
-                grouped[node.region_code].append(node)
+            region_code = normalize_pool_region_code(node.region_code)
+            if region_code and region_code != "auto":
+                grouped[region_code].append(node)
 
         rows: list[RegionCapacity] = []
         for region_code, nodes in grouped.items():
@@ -118,7 +120,7 @@ class CapacityService:
                 "Нужно купить первый VPS вручную.\n"
                 "Минимум: 1 vCPU / 2 GB RAM / Debian 12.\n\n"
                 "После покупки отправь:\n"
-                "/add_config region=nl name=\"Netherlands 1\" endpoint=<IP> config=<vless://...>"
+                "/add_config region=nl name=\"Нидерланды\" endpoint=<IP> config=<vless://...>"
             )
 
         worst = self.worst_region()
@@ -182,5 +184,5 @@ class CapacityService:
             "Plan: 1 vCPU / 2 GB RAM минимум\n"
             "OS: Debian 12\n\n"
             "После покупки добавь готовый VLESS-конфиг:\n"
-            f"/add_config region={row.region_code} name=\"{row.region_code.upper()} 1\" endpoint=<IP> config=<vless://...>"
+            f"/add_config region={row.region_code} endpoint=<IP> config=<vless://...>"
         )
