@@ -8,6 +8,7 @@ from src.backend.api.admin_node_delete_routes import router as admin_node_delete
 from src.backend.api.compat_routes import compat_router
 from src.backend.api.error_diagnostics import http_exception_with_diagnostics
 from src.backend.api.routes import router as api_router
+from src.backend.core.assignment_port_lifecycle import install_assignment_port_lifecycle
 from src.backend.core.bootstrap import seed_plans
 from src.backend.core.healthcheck_scheduler import start_healthcheck_scheduler, stop_healthcheck_scheduler
 from src.backend.core.logging import setup_logging
@@ -28,6 +29,7 @@ app.include_router(admin_node_delete_router)
 @app.on_event("startup")
 async def startup() -> None:
     setup_logging(settings.log_level)
+    install_assignment_port_lifecycle()
     db = SessionLocal()
     try:
         seed_plans(db)
