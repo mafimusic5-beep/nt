@@ -25,7 +25,17 @@ def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
     assert '"geoip:ru-blocked"' in script
     assert '"geosite:ru-blocked-all"' not in script
     assert '"geoip:ru-blocked-community"' not in script
-    assert 'elif policy != "international"' in script
+
+
+def test_international_policy_has_explicit_direct_terminal_route():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"international","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert 'managed_rules.append(' in script
+    assert '"outboundTag": "direct"' in script
+    assert '"port": "25,465,587"' in script
+    assert '"ip": ["geoip:private"]' in script
+    assert '"ip": ["::/0"]' in script
 
 
 def test_russia_policy_has_explicit_major_blocked_service_fallbacks():
