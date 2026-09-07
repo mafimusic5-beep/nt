@@ -1,5 +1,6 @@
 package com.v2ray.ang.ui.premium.vpn
 
+import com.v2ray.ang.BuildConfig
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -17,6 +18,7 @@ object VpnUiDebugLogger {
         runId: String = "run1",
         data: JSONObject = JSONObject(),
     ) {
+        if (!BuildConfig.DEBUG) return
         try {
             val payload = JSONObject()
                 .put("sessionId", SESSION_ID)
