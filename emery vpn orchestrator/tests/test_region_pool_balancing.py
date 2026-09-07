@@ -116,6 +116,24 @@ def test_connect_reselects_freest_server_inside_requested_region():
     assert service.repo.assigned_node_id == freest_de.id
 
 
+def test_country_pool_balances_across_legacy_city_region_codes():
+    requested = _node(30, "de-frankfurt", current=9, capacity=10)
+    freest_germany = _node(31, "de-berlin", current=1, capacity=10)
+    other_country = _node(32, "es-madrid", current=0, capacity=10)
+    subscription = SimpleNamespace(id=8, region_code="de")
+    device = SimpleNamespace(node_id=None)
+    service = _service(subscription, [requested, freest_germany, other_country])
+
+    result = service.build_user_config_for_node(
+        subscription_id=subscription.id,
+        node_id=requested.id,
+        device=device,
+    )
+
+    assert result["node"].id == freest_germany.id
+    assert service.repo.assigned_node_id == freest_germany.id
+
+
 def test_reconnect_does_not_penalize_device_already_on_node():
     current_node = _node(1, "de", current=5, capacity=10)
     other_node = _node(2, "de", current=4, capacity=10)
