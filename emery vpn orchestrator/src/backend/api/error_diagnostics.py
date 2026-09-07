@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
+from src.backend.services.pool_assignment_service import PoolAssignmentService
 from src.backend.services.xray_credential_service import VlessDeviceConfigBuilder
 from src.common.config import settings
 from src.common.db import SessionLocal
@@ -22,54 +23,56 @@ def _nodes_for_region(db, region_code: str) -> list[VpnNode]:
     return list(db.scalars(stmt).all())
 
 
-def diagnose_capacity_failure(region_code: str = "auto") -> str:
+def diagnose_capacity_failure_in_session(db, region_code: str = "auto") -> str:
     """Return a safe, stable reason code without exposing node secrets."""
 
+    nodes = _nodes_for_region(db, region_code)
+    if not nodes:
+        return "pool_region_unavailable" if region_code != "auto" else "pool_no_nodes"
+
+    active = [node for node in nodes if node.status == "active"]
+    if not active:
+        return "pool_no_active_nodes"
+
+    healthy = [
+        node
+        for node in active
+        if node.health_status in {"healthy", "degraded"}
+    ]
+    if not healthy:
+        return "pool_no_healthy_nodes"
+
+    with_capacity = [
+        node
+        for node in healthy
+        if int(node.current_clients or 0) < int(node.capacity_clients or 0)
+    ]
+    if not with_capacity:
+        return "pool_capacity_full"
+
+    gate_ready = with_capacity
+    if settings.device_bound_gate_enabled:
+        gate_ready = [
+            node
+            for node in with_capacity
+            if VlessDeviceConfigBuilder.gate_endpoint(node) is not None
+        ]
+        if not gate_ready:
+            return "pool_gate_not_ready"
+
+    assignment_service = PoolAssignmentService(db)
+    if gate_ready and all(assignment_service._free_port(node.id) is None for node in gate_ready):
+        return "pool_ports_exhausted"
+
+    # If nodes survived every deterministic filter, the failed admission was
+    # most likely caused by a concurrent counter/port claim. A retry is safe.
+    return "pool_assignment_race"
+
+
+def diagnose_capacity_failure(region_code: str = "auto") -> str:
     db = SessionLocal()
     try:
-        nodes = _nodes_for_region(db, region_code)
-        if not nodes:
-            return "pool_region_unavailable" if region_code != "auto" else "pool_no_nodes"
-
-        active = [node for node in nodes if node.status == "active"]
-        if not active:
-            return "pool_no_active_nodes"
-
-        healthy = [
-            node
-            for node in active
-            if node.health_status in {"healthy", "degraded"}
-        ]
-        if not healthy:
-            return "pool_no_healthy_nodes"
-
-        with_capacity = [
-            node
-            for node in healthy
-            if int(node.current_clients or 0) < int(node.capacity_clients or 0)
-        ]
-        if not with_capacity:
-            return "pool_capacity_full"
-
-        gate_ready = with_capacity
-        if settings.device_bound_gate_enabled:
-            gate_ready = [
-                node
-                for node in with_capacity
-                if VlessDeviceConfigBuilder.gate_endpoint(node) is not None
-            ]
-            if not gate_ready:
-                return "pool_gate_not_ready"
-
-        start = max(int(settings.xray_client_port_start), 1024)
-        end = min(max(int(settings.xray_client_port_end), start), 65535)
-        available_ports = max(end - start + 1, 0)
-        if available_ports <= 0:
-            return "pool_ports_exhausted"
-
-        # If nodes survived all deterministic filters, a concurrent admission or
-        # port claim most likely won the race. The client can safely retry.
-        return "pool_assignment_race"
+        return diagnose_capacity_failure_in_session(db, region_code)
     except Exception:  # noqa: BLE001
         logger.exception("capacity diagnostic failed")
         return "server_capacity_unavailable"
