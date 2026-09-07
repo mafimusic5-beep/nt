@@ -17,7 +17,7 @@ from src.backend.services.node_adapters import (
 )
 from src.backend.services.node_interfaces import NodeConfigService, NodeProvisioningService
 from src.backend.utils.debug_log import agent_log
-from src.backend.utils.node_city import normalize_node_city
+from src.backend.utils.node_city import normalize_node_city, normalize_pool_region_code
 from src.common.config import settings
 from src.common.models import Device
 
@@ -86,11 +86,15 @@ class NodeOrchestrationService:
         )
 
     def _eligible_nodes(self, region_code: str | None = None) -> list:
-        return [
-            n
-            for n in self.repo.list_nodes(region_code)
-            if self._is_connectable(n)
-        ]
+        nodes = self.repo.list_nodes(None)
+        if region_code is not None:
+            requested_pool = normalize_pool_region_code(region_code)
+            nodes = [
+                node
+                for node in nodes
+                if normalize_pool_region_code(node.region_code) == requested_pool
+            ]
+        return [node for node in nodes if self._is_connectable(node)]
 
     def _select_best_node(self, region_code: str, device: Device | None = None):
         nodes = self._eligible_nodes(region_code)
@@ -132,13 +136,13 @@ class NodeOrchestrationService:
             "vpn_config_built",
             "subscription",
             str(subscription.id),
-            {"node_id": node.id, "region_code": subscription.region_code},
+            {"node_id": node.id, "region_code": normalize_pool_region_code(node.region_code)},
         )
         self.db.commit()
         return {
             "node_id": node.id,
             "node_name": node.name,
-            "region_code": node.region_code,
+            "region_code": normalize_pool_region_code(node.region_code),
             "import_text": import_text,
             "node_health_status": node.health_status,
         }
@@ -148,7 +152,10 @@ class NodeOrchestrationService:
         if not subscription:
             raise HTTPException(status_code=404, detail="subscription_not_found")
         lines: list[str] = []
-        for node in sorted(self._eligible_nodes(None), key=lambda n: (n.region_code, self._node_sort_key(n))):
+        for node in sorted(
+            self._eligible_nodes(None),
+            key=lambda n: (normalize_pool_region_code(n.region_code), self._node_sort_key(n)),
+        ):
             import_text = self.config_service.build_import_text(node, subscription, None).strip()
             if import_text:
                 lines.extend([line.strip() for line in import_text.splitlines() if line.strip()])
@@ -160,15 +167,16 @@ class NodeOrchestrationService:
     def list_region_entries(self) -> list[dict]:
         grouped: dict[str, list] = defaultdict(list)
         for node in self.repo.list_nodes(None):
-            if not node.region_code:
+            pool_region = normalize_pool_region_code(node.region_code)
+            if not pool_region or pool_region == "auto":
                 continue
-            grouped[node.region_code].append(node)
+            grouped[pool_region].append(node)
 
         rows: list[dict] = []
         for region_code, nodes in grouped.items():
             connectable_nodes = [node for node in nodes if self._is_connectable(node)]
             best = sorted(nodes, key=self._region_display_sort_key)[0]
-            region_name = best.name if best.provider == "skryon-legacy" else normalize_node_city(best)
+            region_name = normalize_node_city(best)
             rows.append(
                 {
                     "id": best.id,
@@ -192,7 +200,8 @@ class NodeOrchestrationService:
         if not requested_node:
             raise HTTPException(status_code=404, detail="server_not_found")
 
-        node = self._select_best_node(requested_node.region_code, device)
+        requested_pool = normalize_pool_region_code(requested_node.region_code)
+        node = self._select_best_node(requested_pool, device)
         agent_log(
             hypothesis_id="H3",
             location="node_orchestration_service.py:build_user_config_for_node",
@@ -200,7 +209,7 @@ class NodeOrchestrationService:
             data={
                 "requested_node_id": node_id,
                 "selected_node_id": node.id,
-                "region_code": requested_node.region_code,
+                "region_code": requested_pool,
                 "current_clients": node.current_clients,
                 "capacity_clients": node.capacity_clients,
                 "fill_percent": int(self._fill_ratio(node, device) * 100),
