@@ -26,6 +26,7 @@ from src.backend.services.xray_credential_service import (
     VlessDeviceConfigBuilder,
     XrayCredentialTransport,
 )
+from src.backend.utils.node_city import normalize_pool_region_code
 from src.common.config import settings
 from src.common.models import VpnAssignment, VpnNode
 
@@ -106,14 +107,20 @@ class PoolAssignmentService:
         )
 
     def _candidate_nodes(self, region_code: str) -> list[VpnNode]:
-        stmt = select(VpnNode).where(
-            VpnNode.status == "active",
-            VpnNode.health_status.in_(("healthy", "degraded")),
-            VpnNode.current_clients < VpnNode.capacity_clients,
-        )
+        nodes = self.db.scalars(
+            select(VpnNode).where(
+                VpnNode.status == "active",
+                VpnNode.health_status.in_(("healthy", "degraded")),
+                VpnNode.current_clients < VpnNode.capacity_clients,
+            )
+        ).all()
         if region_code != "auto":
-            stmt = stmt.where(VpnNode.region_code == region_code)
-        nodes = self.db.scalars(stmt).all()
+            requested_pool = normalize_pool_region_code(region_code)
+            nodes = [
+                node
+                for node in nodes
+                if normalize_pool_region_code(node.region_code) == requested_pool
+            ]
         if settings.device_bound_gate_enabled:
             nodes = [
                 node
@@ -274,7 +281,7 @@ class PoolAssignmentService:
             confirmation_token=confirmation_token,
             node_id=node.id,
             node_name=node.name,
-            region_code=node.region_code,
+            region_code=normalize_pool_region_code(node.region_code),
             config=config,
             client_port=assignment.client_port,
             device_gate_required=True,
@@ -395,7 +402,10 @@ class PoolAssignmentService:
             "vpn_assignment_prepared",
             "vpn_assignment",
             str(assignment.id),
-            {"node_id": assignment.node_id, "region_code": node.region_code},
+            {
+                "node_id": assignment.node_id,
+                "region_code": normalize_pool_region_code(node.region_code),
+            },
         )
         self.db.commit()
         return self._response(assignment, confirmation_token=confirmation_token)
