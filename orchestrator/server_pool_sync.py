@@ -12,7 +12,7 @@ POOL_PROVIDER = 'skryon-legacy'
 REQUEST_TIMEOUT_SECONDS = 15.0
 SERVER_CAPACITY_DEVICES = 20
 SERVER_BANDWIDTH_LIMIT_MBPS = 600
-PER_DEVICE_SPEED_LIMIT_MBPS = 30
+PER_DEVICE_SPEED_LIMIT_MBPS = 50
 
 _REGION_ALIASES = {
     'de': ('de', 'germany', 'deutschland', 'герман', 'frankfurt', 'франкфурт'),
