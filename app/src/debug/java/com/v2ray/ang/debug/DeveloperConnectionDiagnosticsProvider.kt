@@ -16,6 +16,7 @@ import android.widget.FrameLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.v2ray.ang.handler.DeveloperConnectionDiagnostics
+import com.v2ray.ang.handler.ManualModeDiagnostics
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.security.EmeryDeviceGateConfig
 
@@ -72,11 +73,14 @@ class DeveloperConnectionDiagnosticsProvider : ContentProvider() {
         val profile = selectedGuid.takeIf { it.isNotEmpty() }?.let(MmkvManager::decodeServerConfig)
         val gateProfile = EmeryDeviceGateConfig.isGateProfile(profile)
         val gateDescriptor = if (gateProfile) EmeryDeviceGateConfig.descriptorFor(profile) else null
+        val lastError = ManualModeDiagnostics.getLastError()
 
         val diagnosticText = buildString {
             appendLine("profile_selected=${profile != null}")
             appendLine("gate_profile=$gateProfile")
             appendLine("gate_descriptor=${gateDescriptor != null}")
+            appendLine("service_error_code=${lastError?.code ?: "none"}")
+            appendLine("service_error_source=${lastError?.source ?: "none"}")
             appendLine()
             append(DeveloperConnectionDiagnostics.snapshot())
         }
