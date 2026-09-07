@@ -170,7 +170,7 @@ fun VpnMainScreen(
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
         val horizontalPadding = if (tight) 18.dp else 24.dp
-        val showParisBackground = selectedTab == MainTab.Home && uiState.selectedLocation.cityLabel() == "Париж"
+        val showParisBackground = selectedTab == MainTab.Home && uiState.selectedLocation.countryCodeLabel() == "FR"
 
         if (showParisBackground) {
             Image(
@@ -564,6 +564,33 @@ private fun FlagMark(code: String, modifier: Modifier = Modifier) {
                 stripe(Color.White, 0f, 0.333f, 1f, 0.666f)
                 stripe(Color(0xFF21468B), 0f, 0.666f, 1f, 1f)
             }
+            "ES" -> {
+                stripe(Color(0xFFAA151B), 0f, 0f, 1f, 0.25f)
+                stripe(Color(0xFFF1BF00), 0f, 0.25f, 1f, 0.75f)
+                stripe(Color(0xFFAA151B), 0f, 0.75f, 1f, 1f)
+            }
+            "IT" -> {
+                stripe(Color(0xFF009246), 0f, 0f, 0.333f, 1f)
+                stripe(Color.White, 0.333f, 0f, 0.666f, 1f)
+                stripe(Color(0xFFCE2B37), 0.666f, 0f, 1f, 1f)
+            }
+            "SE" -> {
+                drawRect(Color(0xFF006AA7))
+                stripe(Color(0xFFFECC00), 0.30f, 0f, 0.40f, 1f)
+                stripe(Color(0xFFFECC00), 0f, 0.43f, 1f, 0.57f)
+            }
+            "FI" -> {
+                drawRect(Color.White)
+                stripe(Color(0xFF003580), 0.30f, 0f, 0.40f, 1f)
+                stripe(Color(0xFF003580), 0f, 0.43f, 1f, 0.57f)
+            }
+            "TR" -> {
+                drawRect(Color(0xFFE30A17))
+            }
+            "SG" -> {
+                stripe(Color(0xFFEF3340), 0f, 0f, 1f, 0.5f)
+                stripe(Color.White, 0f, 0.5f, 1f, 1f)
+            }
             "UK", "GB" -> {
                 drawRect(Color(0xFF012169))
                 stripe(Color.White, 0.42f, 0f, 0.58f, 1f)
@@ -745,8 +772,8 @@ private fun AdvancedPage(
 
         RegionalPolicyCard(
             selectedMode = selectedPolicyMode,
-            updateInProgress = policyUpdateInProgress,
-            updateError = policyUpdateError,
+            updateInProgress = regionalPolicyUpdating,
+            updateError = regionalPolicyError,
             compact = compact,
             tight = tight,
             onPolicyConfirmed = onRegionalPolicyConfirmed,
@@ -981,7 +1008,7 @@ private fun RegionalPolicyCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Обновляем список ограничений…",
+                    text = "Применяем политику…",
                     style = MaterialTheme.typography.bodySmall,
                     color = AppUiColors.TextPrimary,
                 )
@@ -1092,7 +1119,7 @@ private fun DnsSettingsCard(
     onSaveClick: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
             .background(Color.White.copy(alpha = 0.96f))
@@ -1329,69 +1356,88 @@ private fun VpnLocationOption.cityLabel(): String {
     val value = title.trim()
     val lower = value.lowercase().replace('_', '-').replace('.', '-').replace(' ', '-')
     return when {
-        value.isBlank() -> "Париж"
-        lower.contains("paris") || lower.contains("париж") || lower.contains("france") || hasRegionToken(lower, "fr") -> "Париж"
-        lower.contains("frankfurt") || lower.contains("germany") || hasRegionToken(lower, "de") -> "Франкфурт"
-        lower.contains("amsterdam") || lower.contains("netherlands") || hasRegionToken(lower, "nl") -> "Амстердам"
-        lower.contains("moscow") || lower.contains("москва") || hasRegionToken(lower, "ru") -> "Москва"
-        lower.contains("warsaw") || hasRegionToken(lower, "pl") -> "Варшава"
-        lower.contains("london") || hasRegionToken(lower, "uk") || hasRegionToken(lower, "gb") -> "Лондон"
-        lower.contains("new-york") || lower.contains("newyork") || hasRegionToken(lower, "us") || hasRegionToken(lower, "usa") -> "Нью-Йорк"
-        lower.contains("stockholm") || hasRegionToken(lower, "se") -> "Стокгольм"
-        lower.contains("helsinki") || hasRegionToken(lower, "fi") -> "Хельсинки"
-        lower.contains("madrid") || hasRegionToken(lower, "es") -> "Мадрид"
-        lower.contains("milan") || hasRegionToken(lower, "it") -> "Милан"
-        lower.contains("istanbul") || hasRegionToken(lower, "tr") -> "Стамбул"
-        lower.contains("singapore") || hasRegionToken(lower, "sg") -> "Сингапур"
-        lower.contains("skryon") -> "Париж"
-        lower.contains("europe") || hasRegionToken(lower, "eu") -> "Европа"
+        value.isBlank() -> "Франция"
+        lower.contains("france") || lower.contains("франц") || lower.contains("paris") || lower.contains("париж") || hasRegionToken(lower, "fr") -> "Франция"
+        lower.contains("germany") || lower.contains("deutschland") || lower.contains("герман") || lower.contains("frankfurt") || lower.contains("франкфурт") || hasRegionToken(lower, "de") -> "Германия"
+        lower.contains("netherlands") || lower.contains("nederland") || lower.contains("нидер") || lower.contains("amsterdam") || lower.contains("амстердам") || hasRegionToken(lower, "nl") -> "Нидерланды"
+        lower.contains("spain") || lower.contains("испан") || lower.contains("madrid") || lower.contains("мадрид") || hasRegionToken(lower, "es") -> "Испания"
+        lower.contains("italy") || lower.contains("итал") || lower.contains("milan") || lower.contains("rome") || lower.contains("рим") || hasRegionToken(lower, "it") -> "Италия"
+        lower.contains("russia") || lower.contains("росси") || lower.contains("moscow") || lower.contains("москва") || hasRegionToken(lower, "ru") -> "Россия"
+        lower.contains("poland") || lower.contains("польш") || lower.contains("warsaw") || lower.contains("варшав") || hasRegionToken(lower, "pl") -> "Польша"
+        lower.contains("united-kingdom") || lower.contains("great-britain") || lower.contains("великобрит") || lower.contains("london") || lower.contains("лондон") || hasRegionToken(lower, "uk") || hasRegionToken(lower, "gb") -> "Великобритания"
+        lower.contains("united-states") || lower.contains("america") || lower.contains("сша") || lower.contains("new-york") || lower.contains("newyork") || hasRegionToken(lower, "us") || hasRegionToken(lower, "usa") -> "США"
+        lower.contains("sweden") || lower.contains("швец") || lower.contains("stockholm") || hasRegionToken(lower, "se") -> "Швеция"
+        lower.contains("finland") || lower.contains("финлянд") || lower.contains("helsinki") || hasRegionToken(lower, "fi") -> "Финляндия"
+        lower.contains("turkey") || lower.contains("turkiye") || lower.contains("турц") || lower.contains("istanbul") || hasRegionToken(lower, "tr") -> "Турция"
+        lower.contains("singapore") || lower.contains("сингапур") || hasRegionToken(lower, "sg") -> "Сингапур"
+        lower.contains("austria") || lower.contains("австри") || hasRegionToken(lower, "at") -> "Австрия"
+        lower.contains("belgium") || lower.contains("бельги") || hasRegionToken(lower, "be") -> "Бельгия"
+        lower.contains("switzerland") || lower.contains("швейцар") || hasRegionToken(lower, "ch") -> "Швейцария"
+        lower.contains("czech") || lower.contains("чех") || hasRegionToken(lower, "cz") -> "Чехия"
+        lower.contains("denmark") || lower.contains("дани") || hasRegionToken(lower, "dk") -> "Дания"
+        lower.contains("norway") || lower.contains("норвег") || hasRegionToken(lower, "no") -> "Норвегия"
+        lower.contains("portugal") || lower.contains("португал") || hasRegionToken(lower, "pt") -> "Португалия"
+        lower.contains("romania") || lower.contains("румын") || hasRegionToken(lower, "ro") -> "Румыния"
+        lower.contains("serbia") || lower.contains("серби") || hasRegionToken(lower, "rs") -> "Сербия"
+        lower.contains("ukraine") || lower.contains("украин") || hasRegionToken(lower, "ua") -> "Украина"
+        lower.contains("japan") || lower.contains("япон") || hasRegionToken(lower, "jp") -> "Япония"
+        lower.contains("kazakhstan") || lower.contains("казахстан") || hasRegionToken(lower, "kz") -> "Казахстан"
+        lower.contains("hong-kong") || lower.contains("гонконг") || hasRegionToken(lower, "hk") -> "Гонконг"
+        lower.contains("canada") || lower.contains("канад") || hasRegionToken(lower, "ca") -> "Канада"
+        lower.contains("skryon") -> "Франция"
+        lower.contains("europe") || lower.contains("европ") || hasRegionToken(lower, "eu") -> "Европа"
         else -> value
     }
 }
 
 private fun VpnLocationOption.countryCodeLabel(): String {
     val value = title.trim().lowercase().replace('_', '-').replace('.', '-').replace(' ', '-')
-    return when {
-        cityLabel() == "Париж" -> "FR"
-        cityLabel() == "Франкфурт" -> "DE"
-        cityLabel() == "Амстердам" -> "NL"
-        cityLabel() == "Москва" -> "RU"
-        cityLabel() == "Варшава" -> "PL"
-        cityLabel() == "Лондон" -> "UK"
-        cityLabel() == "Нью-Йорк" -> "US"
-        cityLabel() == "Стокгольм" -> "SE"
-        cityLabel() == "Хельсинки" -> "FI"
-        cityLabel() == "Мадрид" -> "ES"
-        cityLabel() == "Милан" -> "IT"
-        cityLabel() == "Стамбул" -> "TR"
-        cityLabel() == "Сингапур" -> "SG"
-        cityLabel() == "Европа" -> "EU"
-        hasRegionToken(value, "fr") -> "FR"
-        hasRegionToken(value, "de") -> "DE"
-        hasRegionToken(value, "nl") -> "NL"
-        hasRegionToken(value, "ru") -> "RU"
-        hasRegionToken(value, "pl") -> "PL"
-        hasRegionToken(value, "uk") || hasRegionToken(value, "gb") -> "UK"
-        hasRegionToken(value, "us") || hasRegionToken(value, "usa") -> "US"
-        hasRegionToken(value, "eu") -> "EU"
-        else -> "VPN"
+    return when (cityLabel()) {
+        "Франция" -> "FR"
+        "Германия" -> "DE"
+        "Нидерланды" -> "NL"
+        "Испания" -> "ES"
+        "Италия" -> "IT"
+        "Россия" -> "RU"
+        "Польша" -> "PL"
+        "Великобритания" -> "GB"
+        "США" -> "US"
+        "Швеция" -> "SE"
+        "Финляндия" -> "FI"
+        "Турция" -> "TR"
+        "Сингапур" -> "SG"
+        "Австрия" -> "AT"
+        "Бельгия" -> "BE"
+        "Швейцария" -> "CH"
+        "Чехия" -> "CZ"
+        "Дания" -> "DK"
+        "Норвегия" -> "NO"
+        "Португалия" -> "PT"
+        "Румыния" -> "RO"
+        "Сербия" -> "RS"
+        "Украина" -> "UA"
+        "Япония" -> "JP"
+        "Казахстан" -> "KZ"
+        "Гонконг" -> "HK"
+        "Канада" -> "CA"
+        "Европа" -> "EU"
+        else -> when {
+            hasRegionToken(value, "fr") -> "FR"
+            hasRegionToken(value, "de") -> "DE"
+            hasRegionToken(value, "nl") -> "NL"
+            hasRegionToken(value, "es") -> "ES"
+            hasRegionToken(value, "it") -> "IT"
+            hasRegionToken(value, "ru") -> "RU"
+            hasRegionToken(value, "pl") -> "PL"
+            hasRegionToken(value, "uk") || hasRegionToken(value, "gb") -> "GB"
+            hasRegionToken(value, "us") || hasRegionToken(value, "usa") -> "US"
+            hasRegionToken(value, "eu") -> "EU"
+            else -> "VPN"
+        }
     }
 }
 
-private fun VpnLocationOption.regionLabel(): String {
-    val city = cityLabel()
-    return when (city) {
-        "Париж" -> "Регион FR"
-        "Франкфурт" -> "Регион DE"
-        "Амстердам" -> "Регион NL"
-        "Москва" -> "Регион RU"
-        "Варшава" -> "Регион PL"
-        "Лондон" -> "Регион UK"
-        "Нью-Йорк" -> "Регион US"
-        "Европа" -> "Регион EU"
-        else -> city
-    }
-}
+private fun VpnLocationOption.regionLabel(): String = cityLabel()
 
 private fun hasRegionToken(value: String, token: String): Boolean {
     return Regex("(^|[^a-z0-9])${Regex.escape(token.lowercase())}([^a-z0-9]|$)").containsMatchIn(value)
