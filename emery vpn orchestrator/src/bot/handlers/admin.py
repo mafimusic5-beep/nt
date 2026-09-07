@@ -11,6 +11,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from src.backend.utils.node_city import normalize_pool_region_code, region_display_name
 from src.bot.api.backend_client import BackendClient, BackendClientError
 from src.bot.ui.keyboards import admin_menu_keyboard, admin_reply_keyboard, main_menu_keyboard
 from src.bot.utils.access import is_admin
@@ -30,8 +31,8 @@ async def _show_admin_panel(message: Message) -> None:
         "Админ-панель\n\n"
         "Быстрые команды:\n"
         "/capacity — какого региона не хватает\n"
-        "/add_config <VLESS Reality ссылка> — определить локацию и добавить сервер в общий пул\n"
-        "/add_config region=nl name=\"Netherlands 1\" capacity=20 config=<VLESS Reality ссылка>\n"
+        "/add_config <VLESS Reality ссылка> — определить страну и добавить сервер в её пул\n"
+        "/add_config region=de name=\"Германия\" capacity=20 config=<VLESS Reality ссылка>\n"
         "/delconfig ID — убрать сервер из синхронизированных приложений\n"
         "/servers — список узлов",
         reply_markup=admin_menu_keyboard(),
@@ -91,8 +92,8 @@ async def add_config_command_handler(message: Message) -> None:
         await message.answer(
             "Формат:\n"
             "/add_config <VLESS Reality ссылка>\n\n"
-            "Бот сам определит страну/город по IP из ссылки. "
-            "Если GeoIP недоступен, можно указать region=... вручную."
+            "Бот сам определит страну по IP из ссылки и добавит сервер в соответствующий пул. "
+            "Если GeoIP недоступен, можно указать region=de вручную."
         )
         return
     if not link.lower().startswith("vless://"):
@@ -108,14 +109,23 @@ async def add_config_command_handler(message: Message) -> None:
     location = await _detect_node_location(endpoint) if not explicit_region else None
     if not explicit_region and not location:
         await message.answer(
-            "Не смог определить локацию сервера по endpoint.\n\n"
-            "Конфиг не добавлен, чтобы не создавать регион-заглушку. "
-            "Попробуй позже или укажи region=country-city вручную."
+            "Не смог определить страну сервера по endpoint.\n\n"
+            "Конфиг не добавлен, чтобы не создать неправильный пул. "
+            "Попробуй позже или укажи region=de вручную."
         )
         return
 
-    region = explicit_region or location["region_code"]
-    name = _build_node_name(explicit_name, _name_from_proxy_link(link), location, region)
+    if explicit_region:
+        region = normalize_pool_region_code(explicit_region)
+    else:
+        region = str(location.get("country_code") or "").strip().lower()
+        region = normalize_pool_region_code(region)
+    if not region or region == "auto":
+        await message.answer("Не смог определить страну сервера. Конфиг не добавлен в пул.")
+        return
+
+    public_name = region_display_name(region, fallback=region.upper())
+    name = explicit_name or public_name
 
     try:
         max_users = int(max_users_raw)
@@ -143,15 +153,12 @@ async def add_config_command_handler(message: Message) -> None:
         await message.answer(f"Не добавил конфиг. Ошибка backend: {exc.detail}")
         return
 
-    location_line = ""
-    if location:
-        location_line = f"Локация: {location['region_name']} ({location['country_code']})\n"
+    country_code = str((location or {}).get("country_code") or region).upper()
     await message.answer(
-        "✅ Конфиг добавлен в общий пул.\n\n"
+        "✅ Конфиг добавлен в пул.\n\n"
         f"ID: #{node.get('id')}\n"
+        f"Пул: {public_name} ({country_code})\n"
         f"Название: {node.get('name')}\n"
-        f"Регион: {node.get('region_code')}\n"
-        f"{location_line}"
         f"Provider: {node.get('provider')}\n"
         f"Endpoint: {node.get('endpoint')}\n"
         f"Статус: {node.get('status')} / {node.get('health_status')}\n"
