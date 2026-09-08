@@ -267,7 +267,7 @@ private fun RegionalPolicyOnboardingScreen(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Активация завершена. Выберите территорию использования VPN.",
+                text = "Активация завершена. Выберите режим обработки VPN-трафика.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color(0xFF6F7580),
             )
@@ -282,14 +282,14 @@ private fun RegionalPolicyOnboardingScreen(
                     .padding(if (compact) 16.dp else 20.dp),
             ) {
                 Text(
-                    text = "Региональная политика РФ",
+                    text = "Режим трафика",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color(0xFF111319),
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "Ни один режим не выбирается автоматически.",
+                    text = "Выберите, какую политику VPN-сервер применит к вашему подключению.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF6F7580),
                 )
@@ -298,7 +298,7 @@ private fun RegionalPolicyOnboardingScreen(
                     selected = selectedMode == RegionalPolicyMode.International,
                     enabled = !saving,
                     title = "Международный",
-                    description = "VPN используется за пределами Российской Федерации",
+                    description = "Без региональной политики РФ",
                     onClick = { selectedMode = RegionalPolicyMode.International },
                 )
                 Spacer(Modifier.height(10.dp))
@@ -306,7 +306,7 @@ private fun RegionalPolicyOnboardingScreen(
                     selected = selectedMode == RegionalPolicyMode.Russia,
                     enabled = !saving,
                     title = "Российская Федерация",
-                    description = "Для использования в РФ; ограниченные ресурсы блокируются",
+                    description = "Сервер применяет встроенный список ограничений РФ",
                     onClick = { selectedMode = RegionalPolicyMode.Russia },
                 )
 
@@ -321,7 +321,7 @@ private fun RegionalPolicyOnboardingScreen(
                 } else if (selectedMode == RegionalPolicyMode.Russia) {
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
+                        text = "Список ограничений уже хранится на VPN-сервере. Приложение только включает режим РФ для этого подключения.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFF111319),
                         fontWeight = FontWeight.Medium,
@@ -330,7 +330,7 @@ private fun RegionalPolicyOnboardingScreen(
 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные».",
+                    text = "Если вы находитесь не в РФ, выберите «Международный». Позже режим можно переключить в разделе «Расширенные».",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF067A6F),
                     fontWeight = FontWeight.Medium,
@@ -351,7 +351,7 @@ private fun RegionalPolicyOnboardingScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = "Обновляем список ограничений…",
+                            text = "Применяем режим на сервере…",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF111319),
                         )
@@ -377,7 +377,7 @@ private fun RegionalPolicyOnboardingScreen(
                         saving = false
                         if (result.isFailure) {
                             saveError =
-                                "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
+                                "Не удалось применить режим на VPN-сервере. Проверьте соединение и повторите."
                         }
                     }
                 },
@@ -396,9 +396,9 @@ private fun RegionalPolicyOnboardingScreen(
                 Text(
                     text = when {
                         selectedMode == null -> "Выберите режим"
-                        saving -> "Сохраняем…"
+                        saving -> "Применяем…"
                         selectedMode == RegionalPolicyMode.International -> "Подтвердить и продолжить"
-                        else -> "Сохранить и продолжить"
+                        else -> "Применить и продолжить"
                     },
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium,
