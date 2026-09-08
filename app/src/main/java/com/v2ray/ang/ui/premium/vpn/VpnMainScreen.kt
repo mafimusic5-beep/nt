@@ -290,7 +290,7 @@ fun VpnMainScreen(
                                 },
                                 onFailure = {
                                     regionalPolicyError =
-                                        "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
+                                        "Не удалось применить режим на VPN-сервере. Проверьте соединение и повторите."
                                 },
                             )
                         }
@@ -561,7 +561,7 @@ private fun FlagMark(code: String, modifier: Modifier = Modifier) {
             }
             "NL" -> {
                 stripe(Color(0xFFAE1C28), 0f, 0f, 1f, 0.333f)
-                stripe(Color.White, 0f, 0.333f, 1f, 0.666f)
+                stripe(Color.White, 0f, 0f, 1f, 0.666f)
                 stripe(Color(0xFF21468B), 0f, 0.666f, 1f, 1f)
             }
             "ES" -> {
@@ -763,7 +763,7 @@ private fun AdvancedPage(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Региональная политика и параметры VPN",
+            text = "Режим обработки трафика и параметры VPN",
             style = MaterialTheme.typography.titleMedium,
             color = AppUiColors.TextSecondary,
             maxLines = 2,
@@ -956,14 +956,14 @@ private fun RegionalPolicyCard(
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
-            text = "Региональная политика РФ",
+            text = "Режим трафика",
             style = MaterialTheme.typography.titleMedium,
             color = AppUiColors.TextPrimary,
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "Выберите территорию текущего использования VPN.",
+            text = "Выберите, какую политику VPN-сервер применит к вашему подключению.",
             style = MaterialTheme.typography.bodySmall,
             color = AppUiColors.TextSecondary,
         )
@@ -972,7 +972,7 @@ private fun RegionalPolicyCard(
             selected = selectedMode == RegionalPolicyMode.International,
             enabled = !updateInProgress,
             title = "Международный",
-            description = "VPN используется за пределами Российской Федерации",
+            description = "Без региональной политики РФ",
             onClick = { requestMode(RegionalPolicyMode.International) },
         )
         Spacer(Modifier.height(8.dp))
@@ -980,13 +980,13 @@ private fun RegionalPolicyCard(
             selected = selectedMode == RegionalPolicyMode.Russia,
             enabled = !updateInProgress,
             title = "Российская Федерация",
-            description = "Для использования в РФ; ограниченные ресурсы блокируются",
+            description = "Сервер применяет встроенный список ограничений РФ",
             onClick = { requestMode(RegionalPolicyMode.Russia) },
         )
         if (selectedMode == RegionalPolicyMode.Russia) {
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
+                text = "Список ограничений уже хранится на VPN-сервере. Приложение только включает режим РФ для текущего подключения.",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextPrimary,
                 fontWeight = FontWeight.Medium,
@@ -1008,7 +1008,7 @@ private fun RegionalPolicyCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Применяем политику…",
+                    text = "Применяем режим на сервере…",
                     style = MaterialTheme.typography.bodySmall,
                     color = AppUiColors.TextPrimary,
                 )
