@@ -561,7 +561,7 @@ private fun FlagMark(code: String, modifier: Modifier = Modifier) {
             }
             "NL" -> {
                 stripe(Color(0xFFAE1C28), 0f, 0f, 1f, 0.333f)
-                stripe(Color.White, 0f, 0f, 1f, 0.666f)
+                stripe(Color.White, 0f, 0.333f, 1f, 0.666f)
                 stripe(Color(0xFF21468B), 0f, 0.666f, 1f, 1f)
             }
             "ES" -> {
