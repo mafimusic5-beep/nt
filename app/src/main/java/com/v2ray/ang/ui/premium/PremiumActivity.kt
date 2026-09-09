@@ -282,7 +282,7 @@ private fun RegionalPolicyOnboardingScreen(
                     .padding(if (compact) 16.dp else 20.dp),
             ) {
                 Text(
-                    text = "Региональная политика РФ",
+                    text = "Региональная политика",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color(0xFF111319),
                     fontWeight = FontWeight.SemiBold,
@@ -321,7 +321,7 @@ private fun RegionalPolicyOnboardingScreen(
                 } else if (selectedMode == RegionalPolicyMode.Russia) {
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
+                        text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFF111319),
                         fontWeight = FontWeight.Medium,
@@ -351,7 +351,7 @@ private fun RegionalPolicyOnboardingScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = "Обновляем список ограничений…",
+                            text = "Применяем политику…",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF111319),
                         )
@@ -377,7 +377,7 @@ private fun RegionalPolicyOnboardingScreen(
                         saving = false
                         if (result.isFailure) {
                             saveError =
-                                "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
+                                "Не удалось сохранить выбранную политику. Повторите."
                         }
                     }
                 },
