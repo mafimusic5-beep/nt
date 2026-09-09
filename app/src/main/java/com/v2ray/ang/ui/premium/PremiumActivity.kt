@@ -282,7 +282,7 @@ private fun RegionalPolicyOnboardingScreen(
                     .padding(if (compact) 16.dp else 20.dp),
             ) {
                 Text(
-                    text = "Региональная политика",
+                    text = "Региональная политика РФ",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color(0xFF111319),
                     fontWeight = FontWeight.SemiBold,
@@ -321,7 +321,7 @@ private fun RegionalPolicyOnboardingScreen(
                 } else if (selectedMode == RegionalPolicyMode.Russia) {
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
+                        text = "Трафик к доменам и IP из актуального списка ограничений блокируется без перенаправления.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFF111319),
                         fontWeight = FontWeight.Medium,
@@ -351,7 +351,7 @@ private fun RegionalPolicyOnboardingScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = "Применяем политику…",
+                            text = "Обновляем список ограничений…",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF111319),
                         )
@@ -377,7 +377,7 @@ private fun RegionalPolicyOnboardingScreen(
                         saving = false
                         if (result.isFailure) {
                             saveError =
-                                "Не удалось сохранить выбранную политику. Повторите."
+                                "Не удалось загрузить актуальный список ограничений. Проверьте интернет и повторите."
                         }
                     }
                 },
@@ -490,6 +490,7 @@ private fun ActivationScreen(
 ) {
     var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
+    var diagnostic by remember { mutableStateOf<SkryonActivationDiagnostic?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -503,7 +504,13 @@ private fun ActivationScreen(
         val pantherHeight = if (compact) maxHeight * 0.68f else maxHeight * 0.72f
         val pantherTop = if (compact) 92.dp else 112.dp
         val pantherOffsetX = if (compact) 64.dp else 86.dp
-        val cardHeight = if (compact) 306.dp else 368.dp
+        val showDeveloperLogs = developerActivationLogsEnabled() && error.isNotBlank() && diagnostic != null
+        val cardHeight = when {
+            showDeveloperLogs && compact -> 356.dp
+            showDeveloperLogs -> 420.dp
+            compact -> 306.dp
+            else -> 368.dp
+        }
 
         Text(
             text = "Skryon",
@@ -589,6 +596,7 @@ private fun ActivationScreen(
                 onCodeChange = {
                     code = it
                     error = ""
+                    diagnostic = null
                 },
                 compact = compact,
             )
@@ -599,7 +607,16 @@ private fun ActivationScreen(
                     style = TextStyle(fontSize = 14.sp, color = Color(0xFFE54848)),
                     textAlign = TextAlign.Center,
                 )
-                Spacer(Modifier.height(6.dp))
+                if (showDeveloperLogs) {
+                    Spacer(Modifier.height(8.dp))
+                    DeveloperActivationLogs(
+                        diagnostic = diagnostic,
+                        modifier = Modifier.height(36.dp),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                } else {
+                    Spacer(Modifier.height(6.dp))
+                }
             } else {
                 Spacer(Modifier.height(if (compact) 13.dp else 20.dp))
             }
@@ -610,13 +627,16 @@ private fun ActivationScreen(
                     }
                     if (code.length < SKRYON_ACTIVATION_CODE_LENGTH) {
                         error = "Введите код полностью"
+                        diagnostic = null
                     } else {
                         scope.launch {
                             isLoading = true
                             error = ""
+                            diagnostic = null
                             val result = onActivated(code)
                             if (!result.ok) {
                                 error = result.error.ifBlank { "Ошибка активации" }
+                                diagnostic = result.diagnostic
                             }
                             isLoading = false
                         }
