@@ -21,8 +21,8 @@ def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
     )
     assert 'tag_prefix = "emery-device-%d-" % assignment_id' in script
     assert '"inboundTag": [inbound_tag]' in script
-    assert '"geosite:antifilter-download"' in script
-    assert '"geoip:ru-blocked"' in script
+    assert '"ext:ru-geosite.dat:antifilter-download"' in script
+    assert '"ext:ru-geoip.dat:ru-blocked"' in script
     assert '"geosite:ru-blocked-all"' not in script
     assert '"geoip:ru-blocked-community"' not in script
 
@@ -44,11 +44,10 @@ def test_international_policy_has_explicit_direct_terminal_route():
     assert '"port": "25,465,587"' in script
     assert '"10.0.0.0/8"' in script
     assert '"192.168.0.0/16"' in script
-    assert '"geoip:private"' not in script
     assert '"ip": ["::/0"]' not in script
 
 
-def test_policy_private_network_block_does_not_depend_on_geoip_asset_category():
+def test_policy_private_network_block_uses_literal_cidrs():
     script = TrafficPolicyService._remote_script(
         '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
     )
@@ -56,7 +55,19 @@ def test_policy_private_network_block_does_not_depend_on_geoip_asset_category():
     assert '"127.0.0.0/8"' in script
     assert '"172.16.0.0/12"' in script
     assert '"fc00::/7"' in script
-    assert '"geoip:private"' not in script
+    assert 'if value == "geoip:private":' in script
+    assert 'migrated.extend(PRIVATE_NETWORKS)' in script
+
+
+def test_russia_policy_keeps_custom_geodata_separate_from_stock_assets():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert 'install_asset("geosite.dat", "ru-geosite.dat")' in script
+    assert 'install_asset("geoip.dat", "ru-geoip.dat")' in script
+    assert 'target = os.path.join(asset_dir, target_name)' in script
+    assert '"ext:ru-geosite.dat:antifilter-download"' in script
+    assert '"ext:ru-geoip.dat:ru-blocked"' in script
 
 
 def test_assignment_policy_does_not_blackhole_dual_stack_domains():
