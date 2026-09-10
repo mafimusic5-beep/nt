@@ -26,6 +26,7 @@ from device_auth import (
 )
 from pool_reservation_bridge import (
     PoolBridgeError,
+    apply_stored_assignment_policy,
     is_enabled as pool_bridge_enabled,
     refresh_stored_assignment,
 )
@@ -73,6 +74,13 @@ class ConfigSyncRequest(BaseModel):
     code: str = Field(min_length=1, max_length=32)
     deviceId: str = Field(min_length=4, max_length=128)
     revision: int = Field(default=-1, ge=-1)
+    appVersionCode: int = Field(default=0, ge=0)
+
+
+class RegionalPolicyRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+    deviceId: str = Field(min_length=4, max_length=128)
+    trafficPolicy: str = Field(pattern=r'^(international|russia)$')
     appVersionCode: int = Field(default=0, ge=0)
 
 
@@ -336,6 +344,52 @@ def activate(payload: ActivationRequest, request: Request):
         'maxDevices': access.get('devices_limit'),
         'expiresAt': access.get('expires_at'),
         'devices': access.get('devices'),
+    }
+
+
+@app.post('/api/policy')
+async def apply_regional_policy(payload: RegionalPolicyRequest, request: Request):
+    if upgrade_required(payload.appVersionCode):
+        return upgrade_required_response()
+
+    try:
+        header_device_id = _header(request, 'x-emery-device-id')
+        _require_header_match(payload.deviceId, header_device_id)
+        authenticate_registered_device(
+            raw_code=payload.code,
+            method='POST',
+            path=request.url.path,
+            device_id=header_device_id,
+            timestamp=_header(request, 'x-emery-timestamp'),
+            nonce=_header(request, 'x-emery-nonce'),
+            signature_base64=_header(request, 'x-emery-signature'),
+            signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+        )
+    except DeviceAuthError as error:
+        return _auth_error(error)
+
+    if not pool_bridge_enabled():
+        return JSONResponse(
+            status_code=409,
+            content={'ok': False, 'reason': 'regional_policy_unavailable'},
+        )
+
+    try:
+        await asyncio.to_thread(
+            apply_stored_assignment_policy,
+            payload.code,
+            header_device_id,
+            payload.trafficPolicy,
+        )
+    except PoolBridgeError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={'ok': False, 'reason': error.reason},
+        )
+
+    return {
+        'ok': True,
+        'trafficPolicy': payload.trafficPolicy,
     }
 
 
