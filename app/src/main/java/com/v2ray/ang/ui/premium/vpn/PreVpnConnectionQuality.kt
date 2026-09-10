@@ -12,6 +12,7 @@ import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 enum class PreVpnConnectionQuality {
     Good,
@@ -74,12 +75,47 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
 
     suspend fun assess(): PreVpnConnectionAssessment = withContext(Dispatchers.IO) {
+        VpnUiDebugLogger.log(
+            hypothesisId = "H-PREFLIGHT",
+            location = "PreVpnConnectionQuality.kt:assess",
+            message = "VPN connect preflight started",
+            runId = "vpn-connect",
+            data = JSONObject().put("stage", "preflight_start"),
+        )
         try {
-            assessCurrentNetwork()
+            val result = assessCurrentNetwork()
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-PREFLIGHT",
+                location = "PreVpnConnectionQuality.kt:assess",
+                message = "VPN connect preflight finished",
+                runId = "vpn-connect",
+                data = JSONObject()
+                    .put("stage", "preflight_finish")
+                    .put("quality", result.quality.name),
+            )
+            result
         } catch (error: CancellationException) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-PREFLIGHT",
+                location = "PreVpnConnectionQuality.kt:assess",
+                message = "VPN connect preflight cancelled",
+                runId = "vpn-connect",
+                data = JSONObject()
+                    .put("stage", "preflight_cancelled")
+                    .put("error", error.message ?: "cancelled"),
+            )
             throw error
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             // Diagnostics must never prevent the existing VPN connection flow.
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-PREFLIGHT",
+                location = "PreVpnConnectionQuality.kt:assess",
+                message = "VPN connect preflight failed; continuing",
+                runId = "vpn-connect",
+                data = JSONObject()
+                    .put("stage", "preflight_error")
+                    .put("error", error.message ?: error.javaClass.simpleName),
+            )
             PreVpnConnectionAssessment(PreVpnConnectionQuality.Unknown)
         }
     }
@@ -107,6 +143,21 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
                 downstreamBandwidthKbps = measuredDownstreamBandwidthKbps,
             ),
         )
+        VpnUiDebugLogger.log(
+            hypothesisId = "H-PREFLIGHT",
+            location = "PreVpnConnectionQuality.kt:assessCurrentNetwork",
+            message = "VPN connect network snapshot",
+            runId = "vpn-connect",
+            data = JSONObject()
+                .put("stage", "network_snapshot")
+                .put("quality", quality.name)
+                .put("reason", buildString {
+                    append("active=").append(hasActiveNetwork)
+                    append(",internet=").append(hasInternetCapability)
+                    append(",validated=").append(isValidated)
+                    append(",downKbps=").append(measuredDownstreamBandwidthKbps ?: -1)
+                }),
+        )
         return PreVpnConnectionAssessment(quality)
     }
 
@@ -114,7 +165,14 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
         val url = "$DOWNLOAD_PROBE_URL&nonce=${SystemClock.elapsedRealtime()}"
         val connection = try {
             network.openConnection(URL(url)) as? HttpsURLConnection ?: return null
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-PREFLIGHT",
+                location = "PreVpnConnectionQuality.kt:measureDownloadBandwidthKbps",
+                message = "VPN connect preflight probe open failed",
+                runId = "vpn-connect",
+                data = JSONObject().put("error", error.message ?: error.javaClass.simpleName),
+            )
             return null
         }
         var downloadedBytes = 0L
@@ -129,7 +187,16 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
             connection.setRequestProperty("Accept-Encoding", "identity")
             connection.setRequestProperty("Cache-Control", "no-cache")
 
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H-PREFLIGHT",
+                    location = "PreVpnConnectionQuality.kt:measureDownloadBandwidthKbps",
+                    message = "VPN connect preflight probe HTTP failure",
+                    runId = "vpn-connect",
+                    data = JSONObject().put("reason", "http_${connection.responseCode}"),
+                )
+                return null
+            }
             startedAt = SystemClock.elapsedRealtime()
             connection.inputStream.use { input ->
                 val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
@@ -147,8 +214,15 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
                     }
                 }
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             // A stalled or interrupted endpoint is not proof of poor user bandwidth.
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-PREFLIGHT",
+                location = "PreVpnConnectionQuality.kt:measureDownloadBandwidthKbps",
+                message = "VPN connect preflight probe interrupted",
+                runId = "vpn-connect",
+                data = JSONObject().put("error", error.message ?: error.javaClass.simpleName),
+            )
             return null
         } finally {
             connection.disconnect()
@@ -159,6 +233,16 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
             !completedMeasurement ||
             downloadedBytes < DOWNLOAD_MIN_MEASURE_BYTES
         ) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-PREFLIGHT",
+                location = "PreVpnConnectionQuality.kt:measureDownloadBandwidthKbps",
+                message = "VPN connect preflight probe incomplete",
+                runId = "vpn-connect",
+                data = JSONObject().put(
+                    "reason",
+                    "bytes=$downloadedBytes,completed=$completedMeasurement",
+                ),
+            )
             return null
         }
         return calculateDownloadedBandwidthKbps(
