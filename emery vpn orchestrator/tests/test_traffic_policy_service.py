@@ -35,7 +35,17 @@ def test_international_policy_has_explicit_direct_terminal_route():
     assert '"outboundTag": "direct"' in script
     assert '"port": "25,465,587"' in script
     assert '"ip": ["geoip:private"]' in script
-    assert '"ip": ["::/0"]' in script
+    assert '"ip": ["::/0"]' not in script
+
+
+def test_assignment_policy_does_not_blackhole_dual_stack_domains():
+    for policy in ("international", "russia"):
+        script = TrafficPolicyService._remote_script(
+            f'{{"assignment_id":42,"traffic_policy":"{policy}","config_path":"/usr/local/etc/xray/config.json"}}'
+        )
+        assert 'routing["domainStrategy"] = "IPIfNonMatch"' in script
+        assert '"ip": ["::/0"]' not in script
+        assert '"outboundTag": "direct"' in script
 
 
 def test_russia_policy_has_explicit_major_blocked_service_fallbacks():
