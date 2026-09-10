@@ -7,6 +7,8 @@ import androidx.work.WorkManager
 import com.tencent.mmkv.MMKV
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.handler.SettingsManager
+import com.v2ray.ang.ui.premium.vpn.VpnServiceDiagnosticsObserver
+import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
 
 class AngApplication : MultiDexApplication() {
     companion object {
@@ -40,6 +42,9 @@ class AngApplication : MultiDexApplication() {
         // Ensure critical preference defaults are present in MMKV early
         SettingsManager.initApp(this)
         SettingsManager.setNightMode()
+
+        VpnUiDebugLogger.initialize(this)
+        VpnServiceDiagnosticsObserver.start(this)
 
         es.dmoral.toasty.Toasty.Config.getInstance()
             .setGravity(android.view.Gravity.BOTTOM, 0, 300)
