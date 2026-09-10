@@ -42,8 +42,21 @@ def test_international_policy_has_explicit_direct_terminal_route():
     assert 'managed_rules.append(' in script
     assert '"outboundTag": "direct"' in script
     assert '"port": "25,465,587"' in script
-    assert '"ip": ["geoip:private"]' in script
+    assert '"10.0.0.0/8"' in script
+    assert '"192.168.0.0/16"' in script
+    assert '"geoip:private"' not in script
     assert '"ip": ["::/0"]' not in script
+
+
+def test_policy_private_network_block_does_not_depend_on_geoip_asset_category():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert 'PRIVATE_NETWORKS = [' in script
+    assert '"127.0.0.0/8"' in script
+    assert '"172.16.0.0/12"' in script
+    assert '"fc00::/7"' in script
+    assert '"geoip:private"' not in script
 
 
 def test_assignment_policy_does_not_blackhole_dual_stack_domains():
