@@ -17,24 +17,25 @@ import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
+import com.v2ray.ang.security.EmeryDeviceGateConfig
+import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CONFIG_PREF
 import com.v2ray.ang.ui.premium.SKRYON_CONFIG_REVISION_PREF
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_GUID_PREF
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
-import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.activateSkryonCode
 import com.v2ray.ang.ui.premium.clearActivatedSkryonConfig
 import com.v2ray.ang.ui.premium.formatSkryonActivationCode
-import com.v2ray.ang.ui.premium.saveActivatedSkryonConfig
-import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
+import com.v2ray.ang.ui.premium.saveActivatedSkryonConfig
 import com.v2ray.ang.ui.premium.syncSkryonConfig
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -58,6 +59,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val STALE_RUNTIME_SETTLE_DELAY_MS = 300L
         const val CONFIG_SYNC_RETRY_DELAY_MS = 3_000L
         const val CONFIG_SYNC_ACCESS_RETRY_DELAY_MS = 30_000L
+        const val TUNNEL_VERIFY_TIMEOUT_MS = 12_000L
     }
 
     private val _uiState = MutableStateFlow(
@@ -67,24 +69,70 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     )
     val uiState: StateFlow<VpnMainUiState> = _uiState.asStateFlow()
 
+    private val tunnelVerifier = VpnTunnelTrafficVerifier(application)
+
     private var connectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
     private var configSyncJob: Job? = null
     private var serviceStateRecheckJob: Job? = null
+    private var trafficVerificationJob: Job? = null
     private var serviceReceiverRegistered = false
+
+    @Volatile
+    private var daemonRunning: Boolean? = null
+    private var stopWaiter: CompletableDeferred<Boolean>? = null
+    private var stateWaiter: CompletableDeferred<Boolean>? = null
+    private var connectionAttempt: Long = 0L
+    private var preserveConnectionFailure = false
+    private var stopRequested = false
+    private var awaitingStartConfirmation = false
 
     private val serviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.getIntExtra("key", 0)) {
+            val key = intent?.getIntExtra("key", 0) ?: return
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-LIFECYCLE",
+                location = "VpnMainViewModel.kt:serviceStateReceiver",
+                message = "premium service event received",
+                runId = "vpn-lifecycle",
+                data = JSONObject()
+                    .put("key", key)
+                    .put("event", serviceEventName(key))
+                    .put("state", _uiState.value.connectionState.name),
+            )
+
+            when (key) {
                 AppConfig.MSG_STATE_RUNNING,
-                AppConfig.MSG_STATE_START_SUCCESS -> setConnectedFromService()
+                AppConfig.MSG_STATE_START_SUCCESS -> {
+                    daemonRunning = true
+                    stopRequested = false
+                    stateWaiter?.complete(true)
+                    stateWaiter = null
+                    onDaemonStarted()
+                }
 
                 AppConfig.MSG_STATE_NOT_RUNNING,
-                AppConfig.MSG_STATE_STOP_SUCCESS -> setDisconnectedFromService()
+                AppConfig.MSG_STATE_STOP_SUCCESS -> {
+                    val wasExpectedStop = stopRequested || stopWaiter != null
+                    daemonRunning = false
+                    stopRequested = false
+                    stateWaiter?.complete(false)
+                    stateWaiter = null
+                    stopWaiter?.complete(true)
+                    stopWaiter = null
+                    onDaemonStopped(wasExpectedStop)
+                }
 
                 AppConfig.MSG_STATE_START_FAILURE -> {
-                    setDisconnectedWithError("Не удалось запустить VPN-сервис")
+                    daemonRunning = false
+                    awaitingStartConfirmation = false
+                    stateWaiter?.complete(false)
+                    stateWaiter = null
+                    trafficVerificationJob?.cancel()
+                    if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
+                        setDisconnectedWithError("Не удалось запустить VPN-сервис")
+                    }
                 }
             }
         }
@@ -128,6 +176,26 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
+    private suspend fun refreshDaemonStateIfUnknown() {
+        if (daemonRunning != null) return
+        val waiter = CompletableDeferred<Boolean>()
+        stateWaiter = waiter
+        requestServiceState()
+        withTimeoutOrNull(1_500L) { waiter.await() }
+        if (stateWaiter === waiter) {
+            stateWaiter = null
+        }
+        VpnUiDebugLogger.log(
+            hypothesisId = "H-LIFECYCLE",
+            location = "VpnMainViewModel.kt:refreshDaemonStateIfUnknown",
+            message = "daemon state refresh completed",
+            runId = "vpn-connect",
+            data = JSONObject()
+                .put("runtimeRunning", daemonRunning == true)
+                .put("reason", if (daemonRunning == null) "no_service_response" else "service_response"),
+        )
+    }
+
     private fun scheduleServiceStateRecheck() {
         serviceStateRecheckJob?.cancel()
         serviceStateRecheckJob = viewModelScope.launch {
@@ -138,31 +206,145 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun setConnectedFromService() {
-        connectJob?.cancel()
+    private fun onDaemonStarted() {
         serviceStateRecheckJob?.cancel()
-        _uiState.update { state ->
-            state.copy(
-                activationKey = state.activationKey.ifBlank {
-                    savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
-                },
-                connectionState = VpnConnectionState.Connected,
-                locationsError = "",
+        if (_uiState.value.connectionState == VpnConnectionState.Disconnected && connectionAttempt == 0L) {
+            _uiState.update { state ->
+                state.copy(
+                    connectionState = VpnConnectionState.Connecting,
+                    elapsedSeconds = 0L,
+                    locationsError = "",
+                )
+            }
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-LIFECYCLE",
+                location = "VpnMainViewModel.kt:onDaemonStarted",
+                message = "existing VPN runtime detected; verifying tunnel traffic",
+                runId = "vpn-lifecycle",
+                data = JSONObject().put("attempt", connectionAttempt),
             )
         }
-        startTimer()
+        if (_uiState.value.connectionState != VpnConnectionState.Connecting) {
+            return
+        }
+
+        if (connectionAttempt > 0L && !awaitingStartConfirmation) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-LIFECYCLE",
+                location = "VpnMainViewModel.kt:onDaemonStarted",
+                message = "runtime event observed before current service start; waiting",
+                runId = "vpn-connect",
+                data = JSONObject().put("attempt", connectionAttempt),
+            )
+            return
+        }
+
+        val attempt = connectionAttempt
+        if (trafficVerificationJob?.isActive == true) return
+
         VpnUiDebugLogger.log(
-            hypothesisId = "H10",
-            location = "VpnMainViewModel.kt:setConnectedFromService",
-            message = "premium UI synchronized with running VPN service",
-            data = JSONObject(),
+            hypothesisId = "H-TRAFFIC",
+            location = "VpnMainViewModel.kt:onDaemonStarted",
+            message = "VPN core started; verifying tunnel traffic",
+            runId = "vpn-connect",
+            data = JSONObject().put("attempt", attempt),
         )
+
+        trafficVerificationJob = viewModelScope.launch {
+            val result = withTimeoutOrNull(TUNNEL_VERIFY_TIMEOUT_MS) {
+                tunnelVerifier.verify { probe ->
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H-TRAFFIC",
+                        location = "VpnTunnelTrafficVerifier.kt:verify",
+                        message = "tunnel traffic probe",
+                        runId = "vpn-connect",
+                        data = JSONObject()
+                            .put("attempt", probe.attempt)
+                            .put("stage", probe.stage)
+                            .put("reason", probe.reason)
+                            .put("quality", if (probe.ok) "verified" else "pending"),
+                    )
+                }
+            }
+
+            if (attempt != connectionAttempt || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+                return@launch
+            }
+
+            if (result?.ok == true) {
+                awaitingStartConfirmation = false
+                preserveConnectionFailure = false
+                _uiState.update { state ->
+                    state.copy(
+                        activationKey = state.activationKey.ifBlank {
+                            savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
+                        },
+                        connectionState = VpnConnectionState.Connected,
+                        locationsError = "",
+                    )
+                }
+                startTimer()
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H-TRAFFIC",
+                    location = "VpnMainViewModel.kt:onDaemonStarted",
+                    message = "tunnel traffic verified",
+                    runId = "vpn-connect",
+                    data = JSONObject()
+                        .put("attempt", result.attempt)
+                        .put("reason", result.reason)
+                        .put("quality", "verified"),
+                )
+            } else {
+                awaitingStartConfirmation = false
+                preserveConnectionFailure = true
+                val reason = result?.reason ?: "verification_timeout"
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H-TRAFFIC",
+                    location = "VpnMainViewModel.kt:onDaemonStarted",
+                    message = "tunnel traffic verification failed",
+                    runId = "vpn-connect",
+                    data = JSONObject()
+                        .put("attempt", result?.attempt ?: 0)
+                        .put("reason", reason)
+                        .put("quality", "failed"),
+                )
+                setDisconnectedWithError("VPN запущен, но трафик через туннель не проходит")
+                if (daemonRunning == true) {
+                    V2RayServiceManager.stopVService(getApplication())
+                }
+            }
+        }
     }
 
-    private fun setDisconnectedFromService() {
-        connectJob?.cancel()
+    private fun onDaemonStopped(wasExpectedStop: Boolean) {
+        if (wasExpectedStop) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-LIFECYCLE",
+                location = "VpnMainViewModel.kt:onDaemonStopped",
+                message = "previous VPN runtime stopped; reconnect may continue",
+                runId = "vpn-connect",
+                data = JSONObject().put("attempt", connectionAttempt),
+            )
+            return
+        }
+
+        trafficVerificationJob?.cancel()
         timerJob?.cancel()
-        serviceStateRecheckJob?.cancel()
+
+        if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H-LIFECYCLE",
+                location = "VpnMainViewModel.kt:onDaemonStopped",
+                message = "service stopped while connection attempt was active",
+                runId = "vpn-connect",
+                data = JSONObject().put("attempt", connectionAttempt),
+            )
+            if (!preserveConnectionFailure) {
+                setDisconnectedWithError("VPN-сервис остановился во время подключения")
+            }
+            return
+        }
+
         _uiState.update { state ->
             state.copy(
                 activationKey = state.activationKey.ifBlank {
@@ -170,7 +352,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 },
                 connectionState = VpnConnectionState.Disconnected,
                 elapsedSeconds = 0L,
-                locationsError = "",
+                locationsError = if (preserveConnectionFailure) state.locationsError else "",
             )
         }
     }
@@ -229,7 +411,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        if (savedConfig.isNotBlank() && V2RayServiceManager.isRunning()) {
+        if (savedConfig.isNotBlank() && daemonRunning == true) {
             V2RayServiceManager.stopVService(getApplication())
         }
         MmkvManager.removeServerViaSubid(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)
@@ -257,7 +439,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun removeSyncedSkryonConfig(message: String) {
-        if (V2RayServiceManager.isRunning()) {
+        if (daemonRunning == true) {
             V2RayServiceManager.stopVService(getApplication())
         }
         clearActivatedSkryonConfig()
@@ -501,7 +683,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     suspend fun activateReplacementCode(rawCode: String): Result<Unit> {
-        if (_uiState.value.connectionState != VpnConnectionState.Disconnected) {
+        if (_uiState.value.connectionState != VpnConnectionState.Disconnected || daemonRunning == true) {
             return Result.failure(IllegalStateException("Сначала отключите VPN"))
         }
 
@@ -544,8 +726,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     locationsError = "",
                 )
             }
-            // Cancel an outstanding long-poll authenticated with the old code;
-            // otherwise its late response could restore the previous profile.
             startSkryonConfigSync()
         }.onFailure { error ->
             VpnUiDebugLogger.log(
@@ -599,8 +779,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
+        connectionAttempt += 1L
+        val attempt = connectionAttempt
+        preserveConnectionFailure = false
+        awaitingStartConfirmation = false
         connectJob?.cancel()
         timerJob?.cancel()
+        trafficVerificationJob?.cancel()
         serviceStateRecheckJob?.cancel()
 
         _uiState.update { state ->
@@ -615,12 +800,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             hypothesisId = "H3",
             location = "VpnMainViewModel.kt:onConnectClick",
             message = "state moved to connecting",
-            data = JSONObject(),
+            runId = "vpn-connect",
+            data = JSONObject().put("attempt", attempt),
         )
 
         connectJob = viewModelScope.launch {
-            // The device table is a manual UI action. The connect path performs only a
-            // lightweight access refresh and never requires the full device inventory.
+            refreshDaemonStateIfUnknown()
+
             val accessVerification = EmeryBackendClient.fetchProfile(
                 accessKey = currentState.activationKey,
                 requireDeviceInventory = false,
@@ -628,6 +814,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             accessVerification.fold(
                 onSuccess = { profile ->
                     EmeryAccessManager.saveProfile(profile)
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H12",
+                        location = "VpnMainViewModel.kt:onConnectClick",
+                        message = "access refresh succeeded",
+                        runId = "vpn-connect",
+                        data = JSONObject().put("attempt", attempt),
+                    )
                 },
                 onFailure = { error ->
                     val reason = error.message.orEmpty()
@@ -637,7 +830,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                             hypothesisId = "H12",
                             location = "VpnMainViewModel.kt:onConnectClick",
                             message = "access denied before VPN start",
-                            data = JSONObject().put("error", reason.ifBlank { "unknown" }),
+                            runId = "vpn-connect",
+                            data = JSONObject().put("error", reason.ifBlank { "unknown" }).put("attempt", attempt),
                         )
                         return@launch
                     }
@@ -646,22 +840,23 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         hypothesisId = "H12",
                         location = "VpnMainViewModel.kt:onConnectClick",
                         message = "optional access refresh unavailable; continuing with activated configuration",
-                        data = JSONObject().put("error", reason.ifBlank { "unknown" }),
+                        runId = "vpn-connect",
+                        data = JSONObject().put("error", reason.ifBlank { "unknown" }).put("attempt", attempt),
                     )
                 },
             )
 
             val policyAssets = RegionalPolicyManager.prepareForConnection(getApplication())
             if (policyAssets.isFailure) {
-                setDisconnectedWithError("Не удалось обновить список ограничений РФ")
+                setDisconnectedWithError("Не удалось подготовить региональную политику")
                 VpnUiDebugLogger.log(
                     hypothesisId = "H11",
                     location = "VpnMainViewModel.kt:onConnectClick",
                     message = "regional policy data refresh failed",
-                    data = JSONObject().put(
-                        "error",
-                        policyAssets.exceptionOrNull()?.message ?: "unknown",
-                    ),
+                    runId = "vpn-connect",
+                    data = JSONObject()
+                        .put("error", policyAssets.exceptionOrNull()?.message ?: "unknown")
+                        .put("attempt", attempt),
                 )
                 return@launch
             }
@@ -669,16 +864,22 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = { payload ->
-                    if (!stopStaleRuntimeBeforeProfileStart()) {
+                    if (!stopStaleRuntimeBeforeProfileStart(attempt)) {
                         setDisconnectedWithError("Не удалось остановить предыдущий VPN-сеанс")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
                             location = "VpnMainViewModel.kt:onConnectClick",
                             message = "stale VPN runtime did not stop before profile start",
-                            data = JSONObject().put("selectedGuid", payload.selectedGuid),
+                            runId = "vpn-connect",
+                            data = JSONObject().put("attempt", attempt),
                         )
                         return@fold
                     }
+                    if (attempt != connectionAttempt || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+                        return@fold
+                    }
+
+                    awaitingStartConfirmation = true
                     val serviceStartRequested = try {
                         startVpnService(payload.selectedGuid)
                     } catch (e: Exception) {
@@ -686,19 +887,23 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                             hypothesisId = "H8",
                             location = "VpnMainViewModel.kt:onConnectClick",
                             message = "vpn service start threw",
-                            data = JSONObject().put("error", e.message ?: "unknown"),
+                            runId = "vpn-connect",
+                            data = JSONObject().put("error", e.message ?: "unknown").put("attempt", attempt),
                         )
                         false
                     }
                     if (!serviceStartRequested) {
+                        awaitingStartConfirmation = false
                         setDisconnectedWithError("Не удалось запустить VPN-сервис")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
                             location = "VpnMainViewModel.kt:onConnectClick",
                             message = "vpn service start request failed",
+                            runId = "vpn-connect",
                             data = JSONObject()
                                 .put("serverId", payload.serverId)
-                                .put("city", payload.city),
+                                .put("city", payload.city)
+                                .put("attempt", attempt),
                         )
                         return@fold
                     }
@@ -707,10 +912,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         hypothesisId = "H10",
                         location = "VpnMainViewModel.kt:onConnectClick",
                         message = "VPN service start requested; waiting for runtime confirmation",
+                        runId = "vpn-connect",
                         data = JSONObject()
                             .put("serverId", payload.serverId)
                             .put("city", payload.city)
-                            .put("selectedGuid", payload.selectedGuid),
+                            .put("attempt", attempt),
                     )
                     scheduleServiceStateRecheck()
                 },
@@ -720,35 +926,50 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         hypothesisId = "H7",
                         location = "VpnMainViewModel.kt:onConnectClick",
                         message = "connect failed",
+                        runId = "vpn-connect",
                         data = JSONObject()
                             .put("serverId", currentState.selectedLocation.id)
-                            .put("error", error.message ?: "unknown"),
+                            .put("error", error.message ?: "unknown")
+                            .put("attempt", attempt),
                     )
                 },
             )
         }
     }
 
-    private suspend fun stopStaleRuntimeBeforeProfileStart(): Boolean {
-        if (!V2RayServiceManager.isRunning()) {
+    private suspend fun stopStaleRuntimeBeforeProfileStart(attempt: Long): Boolean {
+        if (daemonRunning != true) {
+            VpnUiDebugLogger.log(
+                hypothesisId = "H8",
+                location = "VpnMainViewModel.kt:stopStaleRuntimeBeforeProfileStart",
+                message = "no stale daemon reported before profile start",
+                runId = "vpn-connect",
+                data = JSONObject().put("attempt", attempt).put("runtimeRunning", false),
+            )
             return true
         }
+
+        val waiter = CompletableDeferred<Boolean>()
+        stopWaiter = waiter
+        stopRequested = true
         VpnUiDebugLogger.log(
             hypothesisId = "H8",
             location = "VpnMainViewModel.kt:stopStaleRuntimeBeforeProfileStart",
             message = "stopping stale VPN runtime before selected profile start",
-            data = JSONObject(),
+            runId = "vpn-connect",
+            data = JSONObject().put("attempt", attempt).put("runtimeRunning", true),
         )
         V2RayServiceManager.stopVService(getApplication())
-        return withTimeoutOrNull(STALE_RUNTIME_STOP_TIMEOUT_MS) {
-            while (V2RayServiceManager.isRunning()) {
-                delay(100L)
-            }
-            // stopCoreLoop releases the core asynchronously; give the foreground
-            // service time to close the old VPN interface before starting a new one.
-            delay(STALE_RUNTIME_SETTLE_DELAY_MS)
-            true
+        val stopped = withTimeoutOrNull(STALE_RUNTIME_STOP_TIMEOUT_MS) {
+            waiter.await()
         } == true
+        if (stopWaiter === waiter) {
+            stopWaiter = null
+        }
+        if (stopped) {
+            delay(STALE_RUNTIME_SETTLE_DELAY_MS)
+        }
+        return stopped
     }
 
     private fun isBlockingAccessFailure(reason: String): Boolean {
@@ -814,13 +1035,15 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
-        val normalizedState = state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
+        val normalizedState = state.copy(
+            activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
+        )
         val serverId = normalizedState.selectedLocation.id.toLongOrNull()
         if (serverId != null) {
             return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
         }
 
-        val importText = normalizedState.selectedLocation.importText.orEmpty().trim()
+        val importText = normalizedState.selectedLocation.importText.trim()
         if (importText.isBlank()) {
             return Result.failure(IllegalStateException("missing_import_text"))
         }
@@ -840,7 +1063,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 return@withContext Result.failure(IllegalStateException("import_failed"))
             }
 
-            val selectedGuid = MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID).firstOrNull().orEmpty()
+            val selectedGuid = MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)
+                .firstOrNull()
+                .orEmpty()
             if (selectedGuid.isBlank()) {
                 return@withContext Result.failure(IllegalStateException("selected_server_missing"))
             }
@@ -857,9 +1082,22 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
+        connectionAttempt += 1L
+        preserveConnectionFailure = false
+        awaitingStartConfirmation = false
+        stopRequested = true
         connectJob?.cancel()
         timerJob?.cancel()
+        trafficVerificationJob?.cancel()
         serviceStateRecheckJob?.cancel()
+
+        VpnUiDebugLogger.log(
+            hypothesisId = "H2",
+            location = "VpnMainViewModel.kt:onDisconnectClick",
+            message = "disconnect requested",
+            runId = "vpn-lifecycle",
+            data = JSONObject().put("state", _uiState.value.connectionState.name).put("runtimeRunning", daemonRunning == true),
+        )
         stopVpnService()
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H2",
@@ -893,19 +1131,38 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     if (state.connectionState == VpnConnectionState.Connected) {
                         state.copy(elapsedSeconds = state.elapsedSeconds + 1)
                     } else {
-                        state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
+                        state.copy(
+                            activationKey = state.activationKey.ifBlank {
+                                savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
+                            },
+                        )
                     }
                 }
             }
         }
     }
 
+    private fun serviceEventName(key: Int): String {
+        return when (key) {
+            AppConfig.MSG_STATE_RUNNING -> "STATE_RUNNING"
+            AppConfig.MSG_STATE_NOT_RUNNING -> "STATE_NOT_RUNNING"
+            AppConfig.MSG_STATE_START_SUCCESS -> "START_SUCCESS"
+            AppConfig.MSG_STATE_START_FAILURE -> "START_FAILURE"
+            AppConfig.MSG_STATE_STOP_SUCCESS -> "STOP_SUCCESS"
+            else -> "KEY_$key"
+        }
+    }
+
     override fun onCleared() {
+        connectionAttempt += 1L
         connectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
         configSyncJob?.cancel()
         serviceStateRecheckJob?.cancel()
+        trafficVerificationJob?.cancel()
+        stopWaiter?.cancel()
+        stateWaiter?.cancel()
 
         if (serviceReceiverRegistered) {
             MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_UNREGISTER_CLIENT, "")
