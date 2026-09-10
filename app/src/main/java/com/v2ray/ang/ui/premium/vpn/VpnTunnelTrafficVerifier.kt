@@ -117,7 +117,7 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
             connection.useCaches = false
             connection.setRequestProperty("Cache-Control", "no-cache")
             connection.setRequestProperty("Connection", "close")
-            connection.setRequestProperty("User-Agent", "Skryon-VPN-Probe/2")
+            connection.setRequestProperty("User-Agent", "Skryon-VPN-Probe/3")
 
             val code = connection.responseCode
             if (code in 200..299) {
@@ -139,10 +139,24 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
     }
 
     private fun safeReason(error: Exception): String {
-        return error.javaClass.simpleName
-            .replace(Regex("[^A-Za-z0-9_-]"), "")
-            .take(48)
-            .ifBlank { "exception" }
+        val parts = mutableListOf<String>()
+        var current: Throwable? = error
+        var depth = 0
+        while (current != null && depth < MAX_CAUSE_DEPTH) {
+            val type = current.javaClass.simpleName
+                .replace(Regex("[^A-Za-z0-9_-]"), "")
+                .take(48)
+                .ifBlank { "Exception" }
+            val message = current.message.orEmpty()
+                .replace(Regex("[^A-Za-z0-9 ._:/-]"), " ")
+                .replace(Regex("\\s+"), "_")
+                .take(96)
+                .trim('_')
+            parts += if (message.isBlank()) type else "${type}_${message}"
+            current = current.cause
+            depth += 1
+        }
+        return parts.joinToString("__cause_").take(320).ifBlank { "exception" }
     }
 
     private companion object {
@@ -151,6 +165,7 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
         const val SOCKS_CONNECT_TIMEOUT_MS = 1_000
         const val CONNECT_TIMEOUT_MS = 2_500
         const val READ_TIMEOUT_MS = 2_500
+        const val MAX_CAUSE_DEPTH = 4
         const val PRIMARY_PROBE_URL = "https://skryon.ru/health"
         const val SECONDARY_PROBE_URL = "https://one.one.one.one/cdn-cgi/trace"
     }
