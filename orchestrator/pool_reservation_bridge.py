@@ -22,6 +22,7 @@ from config import (
 
 _REGION_RE = re.compile(r'^[a-z0-9-]{1,16}$')
 _MAX_POOL_SPEED_LIMIT_MBPS = 50
+_VALID_TRAFFIC_POLICIES = {'international', 'russia'}
 
 
 @dataclass
@@ -272,3 +273,42 @@ def refresh_stored_assignment(raw_code: str, device_id: str) -> dict[str, Any]:
     )
     save_device_pool_assignment(entitlement['code'], device_id, prepared)
     return confirm_persisted_assignment(prepared)
+
+
+def apply_stored_assignment_policy(
+    raw_code: str,
+    device_id: str,
+    traffic_policy: str,
+) -> dict[str, Any]:
+    """Apply policy to the already assigned device without reserving a new pool slot."""
+
+    from storage import get_device_pool_assignment, get_device_pool_entitlement
+
+    policy = str(traffic_policy or '').strip().lower()
+    if policy not in _VALID_TRAFFIC_POLICIES:
+        raise PoolBridgeError('invalid_traffic_policy', 400)
+
+    entitlement = get_device_pool_entitlement(raw_code, device_id)
+    if not entitlement:
+        raise PoolBridgeError('device_not_registered', 403)
+
+    stored = get_device_pool_assignment(entitlement['code'], device_id)
+    if not stored:
+        raise PoolBridgeError('pool_assignment_missing', 409)
+    if str(stored.get('pool_status') or '') != 'active':
+        raise PoolBridgeError('pool_assignment_not_active', 409)
+
+    assignment_id = int(stored.get('pool_assignment_id') or 0)
+    if assignment_id <= 0:
+        raise PoolBridgeError('pool_assignment_missing', 409)
+
+    result = _request(
+        '/api/v1/internal/pool/assignments/policy',
+        {
+            'assignment_id': assignment_id,
+            'traffic_policy': policy,
+        },
+    )
+    if result.get('ok') is not True:
+        raise PoolBridgeError('traffic_policy_not_applied', 503)
+    return result
