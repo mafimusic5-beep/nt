@@ -42,6 +42,17 @@ class PoolReservationConfirmResponse(BaseModel):
     confirmed_at: datetime
 
 
+class PoolPolicyApplyRequest(BaseModel):
+    assignment_id: int = Field(gt=0)
+    traffic_policy: str = Field(pattern=r"^(international|russia)$")
+
+
+class PoolPolicyApplyResponse(BaseModel):
+    ok: bool = True
+    assignment_id: int
+    traffic_policy: str
+
+
 class PoolAssignmentMaintenanceResponse(BaseModel):
     checked: int
     migrated: int
