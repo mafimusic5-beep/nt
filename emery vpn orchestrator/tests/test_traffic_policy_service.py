@@ -27,6 +27,14 @@ def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
     assert '"geoip:ru-blocked-community"' not in script
 
 
+def test_generated_remote_policy_script_is_valid_python():
+    for policy in ("international", "russia"):
+        script = TrafficPolicyService._remote_script(
+            f'{{"assignment_id":42,"traffic_policy":"{policy}","config_path":"/usr/local/etc/xray/config.json"}}'
+        )
+        compile(script, "<traffic-policy-remote>", "exec")
+
+
 def test_international_policy_has_explicit_direct_terminal_route():
     script = TrafficPolicyService._remote_script(
         '{"assignment_id":42,"traffic_policy":"international","config_path":"/usr/local/etc/xray/config.json"}'
