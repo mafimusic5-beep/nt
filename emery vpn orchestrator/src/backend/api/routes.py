@@ -26,6 +26,8 @@ from src.backend.schemas.admin import (
 from src.backend.schemas.internal import ConfirmPaymentRequest, ConfirmPaymentResponse, CreateOrderRequest, CreateOrderResponse
 from src.backend.schemas.pool_bridge import (
     PoolAssignmentMaintenanceResponse,
+    PoolPolicyApplyRequest,
+    PoolPolicyApplyResponse,
     PoolReservationConfirmRequest,
     PoolReservationConfirmResponse,
     PoolReservationPrepareRequest,
@@ -205,6 +207,22 @@ def internal_confirm_pool_assignment(
     db: Session = Depends(get_db),
 ):
     return PoolAssignmentService(db).confirm(payload)
+
+
+@router.post(
+    "/internal/pool/assignments/policy",
+    response_model=PoolPolicyApplyResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_apply_pool_assignment_policy(
+    payload: PoolPolicyApplyRequest,
+    db: Session = Depends(get_db),
+):
+    TrafficPolicyService(db).apply(payload.assignment_id, payload.traffic_policy)
+    return PoolPolicyApplyResponse(
+        assignment_id=payload.assignment_id,
+        traffic_policy=payload.traffic_policy,
+    )
 
 
 @router.post(
