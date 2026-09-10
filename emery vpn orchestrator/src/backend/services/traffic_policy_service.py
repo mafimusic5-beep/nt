@@ -109,7 +109,7 @@ class TrafficPolicyService:
                     assignment.id,
                     node.id,
                     rc,
-                    err[:200],
+                    err[-1000:],
                 )
                 return {"ok": False, "detail": "traffic_policy_remote_failed"}
             try:
@@ -188,6 +188,17 @@ RU_SERVICE_DOMAINS = [
 ]
 RU_DOMAINS = ["geosite:antifilter-download"] + RU_SERVICE_DOMAINS
 RU_IPS = ["geoip:ru-blocked"]
+PRIVATE_NETWORKS = [
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+]
 ASSET_TTL_SECONDS = 6 * 60 * 60
 
 
@@ -300,7 +311,7 @@ managed_rules = [
     {
         "type": "field",
         "inboundTag": [inbound_tag],
-        "ip": ["geoip:private"],
+        "ip": PRIVATE_NETWORKS,
         "outboundTag": "emery-blocked",
     },
 ]
@@ -349,7 +360,17 @@ try:
     current_stat = os.stat(path, follow_symlinks=False)
     os.chown(candidate, current_stat.st_uid, current_stat.st_gid, follow_symlinks=False)
     os.chmod(candidate, current_stat.st_mode & 0o777, follow_symlinks=False)
-    subprocess.run(["xray", "run", "-test", "-config", candidate], check=True, capture_output=True, text=True)
+    validation = subprocess.run(
+        ["xray", "run", "-test", "-config", candidate],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if validation.returncode != 0:
+        detail = " | ".join(
+            (validation.stderr or validation.stdout or "xray_config_invalid").strip().splitlines()
+        )
+        raise RuntimeError("xray_config_invalid:" + detail[:800])
     os.replace(candidate, path)
     subprocess.run(["systemctl", "restart", "xray"], check=True, capture_output=True, text=True)
     subprocess.run(["systemctl", "is-active", "--quiet", "xray"], check=True)
