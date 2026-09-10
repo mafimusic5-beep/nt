@@ -73,6 +73,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.V2RayServiceManager
+import com.v2ray.ang.ui.premium.vpn.VpnConnectionDiagnosticsOverlay
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
@@ -208,12 +209,19 @@ private fun EmeryApp(
                         data = JSONObject(),
                     )
                 }
-                VpnMainRoute(
-                    viewModel = vpnMainViewModel,
-                    requestVpnPermission = requestVpnPermission,
-                    startVpnService = startVpnService,
-                    stopVpnService = stopVpnService,
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    VpnMainRoute(
+                        viewModel = vpnMainViewModel,
+                        requestVpnPermission = requestVpnPermission,
+                        startVpnService = startVpnService,
+                        stopVpnService = stopVpnService,
+                    )
+                    VpnConnectionDiagnosticsOverlay(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(start = 12.dp, top = 62.dp, end = 12.dp),
+                    )
+                }
             }
         }
     }
