@@ -4,7 +4,11 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import java.net.HttpURLConnection
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.handler.SettingsManager
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.Socket
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.CancellationException
@@ -29,26 +33,31 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
 
         var last = VpnTunnelProbe(false, 0, "network", "vpn_network_not_found")
         for (attempt in 1..MAX_ATTEMPTS) {
-            val vpnNetwork = findVpnNetwork(manager)
-            if (vpnNetwork == null) {
+            if (findVpnNetwork(manager) == null) {
                 last = VpnTunnelProbe(false, attempt, "vpn_network", "vpn_network_not_found")
                 onProbe(last)
                 delay(RETRY_DELAY_MS)
                 continue
             }
 
-            val primary = probe(vpnNetwork, PRIMARY_PROBE_URL, attempt, "skryon_health")
-            onProbe(primary)
-            if (!primary.ok) {
-                last = primary
+            val socksFailure = checkLocalSocks(attempt)
+            if (socksFailure != null) {
+                last = socksFailure
+                onProbe(last)
                 delay(RETRY_DELAY_MS)
                 continue
             }
 
-            val secondary = probe(vpnNetwork, SECONDARY_PROBE_URL, attempt, "neutral_https")
+            val primary = probeThroughLocalSocks(PRIMARY_PROBE_URL, attempt, "skryon_health_via_socks")
+            onProbe(primary)
+            if (primary.ok) {
+                return@withContext VpnTunnelProbe(true, attempt, "traffic", "vpn_https_verified_via_socks")
+            }
+
+            val secondary = probeThroughLocalSocks(SECONDARY_PROBE_URL, attempt, "neutral_https_via_socks")
             onProbe(secondary)
             if (secondary.ok) {
-                return@withContext VpnTunnelProbe(true, attempt, "traffic", "vpn_https_verified")
+                return@withContext VpnTunnelProbe(true, attempt, "traffic", "vpn_https_verified_via_socks_fallback")
             }
 
             last = secondary
@@ -65,9 +74,34 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
         }
     }
 
-    private fun probe(network: Network, url: String, attempt: Int, stage: String): VpnTunnelProbe {
+    private fun checkLocalSocks(attempt: Int): VpnTunnelProbe? {
+        return try {
+            Socket().use { socket ->
+                socket.connect(
+                    InetSocketAddress(AppConfig.LOOPBACK, SettingsManager.getSocksPort()),
+                    SOCKS_CONNECT_TIMEOUT_MS,
+                )
+            }
+            null
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            VpnTunnelProbe(
+                ok = false,
+                attempt = attempt,
+                stage = "local_socks",
+                reason = "socks_unreachable:${safeReason(error)}",
+            )
+        }
+    }
+
+    private fun probeThroughLocalSocks(url: String, attempt: Int, stage: String): VpnTunnelProbe {
+        val proxy = Proxy(
+            Proxy.Type.SOCKS,
+            InetSocketAddress(AppConfig.LOOPBACK, SettingsManager.getSocksPort()),
+        )
         val connection = try {
-            network.openConnection(URL(url)) as? HttpsURLConnection
+            URL(url).openConnection(proxy) as? HttpsURLConnection
                 ?: return VpnTunnelProbe(false, attempt, stage, "not_https_connection")
         } catch (error: CancellationException) {
             throw error
@@ -82,7 +116,8 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
             connection.instanceFollowRedirects = false
             connection.useCaches = false
             connection.setRequestProperty("Cache-Control", "no-cache")
-            connection.setRequestProperty("User-Agent", "Skryon-VPN-Probe/1")
+            connection.setRequestProperty("Connection", "close")
+            connection.setRequestProperty("User-Agent", "Skryon-VPN-Probe/2")
 
             val code = connection.responseCode
             if (code in 200..299) {
@@ -111,10 +146,11 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
     }
 
     private companion object {
-        const val MAX_ATTEMPTS = 6
-        const val RETRY_DELAY_MS = 700L
-        const val CONNECT_TIMEOUT_MS = 2_000
-        const val READ_TIMEOUT_MS = 2_000
+        const val MAX_ATTEMPTS = 8
+        const val RETRY_DELAY_MS = 750L
+        const val SOCKS_CONNECT_TIMEOUT_MS = 1_000
+        const val CONNECT_TIMEOUT_MS = 2_500
+        const val READ_TIMEOUT_MS = 2_500
         const val PRIMARY_PROBE_URL = "https://skryon.ru/health"
         const val SECONDARY_PROBE_URL = "https://one.one.one.one/cdn-cgi/trace"
     }
