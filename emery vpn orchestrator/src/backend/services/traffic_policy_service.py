@@ -286,16 +286,11 @@ for item in list(routing.get("rules") or []):
     if not managed:
         rules.append(item)
 
-# These assignment-scoped rules make the selected mode authoritative even if
-# older/global rules remain in the node config. Safety blocks stay ahead of the
-# final direct catch-all so international mode cannot bypass them.
+# Assignment-scoped policy must not contain a blanket ::/0 blackhole here.
+# With IPIfNonMatch, a dual-stack hostname can be resolved to AAAA before the
+# explicit direct catch-all is evaluated, causing ordinary HTTPS to be closed.
+# Keep only targeted safety and regional blocks, then terminate with direct.
 managed_rules = [
-    {
-        "type": "field",
-        "inboundTag": [inbound_tag],
-        "ip": ["::/0"],
-        "outboundTag": "emery-blocked",
-    },
     {
         "type": "field",
         "inboundTag": [inbound_tag],
@@ -340,7 +335,7 @@ managed_rules.append(
 )
 routing["rules"] = managed_rules + rules
 
-candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\\n"
+candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
 if candidate_text == original:
     print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": False}))
     raise SystemExit(0)
