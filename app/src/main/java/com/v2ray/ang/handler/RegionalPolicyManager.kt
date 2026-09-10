@@ -2,9 +2,17 @@ package com.v2ray.ang.handler
 
 import android.content.Context
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.security.EmeryDeviceIdentity
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
-import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 
 internal enum class RegionalPolicyMode(val storageValue: String) {
     International("international"),
@@ -21,6 +29,17 @@ internal enum class RegionalPolicyMode(val storageValue: String) {
  */
 internal object RegionalPolicyManager {
     private const val ROUTING_PRESET_GLOBAL = 2
+    private const val POLICY_API_URL = "https://skryon.ru/api/policy"
+    private const val POLICY_API_PATH = "/api/policy"
+
+    private val policyClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
 
     fun readMode(): RegionalPolicyMode? {
         return when (MmkvManager.decodeSettingsString(AppConfig.PREF_REGIONAL_POLICY_MODE)) {
@@ -33,27 +52,22 @@ internal object RegionalPolicyManager {
     fun isRussiaModeEnabled(): Boolean = readMode() == RegionalPolicyMode.Russia
 
     suspend fun apply(context: Context, mode: RegionalPolicyMode): Result<Unit> = runCatching {
-        // A saved/activated profile is represented in the premium UI by the
-        // synthetic "skryon-activated" location. Reconnecting that location can
-        // reuse its local import text without calling /vpn/connect, so merely
-        // storing the mode used to leave the VPS on the previous policy.
-        // Push the selected policy to the authoritative server before switching
-        // the local mode. Nothing is downloaded to Android.
         applyServerPolicyIfActivated(mode)
         configureClientRouting(context.applicationContext, mode)
     }
 
     suspend fun prepareForConnection(context: Context): Result<Unit> = runCatching {
         val mode = readMode() ?: RegionalPolicyMode.International
-        // Re-apply the neutral client routing before every connection so an
-        // upgrade from an older build cannot leave local restriction rules in
-        // front of the server-enforced policy.
+        // Re-assert the server-side mode before every connection. This keeps the
+        // selected policy authoritative even after an Xray/backend restart and
+        // never downloads policy assets to Android.
+        applyServerPolicyIfActivated(mode)
         configureClientRouting(context.applicationContext, mode)
     }
 
     fun isPolicyReadyForServiceStart(context: Context): Boolean {
         // No policy assets are required on Android anymore. The mode is sent to
-        // the backend when a server connection is prepared and enforced there.
+        // the backend and enforced on the assigned VPS.
         return true
     }
 
@@ -61,16 +75,47 @@ internal object RegionalPolicyManager {
         val accessKey = MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CODE_PREF, "")
             ?.trim()
             .orEmpty()
-        val serverId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
-        if (accessKey.isBlank() || serverId <= 0L) {
+        if (accessKey.isBlank()) {
             return
         }
 
-        EmeryBackendClient.connectServer(
-            accessKey = accessKey,
-            serverId = serverId,
-            trafficPolicy = mode.storageValue,
-        ).getOrThrow()
+        withContext(Dispatchers.IO) {
+            val proof = EmeryDeviceIdentity.buildRequestProof(
+                method = "POST",
+                path = POLICY_API_PATH,
+                authSecret = accessKey,
+            )
+            val body = JSONObject()
+                .put("code", accessKey)
+                .put("deviceId", proof.deviceId)
+                .put("trafficPolicy", mode.storageValue)
+                .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
+                .toString()
+            val request = Request.Builder()
+                .url(POLICY_API_URL)
+                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .header("Accept", "application/json")
+                .header("X-Emery-Device-Id", proof.deviceId)
+                .header("X-Emery-Timestamp", proof.timestampMillis)
+                .header("X-Emery-Nonce", proof.nonce)
+                .header("X-Emery-Signature", proof.signatureBase64)
+                .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+                .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
+                .build()
+
+            policyClient.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                val ok = response.isSuccessful && json?.optBoolean("ok", false) == true
+                if (!ok) {
+                    val reason = json?.optString("reason").orEmpty()
+                        .ifBlank { json?.optString("error").orEmpty() }
+                        .ifBlank { json?.optString("detail").orEmpty() }
+                        .ifBlank { "http_${response.code}" }
+                    throw IllegalStateException(reason)
+                }
+            }
+        }
     }
 
     private fun configureClientRouting(context: Context, mode: RegionalPolicyMode) {
