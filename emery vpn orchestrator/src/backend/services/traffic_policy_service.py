@@ -109,7 +109,7 @@ class TrafficPolicyService:
                     assignment.id,
                     node.id,
                     rc,
-                    err[-1000:],
+                    err[-2000:],
                 )
                 return {"ok": False, "detail": "traffic_policy_remote_failed"}
             try:
@@ -154,7 +154,8 @@ policy = str(DATA["traffic_policy"])
 path = str(DATA["config_path"])
 tag_prefix = "emery-device-%d-" % assignment_id
 
-# Policy assets live on the VPS. Android never downloads or owns these files.
+# Russia geodata is stored under dedicated filenames so applying a regional
+# policy can never replace Xray's stock geoip.dat/geosite.dat used elsewhere.
 RU_SERVICE_DOMAINS = [
     "domain:facebook.com",
     "domain:fb.com",
@@ -186,8 +187,8 @@ RU_SERVICE_DOMAINS = [
     "domain:googlevideo.com",
     "domain:ytimg.com",
 ]
-RU_DOMAINS = ["geosite:antifilter-download"] + RU_SERVICE_DOMAINS
-RU_IPS = ["geoip:ru-blocked"]
+RU_DOMAINS = ["ext:ru-geosite.dat:antifilter-download"] + RU_SERVICE_DOMAINS
+RU_IPS = ["ext:ru-geoip.dat:ru-blocked"]
 PRIVATE_NETWORKS = [
     "10.0.0.0/8",
     "100.64.0.0/10",
@@ -210,10 +211,10 @@ def asset_is_fresh(target):
         return False
 
 
-def install_asset(name):
+def install_asset(source_name, target_name):
     asset_dir = "/usr/local/share/xray"
     os.makedirs(asset_dir, exist_ok=True)
-    target = os.path.join(asset_dir, name)
+    target = os.path.join(asset_dir, target_name)
     if asset_is_fresh(target):
         return
     bases = [
@@ -223,19 +224,19 @@ def install_asset(name):
     last = None
     for base in bases:
         try:
-            with urllib.request.urlopen(base + "/" + name + ".sha256sum", timeout=30) as response:
+            with urllib.request.urlopen(base + "/" + source_name + ".sha256sum", timeout=30) as response:
                 checksum_text = response.read(4096).decode("utf-8", errors="ignore")
             match = re.search(r"(?i)\\b[0-9a-f]{64}\\b", checksum_text)
             if not match:
                 raise RuntimeError("asset_checksum_invalid")
             expected = match.group(0).lower()
-            with urllib.request.urlopen(base + "/" + name, timeout=120) as response:
+            with urllib.request.urlopen(base + "/" + source_name, timeout=120) as response:
                 data = response.read(128 * 1024 * 1024 + 1)
             if len(data) < 16 * 1024 or len(data) > 128 * 1024 * 1024:
                 raise RuntimeError("asset_size_invalid")
             if hashlib.sha256(data).hexdigest().lower() != expected:
                 raise RuntimeError("asset_checksum_mismatch")
-            fd, tmp = tempfile.mkstemp(prefix="." + name + ".", dir=asset_dir)
+            fd, tmp = tempfile.mkstemp(prefix="." + target_name + ".", dir=asset_dir)
             try:
                 with os.fdopen(fd, "wb") as handle:
                     handle.write(data)
@@ -253,8 +254,8 @@ def install_asset(name):
 
 
 if policy == "russia":
-    install_asset("geosite.dat")
-    install_asset("geoip.dat")
+    install_asset("geosite.dat", "ru-geosite.dat")
+    install_asset("geoip.dat", "ru-geoip.dat")
 elif policy != "international":
     raise RuntimeError("invalid_traffic_policy")
 
@@ -294,13 +295,24 @@ for item in list(routing.get("rules") or []):
     if isinstance(inbound_tags, str):
         inbound_tags = [inbound_tags]
     managed = any(str(value).startswith(tag_prefix) for value in inbound_tags)
-    if not managed:
-        rules.append(item)
+    if managed:
+        continue
 
-# Assignment-scoped policy must not contain a blanket ::/0 blackhole here.
-# With IPIfNonMatch, a dual-stack hostname can be resolved to AAAA before the
-# explicit direct catch-all is evaluated, causing ordinary HTTPS to be closed.
-# Keep only targeted safety and regional blocks, then terminate with direct.
+    # Older policy attempts replaced the standard geoip.dat on some nodes.
+    # Migrate every preserved geoip:private reference to literal CIDRs so the
+    # current config remains valid even before stock geodata is restored.
+    ip_values = item.get("ip")
+    if isinstance(ip_values, list) and "geoip:private" in ip_values:
+        migrated = []
+        for value in ip_values:
+            if value == "geoip:private":
+                migrated.extend(PRIVATE_NETWORKS)
+            else:
+                migrated.append(value)
+        item = dict(item)
+        item["ip"] = migrated
+    rules.append(item)
+
 managed_rules = [
     {
         "type": "field",
@@ -334,9 +346,6 @@ if policy == "russia":
         ]
     )
 
-# Always terminate the assignment policy with an explicit direct route. This
-# prevents unrelated stale/global blackhole rules from swallowing normal web
-# traffic, which previously broke international mode.
 managed_rules.append(
     {
         "type": "field",
@@ -370,7 +379,7 @@ try:
         detail = " | ".join(
             (validation.stderr or validation.stdout or "xray_config_invalid").strip().splitlines()
         )
-        raise RuntimeError("xray_config_invalid:" + detail[:800])
+        raise RuntimeError("xray_config_invalid:" + detail[-2000:])
     os.replace(candidate, path)
     subprocess.run(["systemctl", "restart", "xray"], check=True, capture_output=True, text=True)
     subprocess.run(["systemctl", "is-active", "--quiet", "xray"], check=True)
