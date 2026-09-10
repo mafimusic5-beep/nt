@@ -335,7 +335,7 @@ managed_rules.append(
 )
 routing["rules"] = managed_rules + rules
 
-candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
+candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\\n"
 if candidate_text == original:
     print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": False}))
     raise SystemExit(0)
