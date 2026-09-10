@@ -5,6 +5,7 @@ import com.v2ray.ang.AppConfig
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.InputStream
+import java.net.BindException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -29,6 +30,8 @@ class DeviceBoundVlessProxy(
         private const val CONTROL_TIMEOUT_MILLIS = 10_000
         private const val CONNECT_TIMEOUT_MILLIS = 7_000
         private const val MAX_CONTROL_LINE_BYTES = 8_192
+        private const val BIND_RETRY_ATTEMPTS = 8
+        private const val BIND_RETRY_DELAY_MILLIS = 150L
 
         fun resolve(descriptor: EmeryDeviceGateConfig.Descriptor): ResolvedDescriptor =
             ResolvedDescriptor(
@@ -58,16 +61,7 @@ class DeviceBoundVlessProxy(
         }
         return runCatching {
             val descriptor = resolved.descriptor
-            val listener = ServerSocket().apply {
-                reuseAddress = false
-                bind(
-                    InetSocketAddress(
-                        InetAddress.getByName(EmeryDeviceGateConfig.LOCAL_HOST),
-                        descriptor.localPort,
-                    ),
-                    128,
-                )
-            }
+            val listener = bindListener(descriptor.localPort)
             serverSocket = listener
             running = true
             executor.execute { acceptLoop(listener, resolved.gatewayAddress, descriptor) }
@@ -77,6 +71,49 @@ class DeviceBoundVlessProxy(
             stop()
             false
         }
+    }
+
+    private fun bindListener(localPort: Int): ServerSocket {
+        var lastBindError: BindException? = null
+        repeat(BIND_RETRY_ATTEMPTS) { index ->
+            val listener = ServerSocket()
+            try {
+                // Reconnects can leave accepted sockets in TIME_WAIT even after the
+                // previous listener is closed. SO_REUSEADDR allows the fixed local
+                // device-gate port to be rebound immediately by the next VPN session.
+                listener.reuseAddress = true
+                listener.bind(
+                    InetSocketAddress(
+                        InetAddress.getByName(EmeryDeviceGateConfig.LOCAL_HOST),
+                        localPort,
+                    ),
+                    128,
+                )
+                if (index > 0) {
+                    Log.i(AppConfig.TAG, "Device gate rebound after ${index + 1} attempts")
+                }
+                return listener
+            } catch (error: BindException) {
+                lastBindError = error
+                listener.closeQuietly()
+                if (index + 1 < BIND_RETRY_ATTEMPTS) {
+                    Log.w(
+                        AppConfig.TAG,
+                        "Device gate port busy; retrying bind (${index + 1}/$BIND_RETRY_ATTEMPTS)",
+                    )
+                    try {
+                        Thread.sleep(BIND_RETRY_DELAY_MILLIS)
+                    } catch (interrupted: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw error
+                    }
+                }
+            } catch (error: Exception) {
+                listener.closeQuietly()
+                throw error
+            }
+        }
+        throw lastBindError ?: BindException("Device gate local port is unavailable")
     }
 
     private fun acceptLoop(
