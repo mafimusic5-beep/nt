@@ -7,7 +7,7 @@ from src.backend.services.xray_credential_service import VlessDeviceConfigBuilde
 from src.common.config import settings
 
 
-def _node(config_payload: str, *, name: str = "Германия Клеве") -> SimpleNamespace:
+def _node(config_payload: str, *, name: str = "Клеве, Германия") -> SimpleNamespace:
     return SimpleNamespace(
         id=2,
         name=name,
@@ -67,11 +67,11 @@ def test_reality_gate_uri_uses_human_location_name_as_fragment(monkeypatch) -> N
     node = _node(
         "vless://legacy@198.51.100.10:443?type=tcp&security=reality"
         "&sni=www.cloudflare.com&pbk=public-key&sid=abcd#server-2-50b8db",
-        name="Германия Клеве",
+        name="Клеве, Германия",
     )
 
     uri = VlessDeviceConfigBuilder.build(node, _assignment())
     fragment = unquote(urlsplit(uri).fragment)
 
-    assert fragment == "Германия Клеве"
+    assert fragment == "Клеве, Германия"
     assert "server-" not in fragment
