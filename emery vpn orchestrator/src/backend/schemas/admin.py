@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
+
+from src.common.location_labels import russian_location_label
 
 
 # Capacity is an operator-controlled scheduling limit, not a hardware profile.
@@ -33,6 +35,30 @@ class ManualNodeBootstrapRequest(BaseModel):
     device_gate_port: int = 24443
     device_gate_server_name: str = ""
     device_gate_spki_sha256: str = ""
+
+    @model_validator(mode="after")
+    def normalize_auto_location_name(self) -> "ManualNodeBootstrapRequest":
+        """Store a human Russian country/city label for auto-provisioned nodes.
+
+        Machine routing keeps using region_code (for example ``de-kleve``),
+        while the public node name becomes ``Германия Клеве``.  This also
+        prevents technical bootstrap names from leaking into VPN profiles.
+        """
+        region = (self.region_code or "").strip().lower()
+        if not region or region == "auto":
+            return self
+
+        country_code, separator, city_slug = region.partition("-")
+        if len(country_code) != 2 or not country_code.isalpha():
+            return self
+
+        city = city_slug.replace("-", " ").strip() if separator else ""
+        self.name = russian_location_label(
+            country_code,
+            city,
+            fallback_country=(self.name or "").strip(),
+        )
+        return self
 
 
 class VpnNodeUpsertRequest(BaseModel):
