@@ -15,16 +15,18 @@ def test_shared_legacy_uri_has_no_server_side_policy_identity():
     assert TrafficPolicyService.assignment_id_from_import_text(uri) is None
 
 
-def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
+def test_remote_policy_groups_all_assignment_inbounds():
     script = TrafficPolicyService._remote_script(
         '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
     )
-    assert 'tag_prefix = "emery-device-%d-" % assignment_id' in script
-    assert '"inboundTag": [inbound_tag]' in script
+    assert 'managed_by_assignment = {}' in script
+    assert 're.match(r"^emery-device-(\\d+)-", tag)' in script
+    assert 'all_tags = sorted(managed_by_assignment.values())' in script
+    assert 'russia_tags = sorted(' in script
+    assert '"inboundTag": all_tags' in script
+    assert '"inboundTag": russia_tags' in script
     assert '"ext:ru-geosite.dat:antifilter-download"' not in script
     assert '"ext:ru-geoip.dat:ru-blocked"' in script
-    assert '"geosite:ru-blocked-all"' not in script
-    assert '"geoip:ru-blocked-community"' not in script
 
 
 def test_generated_remote_policy_script_is_valid_python():
@@ -33,6 +35,43 @@ def test_generated_remote_policy_script_is_valid_python():
             f'{{"assignment_id":42,"traffic_policy":"{policy}","config_path":"/usr/local/etc/xray/config.json"}}'
         )
         compile(script, "<traffic-policy-remote>", "exec")
+
+
+def test_policy_state_is_persisted_on_vpn_node():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert '.emery-traffic-policies.json' in script
+    assert 'policies[str(assignment_id)] = policy' in script
+    assert 'write_policy_state(policies)' in script
+    assert 'active_ids = set(managed_by_assignment)' in script
+
+
+def test_policy_uses_xray_routing_service_for_hot_reload():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert 'API_LISTEN = "127.0.0.1:10085"' in script
+    assert '"RoutingService"' in script
+    assert '["xray", "api", "adrules", "--server=" + API_LISTEN, routing_candidate]' in script
+    assert 'if static_changed:' in script
+    assert 'hot_reloaded = True' in script
+
+
+def test_grouped_policy_keeps_constant_rule_families():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    for suffix in (
+        "smtp",
+        "private",
+        "russia-domains",
+        "russia-ips",
+        "direct",
+    ):
+        assert f'POLICY_RULE_PREFIX + "{suffix}"' in script
+    assert 'POLICY_RULE_PREFIX = "skryon-policy-"' in script
+    assert 'touches_managed' in script
 
 
 def test_international_policy_has_explicit_direct_terminal_route():
@@ -66,7 +105,7 @@ def test_russia_policy_avoids_large_geosite_asset_on_low_memory_nodes():
     assert 'install_asset("geosite.dat", "ru-geosite.dat")' not in script
     assert 'install_asset("geoip.dat", "ru-geoip.dat")' in script
     assert 'target = os.path.join(asset_dir, target_name)' in script
-    assert 'RU_DOMAINS = RU_SERVICE_DOMAINS' in script
+    assert 'os.unlink("/usr/local/share/xray/ru-geosite.dat")' in script
     assert '"ext:ru-geosite.dat:antifilter-download"' not in script
     assert '"ext:ru-geoip.dat:ru-blocked"' in script
 
