@@ -56,7 +56,7 @@ def _city_from_node_name(name: str) -> str:
 def normalize_node_city(node: VpnNode) -> str:
     # New auto-setup region codes carry both country and city (for example
     # de-kleve). Prefer that stable machine metadata and expose a Russian label
-    # such as "Германия Клеве" to clients.
+    # such as "Клеве, Германия" to clients.
     from_region = _location_from_region_code(node.region_code or "")
     if from_region:
         return from_region
