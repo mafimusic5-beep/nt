@@ -6,7 +6,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from typing import Protocol
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from src.backend.services.node_recovery_service import SshAndProviderRecoveryTransport
 from src.common.config import settings
@@ -101,7 +101,10 @@ class VlessDeviceConfigBuilder:
                 "eg_node": str(node.id),
             }
         )
-        fragment = parsed.fragment or f"{node.region_code}-{node.id}"
+        # Never leak technical bootstrap fragments such as server-2-50b8db to
+        # the app. The bot stores a GeoIP-derived public name on VpnNode.
+        public_label = (node.name or "").strip() or (node.region_code or "").strip() or "Region"
+        fragment = quote(public_label, safe="")
         return urlunsplit(("vless", netloc, parsed.path, urlencode(query), fragment))
 
 
