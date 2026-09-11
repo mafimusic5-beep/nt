@@ -21,7 +21,7 @@ def test_remote_policy_rules_are_scoped_to_one_assignment_inbound():
     )
     assert 'tag_prefix = "emery-device-%d-" % assignment_id' in script
     assert '"inboundTag": [inbound_tag]' in script
-    assert '"ext:ru-geosite.dat:antifilter-download"' in script
+    assert '"ext:ru-geosite.dat:antifilter-download"' not in script
     assert '"ext:ru-geoip.dat:ru-blocked"' in script
     assert '"geosite:ru-blocked-all"' not in script
     assert '"geoip:ru-blocked-community"' not in script
@@ -59,14 +59,15 @@ def test_policy_private_network_block_uses_literal_cidrs():
     assert 'migrated.extend(PRIVATE_NETWORKS)' in script
 
 
-def test_russia_policy_keeps_custom_geodata_separate_from_stock_assets():
+def test_russia_policy_avoids_large_geosite_asset_on_low_memory_nodes():
     script = TrafficPolicyService._remote_script(
         '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
     )
-    assert 'install_asset("geosite.dat", "ru-geosite.dat")' in script
+    assert 'install_asset("geosite.dat", "ru-geosite.dat")' not in script
     assert 'install_asset("geoip.dat", "ru-geoip.dat")' in script
     assert 'target = os.path.join(asset_dir, target_name)' in script
-    assert '"ext:ru-geosite.dat:antifilter-download"' in script
+    assert 'RU_DOMAINS = RU_SERVICE_DOMAINS' in script
+    assert '"ext:ru-geosite.dat:antifilter-download"' not in script
     assert '"ext:ru-geoip.dat:ru-blocked"' in script
 
 
