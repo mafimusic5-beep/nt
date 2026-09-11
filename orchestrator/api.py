@@ -23,6 +23,7 @@ from device_auth import (
     authorize_gateway_connection,
     ensure_device_auth_storage,
     register_device,
+    validate_device_registration,
 )
 from pool_reservation_bridge import (
     PoolBridgeError,
@@ -279,6 +280,52 @@ def device_profile(request: Request):
         )
     except DeviceAuthError as error:
         return _auth_error(error)
+
+
+@app.post('/api/activate/validate')
+def validate_activation(payload: ActivationRequest, request: Request):
+    if upgrade_required(payload.appVersionCode):
+        return upgrade_required_response()
+
+    if rate_limited(client_key(request, payload)):
+        return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
+
+    try:
+        header_device_id = _header(request, 'x-emery-device-id')
+        header_timestamp = _header(request, 'x-emery-timestamp')
+        header_nonce = _header(request, 'x-emery-nonce')
+        header_signature = _header(request, 'x-emery-signature')
+        header_algorithm = _header(request, 'x-emery-signature-algorithm')
+        _require_header_match(payload.deviceId, header_device_id)
+        _require_header_match(payload.timestamp, header_timestamp)
+        _require_header_match(payload.nonce, header_nonce)
+        _require_header_match(payload.signature, header_signature)
+        _require_header_match(payload.signature_algorithm, header_algorithm)
+
+        validation = validate_device_registration(
+            raw_code=payload.code,
+            path=request.url.path,
+            device_id=header_device_id,
+            device_name=payload.deviceName,
+            public_key_base64=payload.client_public_key,
+            timestamp=header_timestamp,
+            nonce=header_nonce,
+            signature_base64=header_signature,
+            signature_algorithm=header_algorithm,
+        )
+    except DeviceAuthError as error:
+        return _auth_error(error)
+
+    return {
+        'ok': True,
+        'code': validation.get('code') or payload.code.strip(),
+        'alreadyRegistered': validation.get('already_registered', False),
+        'plan': validation.get('plan_code'),
+        'planTitle': validation.get('plan_name'),
+        'usedDevices': validation.get('devices_used'),
+        'maxDevices': validation.get('devices_limit'),
+        'expiresAt': validation.get('expires_at'),
+    }
 
 
 @app.post('/api/activate')

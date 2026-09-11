@@ -148,6 +148,94 @@ private fun activationFailure(
     )
 }
 
+internal suspend fun validateSkryonCode(
+    context: Context,
+    code: String,
+    formattedCode: String,
+): SkryonActivationResult = withContext(Dispatchers.IO) {
+    try {
+        val submittedCode = formattedCode.ifBlank { code.trim() }
+        val validationPath = "/api/activate/validate"
+        val proof = EmeryDeviceIdentity.buildActivationProof(
+            path = validationPath,
+            accessKey = submittedCode,
+        )
+        val requestJson = JSONObject()
+            .put("code", submittedCode)
+            .put("deviceId", proof.deviceId)
+            .put("deviceName", proof.deviceName)
+            .put("client_public_key", proof.publicKeyBase64)
+            .put("timestamp", proof.timestampMillis)
+            .put("nonce", proof.nonce)
+            .put("signature", proof.signatureBase64)
+            .put("signature_algorithm", proof.signatureAlgorithm)
+            .put("appVersionCode", BuildConfig.SKRYON_VERSION_CODE)
+            .toString()
+        val request = Request.Builder()
+            .url(SKRYON_WEBSITE_API_BASE_URL + validationPath)
+            .post(requestJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .header("Accept", "application/json")
+            .header("Connection", "close")
+            .header("X-Emery-Device-Id", proof.deviceId)
+            .header("X-Emery-Timestamp", proof.timestampMillis)
+            .header("X-Emery-Nonce", proof.nonce)
+            .header("X-Emery-Signature", proof.signatureBase64)
+            .header("X-Emery-Signature-Algorithm", proof.signatureAlgorithm)
+            .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
+            .build()
+
+        val response = executeActivationRequest(request)
+        val json = runCatching { JSONObject(response.body) }.getOrNull()
+        if (response.code == 409) {
+            val reason = json?.serverReason().orEmpty().ifBlank { "device_limit_reached" }
+            return@withContext activationFailure(activationReasonText(reason), reason, response)
+        }
+        if (response.code == 429) {
+            return@withContext activationFailure(
+                "Слишком много попыток. Попробуйте позже",
+                "too_many_attempts",
+                response,
+            )
+        }
+        if (!response.successful || json == null) {
+            val reason = json?.serverReason().orEmpty().ifBlank {
+                if (response.code > 0) "activation_http_${response.code}" else "activation_response_invalid"
+            }
+            return@withContext activationFailure(
+                if (json == null || json.serverReason().isBlank()) {
+                    "Сервер активации недоступен"
+                } else {
+                    activationReasonText(reason)
+                },
+                reason,
+                response,
+            )
+        }
+        if (!json.optBoolean("ok", false)) {
+            val reason = json.serverReason().ifBlank { "activation_rejected" }
+            return@withContext activationFailure(
+                json.optString("message").ifBlank { activationReasonText(reason) },
+                reason,
+                response,
+            )
+        }
+
+        val confirmedCode = json.optString("code", submittedCode).trim().ifBlank { submittedCode }
+        if (normalizeActivationCode(confirmedCode) != normalizeActivationCode(submittedCode)) {
+            return@withContext activationFailure(
+                activationReasonText("activation_code_mismatch"),
+                "activation_code_mismatch",
+                response,
+            )
+        }
+        SkryonActivationResult(ok = true, code = confirmedCode)
+    } catch (_: IOException) {
+        activationFailure("Нет соединения с сервером", "network_io_error")
+    } catch (_: Exception) {
+        activationFailure("Ошибка проверки кода", "client_validation_exception")
+    }
+}
+
 /**
  * One signed POST atomically reserves the tariff slot, records the device and returns
  * the VPN configuration. Existing production already enforces code/device counters;
