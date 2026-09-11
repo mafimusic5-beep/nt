@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -351,10 +352,10 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 @Composable
 private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(if (compact) 48.dp else 54.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = if (compact) 48.dp else 54.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Skryon",
                 style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
@@ -365,17 +366,15 @@ private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
             Spacer(Modifier.width(7.dp))
             Text(text = "VPN", style = MaterialTheme.typography.titleSmall, color = AppUiColors.TextSecondary, maxLines = 1)
         }
+        Spacer(Modifier.width(12.dp))
         Text(
             text = selectedLocation.cityLabel(),
             modifier = Modifier.weight(1f),
             style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
             color = AppUiColors.TextPrimary,
             fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
-        Spacer(modifier = Modifier.weight(1f))
     }
 }
 
