@@ -17,6 +17,27 @@ logger = logging.getLogger(__name__)
 router = Router(name="server_setup")
 client = BackendClient()
 
+_COUNTRY_NAME_BY_CODE = {
+    "DE": "Germany",
+    "ES": "Spain",
+    "FI": "Finland",
+    "FR": "France",
+    "GB": "United Kingdom",
+    "HK": "Hong Kong",
+    "IT": "Italy",
+    "JP": "Japan",
+    "KZ": "Kazakhstan",
+    "NL": "Netherlands",
+    "PL": "Poland",
+    "RU": "Russia",
+    "SE": "Sweden",
+    "SG": "Singapore",
+    "TR": "Turkey",
+    "UA": "Ukraine",
+    "UK": "United Kingdom",
+    "US": "United States",
+}
+
 
 def _command_args(text: str) -> str:
     parts = text.split(maxsplit=1)
@@ -44,6 +65,22 @@ def _credentials(raw_args: str) -> tuple[str, str]:
     return parts[0].strip(), parts[1]
 
 
+def _auto_location_title(location: dict | None) -> str:
+    """Return a stable public label made only from GeoIP country/city data."""
+    if not location:
+        return "In Unknown region"
+
+    code = str(location.get("country_code") or "").strip().upper()
+    city = str(location.get("region_name") or "").strip()
+    country = _COUNTRY_NAME_BY_CODE.get(code, code or "Unknown region")
+
+    # When GeoIP has no city, _detect_node_location may expose the country name
+    # as region_name. Do not repeat it as e.g. "In Germany Germany".
+    if city and city.casefold() not in {country.casefold(), code.casefold()}:
+        return f"In {country} {city}"
+    return f"In {country}"
+
+
 @router.message(Command("setup_server", "setupserver"))
 async def setup_server_handler(message: Message) -> None:
     if not is_admin(message.from_user.id):
@@ -65,12 +102,12 @@ async def setup_server_handler(message: Message) -> None:
         await message.answer("Формат: /setup_server 1.2.3.4 ROOT_PASSWORD")
         return
 
-    # Everything except endpoint/password is automatic. GeoIP improves the
-    # node label, but a temporary GeoIP failure must not block provisioning.
+    # Everything except endpoint/password is automatic. GeoIP determines the
+    # public country/city label; technical server ids never become user-facing
+    # region names.
     location = await _detect_node_location(endpoint)
-    region = str((location or {}).get("region_code") or "auto").strip().lower()[:16] or "auto"
-    region_name = str((location or {}).get("region_name") or "").strip()
-    name = region_name or "Server"
+    region = str((location or {}).get("region_code") or "auto").strip().lower()[:64] or "auto"
+    name = _auto_location_title(location)
 
     payload = {
         "name": name,
