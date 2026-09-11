@@ -3,6 +3,7 @@ package com.v2ray.ang.ui.premium.vpn
 import android.content.Context
 import android.util.Log
 import com.v2ray.ang.AngApplication
+import com.v2ray.ang.BuildConfig
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -50,6 +51,21 @@ object VpnUiDebugLogger {
         if (initialized) return
 
         val appContext = context.applicationContext
+        if (!BuildConfig.DEBUG) {
+            runCatching {
+                appContext.getExternalFilesDir(null)?.let { directory ->
+                    File(directory, LOG_FILE_NAME).delete()
+                }
+            }
+            runCatching {
+                File(appContext.filesDir, LOG_FILE_NAME).delete()
+            }
+            logFile = null
+            _events.value = emptyList()
+            initialized = true
+            return
+        }
+
         val directory = appContext.getExternalFilesDir(null) ?: appContext.filesDir
         val file = File(directory, LOG_FILE_NAME)
         runCatching {
@@ -67,6 +83,7 @@ object VpnUiDebugLogger {
     }
 
     fun logFilePath(): String {
+        if (!BuildConfig.DEBUG) return ""
         ensureInitialized()
         return logFile?.absolutePath ?: LOG_FILE_NAME
     }
@@ -78,6 +95,7 @@ object VpnUiDebugLogger {
         runId: String = "run1",
         data: JSONObject = JSONObject(),
     ) {
+        if (!BuildConfig.DEBUG) return
         ensureInitialized()
 
         val safeData = sanitizeData(data)
@@ -116,6 +134,8 @@ object VpnUiDebugLogger {
 
     @Synchronized
     private fun appendVisibleLine(category: String, message: String) {
+        if (!BuildConfig.DEBUG) return
+
         val line = "${timestamp()} | $category | $message"
         _events.update { current ->
             (current + line).takeLast(MAX_MEMORY_LINES)
@@ -129,7 +149,7 @@ object VpnUiDebugLogger {
     }
 
     private fun ensureInitialized() {
-        if (initialized) return
+        if (!BuildConfig.DEBUG || initialized) return
         runCatching { initialize(AngApplication.application) }
     }
 
