@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from src.backend.services.xray_credential_service import VlessDeviceConfigBuilder
 from src.common.config import settings
 
 
-def _node(config_payload: str) -> SimpleNamespace:
+def _node(config_payload: str, *, name: str = "In Germany Kleve") -> SimpleNamespace:
     return SimpleNamespace(
         id=2,
+        name=name,
         region_code="DE",
         config_payload=config_payload,
         device_gate_host="gate.example.com",
@@ -58,3 +59,19 @@ def test_reality_gate_uri_preserves_explicit_flow(monkeypatch) -> None:
     query = parse_qs(urlsplit(uri).query, keep_blank_values=True)
 
     assert query["flow"] == ["explicit-flow"]
+
+
+def test_reality_gate_uri_uses_human_location_name_as_fragment(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "device_bound_gate_enabled", True)
+    monkeypatch.setattr(settings, "device_gate_client_loopback_port", 29000)
+    node = _node(
+        "vless://legacy@198.51.100.10:443?type=tcp&security=reality"
+        "&sni=www.cloudflare.com&pbk=public-key&sid=abcd#server-2-50b8db",
+        name="In Germany Kleve",
+    )
+
+    uri = VlessDeviceConfigBuilder.build(node, _assignment())
+    fragment = unquote(urlsplit(uri).fragment)
+
+    assert fragment == "In Germany Kleve"
+    assert "server-" not in fragment
