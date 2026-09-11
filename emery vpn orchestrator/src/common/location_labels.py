@@ -191,5 +191,5 @@ def russian_location_label(
 
     city_ru = russian_city_name(city)
     if city_ru and city_ru.casefold() != country.casefold():
-        return f"{country} {city_ru}"
+        return f"{city_ru}, {country}"
     return country
