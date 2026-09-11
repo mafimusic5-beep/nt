@@ -193,6 +193,10 @@ RU_SERVICE_DOMAINS = [
     "domain:youtube-nocookie.com",
     "domain:googlevideo.com",
     "domain:ytimg.com",
+    "domain:youtubei.googleapis.com",
+    "domain:youtube.googleapis.com",
+    "domain:youtubeembeddedplayer.googleapis.com",
+    "domain:yt3.ggpht.com",
 ]
 RU_IPS = ["ext:ru-geoip.dat:ru-blocked"]
 PRIVATE_NETWORKS = [
@@ -399,7 +403,7 @@ for item in list(routing.get("rules") or []):
         item["ip"] = migrated
     preserved_rules.append(item)
 
-# Five node-wide rules at most, regardless of whether there are 1, 20, or 100
+# Six node-wide rules at most, regardless of whether there are 1, 20, or 100
 # assignments. The per-assignment inbound is retained for device isolation and
 # the existing kernel/nft per-user speed limit.
 managed_rules = []
@@ -431,6 +435,14 @@ if russia_tags:
                 "inboundTag": russia_tags,
                 "domain": RU_SERVICE_DOMAINS,
                 "outboundTag": "emery-blocked",
+            },
+            {
+                "type": "field",
+                "ruleTag": POLICY_RULE_PREFIX + "dns",
+                "inboundTag": russia_tags,
+                "network": "tcp,udp",
+                "port": "53,853",
+                "outboundTag": "direct",
             },
             {
                 "type": "field",
