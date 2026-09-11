@@ -450,6 +450,94 @@ def _profile_payload(
     }
 
 
+def validate_device_registration(
+    *,
+    raw_code: str,
+    path: str,
+    device_id: str,
+    device_name: str,
+    public_key_base64: str,
+    timestamp: str,
+    nonce: str,
+    signature_base64: str,
+    signature_algorithm: str,
+) -> Dict[str, Any]:
+    safe_device_id = device_id.strip()[:128]
+    signed_device_name = device_name.strip().replace('\n', ' ').replace('\r', ' ')[:80]
+    if not safe_device_id or not signed_device_name:
+        raise DeviceAuthError('bad_request', 400)
+    _check_timestamp(timestamp)
+
+    canonical = _activation_canonical(
+        path=path,
+        raw_code=raw_code,
+        device_id=safe_device_id,
+        device_name=signed_device_name,
+        timestamp=timestamp,
+        nonce=nonce,
+    )
+    fingerprint = _verify_signature(
+        public_key_base64,
+        signature_base64,
+        canonical,
+        signature_algorithm,
+    )
+
+    con = _connect()
+    try:
+        activation = _activation_row(con, raw_code)
+        code = str(activation['code'])
+        limit, plan_title = _plan_limit_and_title(
+            str(activation['plan'] or ''),
+            int(activation['max_devices'] or 1),
+        )
+        existing = con.execute(
+            'SELECT id, public_key, public_key_fingerprint, active FROM code_devices WHERE code = ? AND device_id = ?',
+            (code, safe_device_id),
+        ).fetchone()
+        same_key_other_device = con.execute(
+            'SELECT device_id FROM code_devices WHERE code = ? AND public_key_fingerprint = ? AND device_id <> ?',
+            (code, fingerprint, safe_device_id),
+        ).fetchone()
+        if same_key_other_device:
+            raise DeviceAuthError('device_mismatch', 409)
+
+        already_registered = existing is not None
+        if existing:
+            if not bool(existing['active']):
+                raise DeviceAuthError('device_revoked', 403)
+            stored_public_key = str(existing['public_key'] or '').strip()
+            stored_fingerprint = str(existing['public_key_fingerprint'] or '').strip()
+            if stored_public_key:
+                try:
+                    _, decoded_fingerprint = _decode_public_key(stored_public_key)
+                except DeviceAuthError as exc:
+                    raise DeviceAuthError('device_key_binding_invalid', 409) from exc
+                expected_fingerprint = stored_fingerprint or decoded_fingerprint
+                if expected_fingerprint != fingerprint:
+                    raise DeviceAuthError('device_key_rotation_requires_reset', 409)
+
+        active_count = int(con.execute(
+            'SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1',
+            (code,),
+        ).fetchone()[0])
+        if not already_registered and active_count >= limit:
+            raise DeviceAuthError('device_limit_reached', 409)
+
+        return {
+            'valid': True,
+            'code': code,
+            'already_registered': already_registered,
+            'plan_name': plan_title,
+            'plan_code': activation['plan'] or '',
+            'devices_used': active_count,
+            'devices_limit': limit,
+            'expires_at': activation['expires_at'],
+        }
+    finally:
+        con.close()
+
+
 def register_device(
     *,
     raw_code: str,
