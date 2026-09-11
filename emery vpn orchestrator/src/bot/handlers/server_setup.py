@@ -11,12 +11,56 @@ from src.bot.api.backend_client import BackendClient, BackendClientError
 from src.bot.handlers.admin import _detect_node_location
 from src.bot.utils.access import is_admin
 from src.bot.utils.command_parse import parse_key_values
-from src.common.location_labels import russian_location_label
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="server_setup")
 client = BackendClient()
+
+COUNTRY_NAME_EN_BY_CODE: dict[str, str] = {
+    "AT": "Austria",
+    "BE": "Belgium",
+    "BG": "Bulgaria",
+    "CA": "Canada",
+    "CH": "Switzerland",
+    "CZ": "Czechia",
+    "DE": "Germany",
+    "DK": "Denmark",
+    "EE": "Estonia",
+    "ES": "Spain",
+    "FI": "Finland",
+    "FR": "France",
+    "GB": "United Kingdom",
+    "GR": "Greece",
+    "HK": "Hong Kong",
+    "HR": "Croatia",
+    "HU": "Hungary",
+    "IE": "Ireland",
+    "IL": "Israel",
+    "IS": "Iceland",
+    "IT": "Italy",
+    "JP": "Japan",
+    "KZ": "Kazakhstan",
+    "LT": "Lithuania",
+    "LU": "Luxembourg",
+    "LV": "Latvia",
+    "MD": "Moldova",
+    "NL": "Netherlands",
+    "NO": "Norway",
+    "PL": "Poland",
+    "PT": "Portugal",
+    "RO": "Romania",
+    "RS": "Serbia",
+    "RU": "Russia",
+    "SE": "Sweden",
+    "SG": "Singapore",
+    "SI": "Slovenia",
+    "SK": "Slovakia",
+    "TR": "Turkey",
+    "UA": "Ukraine",
+    "UK": "United Kingdom",
+    "US": "United States",
+}
 
 
 def _command_args(text: str) -> str:
@@ -46,24 +90,26 @@ def _credentials(raw_args: str) -> tuple[str, str]:
 
 
 def _auto_location_title(location: dict | None) -> str:
-    """Build the public VPN label from GeoIP only, in Russian."""
+    """Build the public VPN label from GeoIP country and city only."""
     if not location:
-        return "Регион"
+        return ""
 
     code = str(location.get("country_code") or "").strip().upper()
     region_code = str(location.get("region_code") or "").strip().lower()
     region_name = str(location.get("region_name") or "").strip()
 
     # _detect_node_location stores the city in region_name when a city exists;
-    # otherwise region_name is the country name. The region code tells the two
-    # cases apart: de-kleve has a city, plain de does not.
+    # otherwise region_name is the country name. A city makes region_code look
+    # like de-kleve rather than plain de.
     city = region_name if "-" in region_code else ""
-    fallback_country = region_name if not city else ""
-    return russian_location_label(
-        code,
-        city,
-        fallback_country=fallback_country,
-    )
+    country = COUNTRY_NAME_EN_BY_CODE.get(code)
+    if not country and not city:
+        country = region_name
+    if not country:
+        country = code
+
+    parts = [part for part in (country, city) if part]
+    return f"In {' '.join(parts)}" if parts else ""
 
 
 @router.message(Command("setup_server", "setupserver"))
@@ -89,10 +135,22 @@ async def setup_server_handler(message: Message) -> None:
 
     # Everything except endpoint/password is automatic. GeoIP determines the
     # public country/city label; technical server ids never become user-facing
-    # region names.
+    # region names. Do not add an unknown/auto node when GeoIP is unavailable.
     location = await _detect_node_location(endpoint)
-    region = str((location or {}).get("region_code") or "auto").strip().lower()[:64] or "auto"
+    if not location:
+        await message.answer(
+            "❌ Не смог определить страну и город VPS по IP. Сервер не добавлен в пул. "
+            "Повтори команду позже."
+        )
+        return
+
+    region = str(location.get("region_code") or "").strip().lower()[:64]
     name = _auto_location_title(location)
+    if not region or not name:
+        await message.answer(
+            "❌ GeoIP вернул неполную локацию. Сервер не добавлен в пул. Повтори команду позже."
+        )
+        return
 
     payload = {
         "name": name,
@@ -100,7 +158,7 @@ async def setup_server_handler(message: Message) -> None:
         "endpoint": endpoint,
         "ssh_user": "root",
         "ssh_password": password,
-        "capacity_clients": 5,
+        "capacity_clients": 15,
         "bandwidth_limit_mbps": 1000,
         "per_device_speed_limit_mbps": 50,
         "device_gate_host": "",
