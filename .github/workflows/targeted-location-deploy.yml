@@ -1,0 +1,172 @@
+name: Targeted location label deploy
+
+on:
+  push:
+    branches:
+      - ops/targeted-location-deploy
+    paths:
+      - '.github/workflows/targeted-location-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate target files
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            'emery vpn orchestrator/src/bot/handlers/server_setup.py' \
+            'emery vpn orchestrator/src/bot/utils/geoip.py' \
+            'emery vpn orchestrator/src/backend/services/xray_credential_service.py'
+          git diff --check
+
+      - name: Configure deploy key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > /tmp/deploy-key.pub
+          ssh-keygen -lf /tmp/deploy-key.pub
+
+      - name: Upload deploy public key for recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: targeted-deploy-public-key
+          path: /tmp/deploy-key.pub
+          retention-days: 1
+
+      - name: Verify backend SSH
+        run: |
+          set -euo pipefail
+          ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=accept-new \
+            root@31.70.76.155 \
+            'printf "targeted-ssh-ok\\n"'
+
+      - name: Package targeted files
+        run: |
+          set -euo pipefail
+          tar -czf /tmp/skryon-location-targeted.tgz \
+            'emery vpn orchestrator/src/bot/handlers/server_setup.py' \
+            'emery vpn orchestrator/src/bot/utils/geoip.py' \
+            'emery vpn orchestrator/src/backend/services/xray_credential_service.py'
+
+      - name: Transfer targeted files
+        run: |
+          set -euo pipefail
+          scp \
+            -4 \
+            -P 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=accept-new \
+            /tmp/skryon-location-targeted.tgz \
+            root@31.70.76.155:/tmp/skryon-location-targeted.tgz
+
+      - name: Install with rollback and verify
+        run: |
+          set -euo pipefail
+          ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 \
+            -o StrictHostKeyChecking=accept-new \
+            root@31.70.76.155 <<'EOF'
+          set -Eeuo pipefail
+          umask 077
+
+          repo=/opt/nt
+          runtime=/opt/nt/.runtime/modern/bin/python
+          stage="$(mktemp -d /opt/nt-location-stage.XXXXXX)"
+          backup="/opt/nt-deploy-backups/location-label-$(date -u +%Y%m%dT%H%M%SZ)"
+          archive=/tmp/skryon-location-targeted.tgz
+          files=(
+            'emery vpn orchestrator/src/bot/handlers/server_setup.py'
+            'emery vpn orchestrator/src/bot/utils/geoip.py'
+            'emery vpn orchestrator/src/backend/services/xray_credential_service.py'
+          )
+
+          cleanup() {
+            rm -rf "$stage"
+            rm -f "$archive"
+          }
+          trap cleanup EXIT
+
+          [[ -d "$repo/.git" ]]
+          [[ -x "$runtime" ]]
+          systemctl cat skryon-bot.service >/dev/null
+          systemctl cat emery-backend.service >/dev/null
+
+          mkdir -p "$stage" "$backup"
+          tar -xzf "$archive" -C "$stage"
+
+          for relative in "${files[@]}"; do
+            [[ -f "$stage/$relative" ]]
+            [[ -f "$repo/$relative" ]]
+          done
+
+          "$runtime" -m py_compile \
+            "$stage/emery vpn orchestrator/src/bot/handlers/server_setup.py" \
+            "$stage/emery vpn orchestrator/src/bot/utils/geoip.py" \
+            "$stage/emery vpn orchestrator/src/backend/services/xray_credential_service.py"
+
+          tar -czf "$backup/files-before.tgz" -C "$repo" "${files[@]}"
+
+          changed=0
+          rollback() {
+            status=$?
+            trap - ERR
+            if [[ "$changed" == 1 ]]; then
+              echo 'Targeted deploy failed; restoring previous files.' >&2
+              tar -xzf "$backup/files-before.tgz" -C "$repo"
+              systemctl restart emery-backend.service || true
+              systemctl restart skryon-bot.service || true
+            fi
+            exit "$status"
+          }
+          trap rollback ERR
+
+          for relative in "${files[@]}"; do
+            cp -a "$stage/$relative" "$repo/$relative"
+          done
+          changed=1
+
+          "$runtime" -m py_compile \
+            "$repo/emery vpn orchestrator/src/bot/handlers/server_setup.py" \
+            "$repo/emery vpn orchestrator/src/bot/utils/geoip.py" \
+            "$repo/emery vpn orchestrator/src/backend/services/xray_credential_service.py"
+
+          systemctl restart emery-backend.service
+          systemctl restart skryon-bot.service
+          sleep 2
+          systemctl is-active --quiet emery-backend.service
+          systemctl is-active --quiet skryon-bot.service
+          curl -fsS --max-time 5 http://127.0.0.1:9330/api/v1/health >/dev/null
+
+          for relative in "${files[@]}"; do
+            cmp -s "$stage/$relative" "$repo/$relative"
+          done
+
+          trap - ERR
+          printf 'targeted-location-deploy-ok\n'
+          EOF
