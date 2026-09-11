@@ -20,7 +20,7 @@ from config import (
 )
 
 
-_REGION_RE = re.compile(r'^[a-z0-9-]{1,16}$')
+_REGION_RE = re.compile(r'^[a-z0-9-]{1,64}$')
 _MAX_POOL_SPEED_LIMIT_MBPS = 50
 _VALID_TRAFFIC_POLICIES = {'international', 'russia'}
 
