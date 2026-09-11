@@ -28,7 +28,7 @@ jobs:
           git diff --check
 
       - name: Compile Android Kotlin
-        run: ./gradlew :app:compileDebugKotlin --no-daemon
+        run: bash ./gradlew :app:compileDebugKotlin --no-daemon
 
       - name: Commit validated patch
         run: |
