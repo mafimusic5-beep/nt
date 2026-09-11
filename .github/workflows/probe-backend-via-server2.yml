@@ -1,0 +1,63 @@
+name: Probe backend SSH via server-2
+
+on:
+  push:
+    branches:
+      - ops/targeted-location-deploy
+    paths:
+      - '.github/workflows/probe-backend-via-server2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure deploy key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Find reachable server-2 SSH port
+        id: server2
+        run: |
+          set -euo pipefail
+          port=''
+          for candidate in 22 8443 2022 2222; do
+            if ssh -4 -p "$candidate" -i ~/.ssh/id_ed25519 \
+              -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=6 \
+              -o StrictHostKeyChecking=accept-new \
+              root@82.165.163.77 true >/dev/null 2>&1; then
+              port="$candidate"
+              break
+            fi
+          done
+          [[ -n "$port" ]] || { echo 'server-2 is not reachable with deploy key'; exit 1; }
+          echo "port=$port" >> "$GITHUB_OUTPUT"
+          echo "server-2 reachable on SSH port $port"
+
+      - name: Probe backend from server-2
+        env:
+          SERVER2_PORT: ${{ steps.server2.outputs.port }}
+        run: |
+          set -euo pipefail
+          ssh -4 -p "$SERVER2_PORT" -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=accept-new \
+            root@82.165.163.77 <<'EOF'
+          set -euo pipefail
+          echo "bastion-host=$(hostname)"
+          for port in 22 8443 2022 2222 2200 22222 8022; do
+            if timeout 4 bash -lc "</dev/tcp/31.70.76.155/$port" >/dev/null 2>&1; then
+              echo "backend-port-$port=open"
+            else
+              echo "backend-port-$port=closed-or-timeout"
+            fi
+          done
+          EOF
