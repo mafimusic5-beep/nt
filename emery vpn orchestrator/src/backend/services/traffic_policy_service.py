@@ -154,8 +154,9 @@ policy = str(DATA["traffic_policy"])
 path = str(DATA["config_path"])
 tag_prefix = "emery-device-%d-" % assignment_id
 
-# Russia geodata is stored under dedicated filenames so applying a regional
-# policy can never replace Xray's stock geoip.dat/geosite.dat used elsewhere.
+# Keep the broad IP block list server-side, but do not load the giant Russia
+# geosite.dat on small VPS nodes. The 70+ MB geosite asset expands to hundreds
+# of MB inside Xray and can OOM a 1 GB node during config validation/restart.
 RU_SERVICE_DOMAINS = [
     "domain:facebook.com",
     "domain:fb.com",
@@ -187,7 +188,7 @@ RU_SERVICE_DOMAINS = [
     "domain:googlevideo.com",
     "domain:ytimg.com",
 ]
-RU_DOMAINS = ["ext:ru-geosite.dat:antifilter-download"] + RU_SERVICE_DOMAINS
+RU_DOMAINS = RU_SERVICE_DOMAINS
 RU_IPS = ["ext:ru-geoip.dat:ru-blocked"]
 PRIVATE_NETWORKS = [
     "10.0.0.0/8",
@@ -254,7 +255,6 @@ def install_asset(source_name, target_name):
 
 
 if policy == "russia":
-    install_asset("geosite.dat", "ru-geosite.dat")
     install_asset("geoip.dat", "ru-geoip.dat")
 elif policy != "international":
     raise RuntimeError("invalid_traffic_policy")
@@ -377,7 +377,12 @@ try:
     )
     if validation.returncode != 0:
         detail = " | ".join(
-            (validation.stderr or validation.stdout or "xray_config_invalid").strip().splitlines()
+            (
+                (validation.stderr or "")
+                + "\\n"
+                + (validation.stdout or "")
+                or "xray_config_invalid"
+            ).strip().splitlines()
         )
         raise RuntimeError("xray_config_invalid:" + detail[-2000:])
     os.replace(candidate, path)
