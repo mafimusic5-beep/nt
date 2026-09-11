@@ -1,5 +1,7 @@
 package com.v2ray.ang.ui.premium.vpn
 
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 enum class VpnConnectionState {
@@ -13,9 +15,28 @@ data class VpnLocationOption(
     val title: String,
     val importText: String = "",
 ) {
+    private fun sourceLocationLabel(): String {
+        if (importText.isNotBlank() && '#' in importText) {
+            val rawFragment = importText.substringAfter('#', "").trim()
+            val decodedFragment = try {
+                URLDecoder.decode(rawFragment, StandardCharsets.UTF_8.name()).trim()
+            } catch (_: Exception) {
+                rawFragment
+            }
+            if (
+                decodedFragment.startsWith("In ", ignoreCase = true) ||
+                isRussianLocationLabel(decodedFragment)
+            ) {
+                return decodedFragment
+            }
+        }
+        return title.trim()
+    }
+
     fun cityLabel(): String {
-        val value = title.trim()
+        val value = sourceLocationLabel()
         if (value.startsWith("In ", ignoreCase = true)) return value
+        if (isRussianLocationLabel(value)) return value
 
         val lower = value.lowercase().replace('_', '-').replace('.', '-').replace(' ', '-')
         return when {
@@ -40,8 +61,41 @@ data class VpnLocationOption(
     }
 
     fun countryCodeLabel(): String {
-        val value = title.trim().lowercase().replace('_', '-').replace('.', '-').replace(' ', '-')
+        val value = sourceLocationLabel()
+            .lowercase()
+            .replace('_', '-')
+            .replace('.', '-')
+            .replace(' ', '-')
         return when {
+            value.startsWith("германия") -> "DE"
+            value.startsWith("франция") -> "FR"
+            value.startsWith("нидерланды") -> "NL"
+            value.startsWith("россия") -> "RU"
+            value.startsWith("польша") -> "PL"
+            value.startsWith("великобритания") -> "UK"
+            value.startsWith("сша") -> "US"
+            value.startsWith("швеция") -> "SE"
+            value.startsWith("финляндия") -> "FI"
+            value.startsWith("испания") -> "ES"
+            value.startsWith("италия") -> "IT"
+            value.startsWith("турция") -> "TR"
+            value.startsWith("сингапур") -> "SG"
+            value.startsWith("гонконг") -> "HK"
+            value.startsWith("япония") -> "JP"
+            value.startsWith("казахстан") -> "KZ"
+            value.startsWith("украина") -> "UA"
+            value.startsWith("австрия") -> "AT"
+            value.startsWith("бельгия") -> "BE"
+            value.startsWith("швейцария") -> "CH"
+            value.startsWith("чехия") -> "CZ"
+            value.startsWith("дания") -> "DK"
+            value.startsWith("эстония") -> "EE"
+            value.startsWith("ирландия") -> "IE"
+            value.startsWith("литва") -> "LT"
+            value.startsWith("латвия") -> "LV"
+            value.startsWith("норвегия") -> "NO"
+            value.startsWith("португалия") -> "PT"
+            value.startsWith("румыния") -> "RO"
             value.contains("germany") || value.contains("deutschland") -> "DE"
             value.contains("france") -> "FR"
             value.contains("netherlands") || value.contains("nederland") -> "NL"
@@ -93,7 +147,7 @@ data class VpnLocationOption(
 
     fun regionLabel(): String {
         val city = cityLabel()
-        if (city.startsWith("In ", ignoreCase = true)) return city
+        if (city.startsWith("In ", ignoreCase = true) || isRussianLocationLabel(city)) return city
         return when (city) {
             "Париж" -> "Регион FR"
             "Франкфурт" -> "Регион DE"
@@ -105,6 +159,58 @@ data class VpnLocationOption(
             "Европа" -> "Регион EU"
             else -> city
         }
+    }
+}
+
+private val RUSSIAN_LOCATION_PREFIXES = listOf(
+    "Австрия",
+    "Бельгия",
+    "Болгария",
+    "Канада",
+    "Швейцария",
+    "Чехия",
+    "Германия",
+    "Дания",
+    "Эстония",
+    "Испания",
+    "Финляндия",
+    "Франция",
+    "Великобритания",
+    "Греция",
+    "Гонконг",
+    "Хорватия",
+    "Венгрия",
+    "Ирландия",
+    "Израиль",
+    "Исландия",
+    "Италия",
+    "Япония",
+    "Казахстан",
+    "Литва",
+    "Люксембург",
+    "Латвия",
+    "Молдова",
+    "Нидерланды",
+    "Норвегия",
+    "Польша",
+    "Португалия",
+    "Румыния",
+    "Сербия",
+    "Россия",
+    "Швеция",
+    "Сингапур",
+    "Словения",
+    "Словакия",
+    "Турция",
+    "Украина",
+    "США",
+)
+
+private fun isRussianLocationLabel(value: String): Boolean {
+    val normalized = value.trim()
+    return RUSSIAN_LOCATION_PREFIXES.any { country ->
+        normalized.equals(country, ignoreCase = true) ||
+            normalized.startsWith("$country ", ignoreCase = true)
     }
 }
 
