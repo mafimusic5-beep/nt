@@ -20,7 +20,9 @@ class TrafficPolicyService:
     RUSSIA = "russia"
     VALID = {INTERNATIONAL, RUSSIA}
 
-    # Process-local cache only. The current app request is always authoritative.
+    # Process-local cache is only an optimization. Enforcement state is also
+    # persisted on the VPN node so a backend restart cannot forget other users'
+    # policy while rebuilding the node-wide grouped routing rules.
     _cache_lock = Lock()
     _policy_cache: dict[int, str] = {}
 
@@ -74,13 +76,10 @@ class TrafficPolicyService:
         if node is None:
             raise HTTPException(status_code=409, detail="assigned_node_missing")
 
-        # Re-assert the mode from the current request every time. Cache is not
-        # trusted for enforcement, so backend restarts cannot restore stale state.
         result = self._apply_remote(node, assignment, policy)
         if not result["ok"]:
             raise HTTPException(status_code=503, detail=result["detail"])
 
-        # Do not persist policy in the assignment, audit log, or database.
         self._remember_policy(assignment.id, policy)
 
     def _apply_remote(self, node: VpnNode, assignment: VpnAssignment, policy: str) -> dict:
@@ -109,7 +108,7 @@ class TrafficPolicyService:
                     assignment.id,
                     node.id,
                     rc,
-                    err[-2000:],
+                    err[-3000:],
                 )
                 return {"ok": False, "detail": "traffic_policy_remote_failed"}
             try:
@@ -122,6 +121,7 @@ class TrafficPolicyService:
                 "ok": True,
                 "detail": "traffic_policy_applied",
                 "changed": parsed.get("changed") is True,
+                "hot_reloaded": parsed.get("hot_reloaded") is True,
             }
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -153,10 +153,16 @@ assignment_id = int(DATA["assignment_id"])
 policy = str(DATA["traffic_policy"])
 path = str(DATA["config_path"])
 tag_prefix = "emery-device-%d-" % assignment_id
+folder = os.path.dirname(path) or "."
+state_path = os.path.join(folder, ".emery-traffic-policies.json")
+API_LISTEN = "127.0.0.1:10085"
+POLICY_RULE_PREFIX = "skryon-policy-"
+VALID_POLICIES = {"international", "russia"}
 
-# Keep the broad IP block list server-side, but do not load the giant Russia
-# geosite.dat on small VPS nodes. The 70+ MB geosite asset expands to hundreds
-# of MB inside Xray and can OOM a 1 GB node during config validation/restart.
+# Keep the broad IP block list server-side, but never load the giant Russia
+# geosite.dat on small 1 GB VPN nodes. A single shared GeoIP matcher plus a
+# compact explicit domain set is enough for every Russia-policy assignment on
+# the node; the heavy list is not duplicated per user.
 RU_SERVICE_DOMAINS = [
     "domain:facebook.com",
     "domain:fb.com",
@@ -188,7 +194,6 @@ RU_SERVICE_DOMAINS = [
     "domain:googlevideo.com",
     "domain:ytimg.com",
 ]
-RU_DOMAINS = RU_SERVICE_DOMAINS
 RU_IPS = ["ext:ru-geoip.dat:ru-blocked"]
 PRIVATE_NETWORKS = [
     "10.0.0.0/8",
@@ -254,53 +259,134 @@ def install_asset(source_name, target_name):
     raise RuntimeError("policy_asset_download_failed:%s" % type(last).__name__)
 
 
-if policy == "russia":
-    install_asset("geoip.dat", "ru-geoip.dat")
-elif policy != "international":
+def load_policy_state():
+    try:
+        with open(state_path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    clean = {}
+    for key, value in raw.items():
+        try:
+            number = int(key)
+        except (TypeError, ValueError):
+            continue
+        normalized = str(value or "").strip().lower()
+        if number > 0 and normalized in VALID_POLICIES:
+            clean[str(number)] = normalized
+    return clean
+
+
+def write_policy_state(state):
+    fd, temporary = tempfile.mkstemp(prefix=".emery-policy-state-", suffix=".json", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + chr(10))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, state_path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+if policy not in VALID_POLICIES:
     raise RuntimeError("invalid_traffic_policy")
 
-folder = os.path.dirname(path) or "."
 lock = open(os.path.join(folder, ".emery-xray-policy.lock"), "a+", encoding="utf-8")
 fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
 with open(path, "r", encoding="utf-8") as handle:
     original = handle.read()
 config = json.loads(original)
 
-inbound_tag = ""
+# Discover every active assignment inbound. Policies are grouped by inboundTag,
+# so Xray keeps a constant number of matchers/rules as the user count grows.
+managed_by_assignment = {}
+inbounds_changed = False
 for inbound in list(config.get("inbounds") or []):
     tag = str(inbound.get("tag") or "")
-    if tag.startswith(tag_prefix):
-        inbound_tag = tag
-        inbound["sniffing"] = {
-            "enabled": True,
-            "destOverride": ["http", "tls", "quic"],
-            "routeOnly": True,
-        }
-        break
-if not inbound_tag:
+    match = re.match(r"^emery-device-(\\d+)-", tag)
+    if not match:
+        continue
+    managed_by_assignment[int(match.group(1))] = tag
+    desired_sniffing = {
+        "enabled": True,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": True,
+    }
+    if inbound.get("sniffing") != desired_sniffing:
+        inbound["sniffing"] = desired_sniffing
+        inbounds_changed = True
+
+if assignment_id not in managed_by_assignment:
     raise RuntimeError("assignment_inbound_missing")
 
+policies = load_policy_state()
+active_ids = set(managed_by_assignment)
+policies = {
+    str(key): value
+    for key, value in (
+        (int(raw_key), raw_value)
+        for raw_key, raw_value in policies.items()
+        if str(raw_key).isdigit()
+    )
+    if key in active_ids and value in VALID_POLICIES
+}
+policies[str(assignment_id)] = policy
+all_tags = sorted(managed_by_assignment.values())
+russia_tags = sorted(
+    tag
+    for current_id, tag in managed_by_assignment.items()
+    if policies.get(str(current_id), "international") == "russia"
+)
+
+# Only the compact GeoIP asset is needed, and only while at least one assignment
+# uses Russia policy. Xray's GeoIP registry shares the resulting IP set.
+if russia_tags:
+    install_asset("geoip.dat", "ru-geoip.dat")
+
 outbounds = list(config.get("outbounds") or [])
+outbounds_before = json.dumps(outbounds, sort_keys=True, separators=(",", ":"))
 if not any(item.get("tag") == "direct" for item in outbounds):
     outbounds.append({"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}})
 if not any(item.get("tag") == "emery-blocked" for item in outbounds):
     outbounds.append({"tag": "emery-blocked", "protocol": "blackhole"})
 config["outbounds"] = outbounds
+outbounds_changed = outbounds_before != json.dumps(outbounds, sort_keys=True, separators=(",", ":"))
+
+# Xray 1.8.12+ supports a loopback-only simplified API listener. RoutingService
+# lets us replace the grouped rules in-place; normal policy switches therefore
+# do not start a second Xray process and do not restart the live VPN service.
+existing_api = config.get("api")
+services = []
+if isinstance(existing_api, dict):
+    services = [str(value) for value in list(existing_api.get("services") or []) if str(value)]
+if "RoutingService" not in services:
+    services.append("RoutingService")
+desired_api = {
+    "tag": "api",
+    "listen": API_LISTEN,
+    "services": services,
+}
+api_changed = existing_api != desired_api
+config["api"] = desired_api
 
 routing = config.setdefault("routing", {})
 routing["domainStrategy"] = "IPIfNonMatch"
-rules = []
+preserved_rules = []
 for item in list(routing.get("rules") or []):
     inbound_tags = item.get("inboundTag") or []
     if isinstance(inbound_tags, str):
         inbound_tags = [inbound_tags]
-    managed = any(str(value).startswith(tag_prefix) for value in inbound_tags)
-    if managed:
+    touches_managed = any(str(value).startswith("emery-device-") for value in inbound_tags)
+    if touches_managed or str(item.get("ruleTag") or "").startswith(POLICY_RULE_PREFIX):
         continue
 
-    # Older policy attempts replaced the standard geoip.dat on some nodes.
-    # Migrate every preserved geoip:private reference to literal CIDRs so the
-    # current config remains valid even before stock geodata is restored.
+    # Migrate historical stock-GeoIP private references because older Russia
+    # policy versions may have replaced geoip.dat on this node.
     ip_values = item.get("ip")
     if isinstance(ip_values, list) and "geoip:private" in ip_values:
         migrated = []
@@ -311,92 +397,152 @@ for item in list(routing.get("rules") or []):
                 migrated.append(value)
         item = dict(item)
         item["ip"] = migrated
-    rules.append(item)
+    preserved_rules.append(item)
 
-managed_rules = [
-    {
-        "type": "field",
-        "inboundTag": [inbound_tag],
-        "port": "25,465,587",
-        "outboundTag": "emery-blocked",
-    },
-    {
-        "type": "field",
-        "inboundTag": [inbound_tag],
-        "ip": PRIVATE_NETWORKS,
-        "outboundTag": "emery-blocked",
-    },
-]
-
-if policy == "russia":
+# Five node-wide rules at most, regardless of whether there are 1, 20, or 100
+# assignments. The per-assignment inbound is retained for device isolation and
+# the existing kernel/nft per-user speed limit.
+managed_rules = []
+if all_tags:
     managed_rules.extend(
         [
             {
                 "type": "field",
-                "inboundTag": [inbound_tag],
-                "domain": RU_DOMAINS,
+                "ruleTag": POLICY_RULE_PREFIX + "smtp",
+                "inboundTag": all_tags,
+                "port": "25,465,587",
                 "outboundTag": "emery-blocked",
             },
             {
                 "type": "field",
-                "inboundTag": [inbound_tag],
+                "ruleTag": POLICY_RULE_PREFIX + "private",
+                "inboundTag": all_tags,
+                "ip": PRIVATE_NETWORKS,
+                "outboundTag": "emery-blocked",
+            },
+        ]
+    )
+if russia_tags:
+    managed_rules.extend(
+        [
+            {
+                "type": "field",
+                "ruleTag": POLICY_RULE_PREFIX + "russia-domains",
+                "inboundTag": russia_tags,
+                "domain": RU_SERVICE_DOMAINS,
+                "outboundTag": "emery-blocked",
+            },
+            {
+                "type": "field",
+                "ruleTag": POLICY_RULE_PREFIX + "russia-ips",
+                "inboundTag": russia_tags,
                 "ip": RU_IPS,
                 "outboundTag": "emery-blocked",
             },
         ]
     )
+if all_tags:
+    managed_rules.append(
+        {
+            "type": "field",
+            "ruleTag": POLICY_RULE_PREFIX + "direct",
+            "inboundTag": all_tags,
+            "outboundTag": "direct",
+        }
+    )
+routing["rules"] = managed_rules + preserved_rules
 
-managed_rules.append(
-    {
-        "type": "field",
-        "inboundTag": [inbound_tag],
-        "outboundTag": "direct",
-    }
-)
-routing["rules"] = managed_rules + rules
+candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + chr(10)
+state_text = json.dumps(policies, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + chr(10)
+try:
+    with open(state_path, "r", encoding="utf-8") as handle:
+        current_state_text = handle.read()
+except OSError:
+    current_state_text = ""
 
-candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + "\\n"
-if candidate_text == original:
-    print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": False}))
+if candidate_text == original and state_text == current_state_text:
+    print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": False, "hot_reloaded": False}))
     raise SystemExit(0)
 
+static_changed = api_changed or inbounds_changed or outbounds_changed
+current_stat = os.stat(path, follow_symlinks=False)
 fd, candidate = tempfile.mkstemp(prefix=".emery-policy-", suffix=".json", dir=folder)
+routing_fd, routing_candidate = tempfile.mkstemp(prefix=".emery-routing-", suffix=".json", dir=folder)
 try:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(candidate_text)
         handle.flush()
         os.fsync(handle.fileno())
-    current_stat = os.stat(path, follow_symlinks=False)
     os.chown(candidate, current_stat.st_uid, current_stat.st_gid, follow_symlinks=False)
     os.chmod(candidate, current_stat.st_mode & 0o777, follow_symlinks=False)
-    validation = subprocess.run(
-        ["xray", "run", "-test", "-config", candidate],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if validation.returncode != 0:
-        detail = " | ".join(
-            (
-                (validation.stderr or "")
-                + "\\n"
-                + (validation.stdout or "")
-                or "xray_config_invalid"
-            ).strip().splitlines()
-        )
-        raise RuntimeError("xray_config_invalid:" + detail[-2000:])
-    os.replace(candidate, path)
-    subprocess.run(["systemctl", "restart", "xray"], check=True, capture_output=True, text=True)
-    subprocess.run(["systemctl", "is-active", "--quiet", "xray"], check=True)
-except Exception:
-    try:
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(original)
-        subprocess.run(["systemctl", "restart", "xray"], check=False, capture_output=True, text=True)
-    finally:
-        if os.path.exists(candidate):
-            os.unlink(candidate)
-    raise
 
-print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": True}))
+    with os.fdopen(routing_fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"routing": routing}, ensure_ascii=False, separators=(",", ":")) + chr(10))
+        handle.flush()
+        os.fsync(handle.fileno())
+
+    if static_changed:
+        # One restart is required only when installing the local RoutingService
+        # API or repairing static inbound/outbound structure. Ordinary policy
+        # changes take the hot path below.
+        validation = subprocess.run(
+            ["xray", "run", "-test", "-config", candidate],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if validation.returncode != 0:
+            detail = " | ".join(
+                ((validation.stderr or "") + chr(10) + (validation.stdout or "") or "xray_config_invalid")
+                .strip()
+                .splitlines()
+            )
+            raise RuntimeError("xray_config_invalid:" + detail[-3000:])
+        os.replace(candidate, path)
+        try:
+            subprocess.run(["systemctl", "restart", "xray"], check=True, capture_output=True, text=True)
+            subprocess.run(["systemctl", "is-active", "--quiet", "xray"], check=True)
+        except Exception:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(original)
+            subprocess.run(["systemctl", "restart", "xray"], check=False, capture_output=True, text=True)
+            raise
+        write_policy_state(policies)
+        hot_reloaded = False
+    else:
+        # Replace the complete routing table in the running Xray process. This
+        # avoids both a second validation process and a VPN disconnect/restart.
+        hot = subprocess.run(
+            ["xray", "api", "adrules", "--server=" + API_LISTEN, routing_candidate],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if hot.returncode != 0:
+            detail = " | ".join(((hot.stderr or "") + chr(10) + (hot.stdout or "")).strip().splitlines())
+            raise RuntimeError("xray_routing_hot_reload_failed:" + detail[-2000:])
+        os.replace(candidate, path)
+        write_policy_state(policies)
+        hot_reloaded = True
+
+    # Old heavyweight geosite assets are never referenced by this policy.
+    try:
+        os.unlink("/usr/local/share/xray/ru-geosite.dat")
+    except OSError:
+        pass
+finally:
+    if os.path.exists(candidate):
+        os.unlink(candidate)
+    if os.path.exists(routing_candidate):
+        os.unlink(routing_candidate)
+
+print(json.dumps({
+    "ok": True,
+    "assignment_id": assignment_id,
+    "changed": True,
+    "hot_reloaded": hot_reloaded,
+    "managed_assignments": len(all_tags),
+    "russia_assignments": len(russia_tags),
+}))
 '''.replace("__PAYLOAD__", encoded)
