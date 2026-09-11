@@ -122,7 +122,6 @@ jobs:
 
           for relative in "${files[@]}"; do
             [[ -f "$stage/$relative" ]]
-            [[ -f "$repo/$relative" ]]
           done
 
           "$runtime" -m py_compile \
@@ -130,7 +129,20 @@ jobs:
             "$stage/emery vpn orchestrator/src/bot/utils/geoip.py" \
             "$stage/emery vpn orchestrator/src/backend/services/xray_credential_service.py"
 
-          tar -czf "$backup/files-before.tgz" -C "$repo" "${files[@]}"
+          existing_files=()
+          new_files=()
+          for relative in "${files[@]}"; do
+            if [[ -f "$repo/$relative" ]]; then
+              existing_files+=("$relative")
+            else
+              new_files+=("$relative")
+            fi
+          done
+
+          if ((${#existing_files[@]})); then
+            tar -czf "$backup/files-before.tgz" -C "$repo" "${existing_files[@]}"
+          fi
+          printf '%s\n' "${new_files[@]}" > "$backup/new-files.txt"
 
           changed=0
           rollback() {
@@ -138,7 +150,12 @@ jobs:
             trap - ERR
             if [[ "$changed" == 1 ]]; then
               echo 'Targeted deploy failed; restoring previous files.' >&2
-              tar -xzf "$backup/files-before.tgz" -C "$repo"
+              if [[ -f "$backup/files-before.tgz" ]]; then
+                tar -xzf "$backup/files-before.tgz" -C "$repo"
+              fi
+              for relative in "${new_files[@]}"; do
+                rm -f "$repo/$relative"
+              done
               systemctl restart emery-backend.service || true
               systemctl restart skryon-bot.service || true
             fi
@@ -147,6 +164,7 @@ jobs:
           trap rollback ERR
 
           for relative in "${files[@]}"; do
+            mkdir -p "$(dirname "$repo/$relative")"
             cp -a "$stage/$relative" "$repo/$relative"
           done
           changed=1
