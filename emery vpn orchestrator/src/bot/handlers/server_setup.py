@@ -8,9 +8,9 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from src.bot.api.backend_client import BackendClient, BackendClientError
-from src.bot.handlers.admin import _detect_node_location
 from src.bot.utils.access import is_admin
 from src.bot.utils.command_parse import parse_key_values
+from src.bot.utils.geoip import detect_node_location
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def _auto_location_title(location: dict | None) -> str:
     region_code = str(location.get("region_code") or "").strip().lower()
     region_name = str(location.get("region_name") or "").strip()
 
-    # _detect_node_location stores the city in region_name when a city exists;
+    # detect_node_location stores the city in region_name when a city exists;
     # otherwise region_name is the country name. A city makes region_code look
     # like de-kleve rather than plain de.
     city = region_name if "-" in region_code else ""
@@ -136,7 +136,7 @@ async def setup_server_handler(message: Message) -> None:
     # Everything except endpoint/password is automatic. GeoIP determines the
     # public country/city label; technical server ids never become user-facing
     # region names. Do not add an unknown/auto node when GeoIP is unavailable.
-    location = await _detect_node_location(endpoint)
+    location = await detect_node_location(endpoint)
     if not location:
         await message.answer(
             "❌ Не смог определить страну и город VPS по IP. Сервер не добавлен в пул. "
