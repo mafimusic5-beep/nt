@@ -1,0 +1,367 @@
+name: Apply Russian city flag label patch
+
+on:
+  push:
+    branches:
+      - fix/russian-city-flag-label
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[location-label-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/russian-city-flag-label
+          fetch-depth: 0
+
+      - name: Apply precise location-label changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          server_path = Path('emery vpn orchestrator/src/bot/handlers/server_setup.py')
+          text = server_path.read_text(encoding='utf-8')
+          old_imports = 'import logging\nimport shlex\n'
+          new_imports = 'import logging\nimport re\nimport shlex\nimport unicodedata\n'
+          if old_imports not in text:
+              raise SystemExit('server_setup imports marker not found')
+          text = text.replace(old_imports, new_imports, 1)
+
+          start = text.index('COUNTRY_NAME_EN_BY_CODE: dict[str, str] = {')
+          end = text.index('\n\ndef _command_args', start)
+          helpers = '''CITY_NAME_RU_OVERRIDES: dict[str, str] = {
+              "amsterdam": "Амстердам",
+              "barcelona": "Барселона",
+              "berlin": "Берлин",
+              "bucharest": "Бухарест",
+              "budapest": "Будапешт",
+              "chisinau": "Кишинёв",
+              "cologne": "Кёльн",
+              "dusseldorf": "Дюссельдорф",
+              "düsseldorf": "Дюссельдорф",
+              "falkenstein": "Фалькенштайн",
+              "frankfurt": "Франкфурт",
+              "frankfurt am main": "Франкфурт-на-Майне",
+              "helsinki": "Хельсинки",
+              "hong kong": "Гонконг",
+              "istanbul": "Стамбул",
+              "kleve": "Клеве",
+              "kiev": "Киев",
+              "kyiv": "Киев",
+              "london": "Лондон",
+              "madrid": "Мадрид",
+              "milan": "Милан",
+              "moscow": "Москва",
+              "munich": "Мюнхен",
+              "new york": "Нью-Йорк",
+              "nuremberg": "Нюрнберг",
+              "paris": "Париж",
+              "prague": "Прага",
+              "riga": "Рига",
+              "rome": "Рим",
+              "rotterdam": "Роттердам",
+              "saint petersburg": "Санкт-Петербург",
+              "san francisco": "Сан-Франциско",
+              "singapore": "Сингапур",
+              "sofia": "София",
+              "stockholm": "Стокгольм",
+              "tallinn": "Таллин",
+              "tokyo": "Токио",
+              "vienna": "Вена",
+              "vilnius": "Вильнюс",
+              "warsaw": "Варшава",
+          }
+
+          _TRANSLIT_MULTI: tuple[tuple[str, str], ...] = (
+              ("shch", "щ"), ("tsch", "ч"), ("sch", "ш"), ("zh", "ж"),
+              ("kh", "х"), ("ch", "ч"), ("sh", "ш"), ("ts", "ц"),
+              ("ya", "я"), ("yo", "ё"), ("yu", "ю"), ("ye", "е"),
+              ("ph", "ф"), ("th", "т"), ("ck", "к"),
+          )
+
+          _TRANSLIT_SINGLE: dict[str, str] = {
+              "a": "а", "b": "б", "c": "к", "d": "д", "e": "е", "f": "ф",
+              "g": "г", "h": "х", "i": "и", "j": "дж", "k": "к", "l": "л",
+              "m": "м", "n": "н", "o": "о", "p": "п", "q": "к", "r": "р",
+              "s": "с", "t": "т", "u": "у", "v": "в", "w": "в", "x": "кс",
+              "y": "й", "z": "з",
+          }
+
+
+def _country_flag(country_code: str) -> str:
+              code = (country_code or "").strip().upper()
+              if len(code) != 2 or not code.isascii() or not code.isalpha():
+                  return ""
+              base = 0x1F1E6
+              return "".join(chr(base + ord(char) - ord("A")) for char in code)
+
+
+def _city_name_ru(city: str) -> str:
+              value = (city or "").strip()
+              if not value:
+                  return ""
+              if re.search(r"[А-Яа-яЁё]", value):
+                  return value
+
+              normalized_key = re.sub(r"\\s+", " ", value.casefold()).strip()
+              override = CITY_NAME_RU_OVERRIDES.get(normalized_key)
+              if override:
+                  return override
+
+              ascii_value = (
+                  unicodedata.normalize("NFKD", value)
+                  .encode("ascii", "ignore")
+                  .decode("ascii")
+                  .lower()
+              )
+              result: list[str] = []
+              index = 0
+              while index < len(ascii_value):
+                  matched = False
+                  for latin, cyrillic in _TRANSLIT_MULTI:
+                      if ascii_value.startswith(latin, index):
+                          result.append(cyrillic)
+                          index += len(latin)
+                          matched = True
+                          break
+                  if matched:
+                      continue
+                  char = ascii_value[index]
+                  result.append(_TRANSLIT_SINGLE.get(char, char))
+                  index += 1
+
+              transliterated = "".join(result).strip()
+              if not transliterated:
+                  return value
+              return " ".join(
+                  part[:1].upper() + part[1:] if part else part
+                  for part in transliterated.split(" ")
+              )
+          '''
+          text = text[:start] + helpers + text[end:]
+
+          start = text.index('def _auto_location_title(location: dict | None) -> str:')
+          end = text.index('\n\n@router.message', start)
+          title_function = '''def _auto_location_title(location: dict | None) -> str:
+              """Build the public VPN label as country flag plus Russian city name."""
+              if not location:
+                  return ""
+
+              code = str(location.get("country_code") or "").strip().upper()
+              region_code = str(location.get("region_code") or "").strip().lower()
+              region_name = str(location.get("region_name") or "").strip()
+
+              # A city result has a country-city region code (for example de-kleve).
+              # If GeoIP only knows the country, do not publish a country as a fake city.
+              if "-" not in region_code or not region_name:
+                  return ""
+
+              flag = _country_flag(code)
+              city = _city_name_ru(region_name)
+              if not flag or not city:
+                  return ""
+              return f"{flag} {city}"
+          '''
+          text = text[:start] + title_function + text[end:]
+          region_line = '        f"Регион: {node.get(\'region_code\')}\\n"\n'
+          if region_line not in text:
+              raise SystemExit('server_setup region output marker not found')
+          text = text.replace(region_line, '', 1)
+          server_path.write_text(text, encoding='utf-8')
+
+          test_path = Path('emery vpn orchestrator/tests/test_server_setup_location_title.py')
+          test_path.write_text('''from src.bot.handlers.server_setup import _auto_location_title, _city_name_ru, _country_flag
+
+
+def test_auto_location_title_uses_flag_and_russian_city_only() -> None:
+              assert _auto_location_title(
+                  {
+                      "country_code": "DE",
+                      "region_code": "de-kleve",
+                      "region_name": "Kleve",
+                  }
+              ) == "🇩🇪 Клеве"
+
+
+def test_auto_location_title_requires_city() -> None:
+              assert _auto_location_title(
+                  {
+                      "country_code": "DE",
+                      "region_code": "de",
+                      "region_name": "Germany",
+                  }
+              ) == ""
+
+
+def test_auto_location_title_has_no_unknown_fallback() -> None:
+              assert _auto_location_title(None) == ""
+
+
+def test_city_name_has_generic_cyrillic_fallback() -> None:
+              assert _city_name_ru("Limburg") == "Лимбург"
+
+
+def test_country_flag_uses_iso_country_code() -> None:
+              assert _country_flag("DE") == "🇩🇪"
+          ''', encoding='utf-8')
+
+          models_path = Path('app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnUiModels.kt')
+          models = models_path.read_text(encoding='utf-8')
+          old = '''                decodedFragment.startsWith("In ", ignoreCase = true) ||
+                          isRussianLocationLabel(decodedFragment)
+          '''
+          new = '''                decodedFragment.startsWith("In ", ignoreCase = true) ||
+                          isRussianLocationLabel(decodedFragment) ||
+                          countryCodeFromFlag(decodedFragment).isNotBlank()
+          '''
+          if old not in models:
+              raise SystemExit('VpnUiModels source fragment marker not found')
+          models = models.replace(old, new, 1)
+
+          old = '''        val value = sourceLocationLabel()
+                  if (value.startsWith("In ", ignoreCase = true)) return value
+          '''
+          new = '''        val value = sourceLocationLabel()
+                  if (countryCodeFromFlag(value).isNotBlank()) return stripLeadingFlag(value)
+                  if (value.startsWith("In ", ignoreCase = true)) return value
+          '''
+          if old not in models:
+              raise SystemExit('VpnUiModels city marker not found')
+          models = models.replace(old, new, 1)
+
+          old = '''    fun countryCodeLabel(): String {
+                  val value = sourceLocationLabel()
+                      .lowercase()
+          '''
+          new = '''    fun countryCodeLabel(): String {
+                  val sourceValue = sourceLocationLabel()
+                  val flagCode = countryCodeFromFlag(sourceValue)
+                  if (flagCode.isNotBlank()) return flagCode
+
+                  val value = sourceValue
+                      .lowercase()
+          '''
+          if old not in models:
+              raise SystemExit('VpnUiModels country code marker not found')
+          models = models.replace(old, new, 1)
+
+          marker = 'private fun isRussianLocationLabel(value: String): Boolean {'
+          if marker not in models:
+              raise SystemExit('VpnUiModels helper insertion marker not found')
+          flag_helpers = '''private fun countryCodeFromFlag(value: String): String {
+              val text = value.trim()
+              if (text.isEmpty()) return ""
+
+              val first = Character.codePointAt(text, 0)
+              val firstLength = Character.charCount(first)
+              if (text.length <= firstLength) return ""
+
+              val second = Character.codePointAt(text, firstLength)
+              val base = 0x1F1E6
+              if (first !in base..(base + 25) || second !in base..(base + 25)) return ""
+
+              val firstLetter = ('A'.code + (first - base)).toChar()
+              val secondLetter = ('A'.code + (second - base)).toChar()
+              return "$firstLetter$secondLetter"
+          }
+
+          private fun stripLeadingFlag(value: String): String {
+              val text = value.trim()
+              if (countryCodeFromFlag(text).isBlank()) return text
+
+              val first = Character.codePointAt(text, 0)
+              val firstLength = Character.charCount(first)
+              val second = Character.codePointAt(text, firstLength)
+              val secondLength = Character.charCount(second)
+              return text
+                  .substring(firstLength + secondLength)
+                  .trimStart()
+                  .trimStart('•', '·', '-', '—', '|')
+                  .trimStart()
+          }
+
+          '''
+          models = models.replace(marker, flag_helpers + marker, 1)
+          models_path.write_text(models, encoding='utf-8')
+
+          screen_path = Path('app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt')
+          screen = screen_path.read_text(encoding='utf-8')
+          if 'text = "$selectedTitle • $selectedCode"' not in screen:
+              raise SystemExit('VpnMainScreen selected title marker not found')
+          screen = screen.replace('text = "$selectedTitle • $selectedCode"', 'text = selectedTitle', 1)
+          if 'text = "Регион"' not in screen:
+              raise SystemExit('VpnMainScreen server label marker not found')
+          screen = screen.replace('text = "Регион"', 'text = "Сервер"', 1)
+
+          code_text = '''                                Text(
+                                              text = code,
+                                              style = MaterialTheme.typography.bodySmall,
+                                              color = AppUiColors.TextSecondary,
+                                              maxLines = 1,
+                                          )
+          '''
+          if code_text not in screen:
+              raise SystemExit('VpnMainScreen dropdown code marker not found')
+          screen = screen.replace(code_text, '', 1)
+
+          chip_code = '''            Spacer(Modifier.height(2.dp))
+                      Text(
+                          text = code,
+                          style = MaterialTheme.typography.bodySmall,
+                          color = AppUiColors.TextSecondary,
+                          maxLines = 1,
+                      )
+          '''
+          if chip_code not in screen:
+              raise SystemExit('VpnMainScreen chip code marker not found')
+          screen = screen.replace(chip_code, '', 1)
+
+          flag_start = screen.index('@Composable\nprivate fun FlagMark(code: String, modifier: Modifier = Modifier) {')
+          flag_end = screen.index('\n\n@Composable\nprivate fun AutoConnectCard', flag_start)
+          flag_function = '''@Composable
+          private fun FlagMark(code: String, modifier: Modifier = Modifier) {
+              Box(modifier = modifier, contentAlignment = Alignment.Center) {
+                  Text(
+                      text = countryFlagEmoji(code),
+                      style = MaterialTheme.typography.bodyLarge,
+                      maxLines = 1,
+                  )
+              }
+          }
+
+          private fun countryFlagEmoji(code: String): String {
+              val normalized = code.trim().uppercase().let { if (it == "UK") "GB" else it }
+              if (normalized.length != 2 || normalized.any { it !in 'A'..'Z' }) return "🌐"
+              val base = 0x1F1E6
+              return normalized.map { letter ->
+                  String(Character.toChars(base + (letter.code - 'A'.code)))
+              }.joinToString("")
+          }
+          '''
+          screen = screen[:flag_start] + flag_function + screen[flag_end:]
+          screen_path.write_text(screen, encoding='utf-8')
+          PY
+
+          python3 -m py_compile \
+            'emery vpn orchestrator/src/bot/handlers/server_setup.py' \
+            'emery vpn orchestrator/src/bot/utils/geoip.py'
+
+          git diff --check
+
+          if [[ -x ./gradlew ]]; then
+            ./gradlew :app:compileDebugKotlin --no-daemon
+          fi
+
+          rm .github/workflows/apply-location-label-patch.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && { echo 'No patch changes found'; exit 1; }
+          git commit -m 'Show VPN servers as flag and Russian city [location-label-patched]'
+          git push origin HEAD:fix/russian-city-flag-label
