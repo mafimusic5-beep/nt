@@ -8,7 +8,7 @@ def test_auto_location_title_uses_country_and_city() -> None:
             "region_code": "de-kleve",
             "region_name": "Kleve",
         }
-    ) == "Клеве, Германия"
+    ) == "In Germany Kleve"
 
 
 def test_auto_location_title_does_not_repeat_country_without_city() -> None:
@@ -18,4 +18,8 @@ def test_auto_location_title_does_not_repeat_country_without_city() -> None:
             "region_code": "de",
             "region_name": "Germany",
         }
-    ) == "Германия"
+    ) == "In Germany"
+
+
+def test_auto_location_title_has_no_unknown_fallback() -> None:
+    assert _auto_location_title(None) == ""
