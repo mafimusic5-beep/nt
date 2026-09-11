@@ -66,6 +66,7 @@ def test_grouped_policy_keeps_constant_rule_families():
         "smtp",
         "private",
         "russia-domains",
+        "dns",
         "russia-ips",
         "direct",
     ):
@@ -120,6 +121,18 @@ def test_assignment_policy_does_not_blackhole_dual_stack_domains():
         assert '"outboundTag": "direct"' in script
 
 
+def test_russia_policy_keeps_dns_reachable_before_broad_ip_block():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    dns_rule = '"ruleTag": POLICY_RULE_PREFIX + "dns"'
+    ip_rule = '"ruleTag": POLICY_RULE_PREFIX + "russia-ips"'
+    assert dns_rule in script
+    assert '"network": "tcp,udp"' in script
+    assert '"port": "53,853"' in script
+    assert script.index(dns_rule) < script.index(ip_rule)
+
+
 def test_russia_policy_has_explicit_major_blocked_service_fallbacks():
     script = TrafficPolicyService._remote_script(
         '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
@@ -134,6 +147,10 @@ def test_russia_policy_has_explicit_major_blocked_service_fallbacks():
         "domain:signal.org",
         "domain:viber.com",
         "domain:youtube.com",
+        "domain:youtubei.googleapis.com",
+        "domain:youtube.googleapis.com",
+        "domain:youtubeembeddedplayer.googleapis.com",
+        "domain:yt3.ggpht.com",
     ):
         assert f'"{domain}"' in script
 
