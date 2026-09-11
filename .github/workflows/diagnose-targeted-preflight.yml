@@ -1,0 +1,51 @@
+name: Diagnose targeted preflight
+
+on:
+  push:
+    branches:
+      - ops/targeted-location-deploy
+    paths:
+      - '.github/workflows/diagnose-targeted-preflight.yml'
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure deploy key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Diagnose backend preflight
+        run: |
+          set -euo pipefail
+          ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=accept-new \
+            root@31.70.76.155 <<'EOF'
+          set +e
+          echo "REPO_GIT=$(test -d /opt/nt/.git && echo yes || echo no)"
+          echo "RUNTIME_PY=$(test -x /opt/nt/.runtime/modern/bin/python && echo yes || echo no)"
+          echo "BOT_UNIT=$(systemctl cat skryon-bot.service >/dev/null 2>&1 && echo yes || echo no)"
+          echo "EMERY_UNIT=$(systemctl cat emery-backend.service >/dev/null 2>&1 && echo yes || echo no)"
+          echo "API_UNIT=$(systemctl cat skryon-api.service >/dev/null 2>&1 && echo yes || echo no)"
+          echo "BOT_ACTIVE=$(systemctl is-active skryon-bot.service 2>/dev/null || true)"
+          echo "EMERY_ACTIVE=$(systemctl is-active emery-backend.service 2>/dev/null || true)"
+          echo "API_ACTIVE=$(systemctl is-active skryon-api.service 2>/dev/null || true)"
+          echo "PYTHON=$(readlink -f /opt/nt/.runtime/modern/bin/python 2>/dev/null || true)"
+          echo "EMERY_DIR=$(test -d '/opt/nt/emery vpn orchestrator' && echo yes || echo no)"
+          echo "SERVER_SETUP=$(test -f '/opt/nt/emery vpn orchestrator/src/bot/handlers/server_setup.py' && echo yes || echo no)"
+          echo "GEOIP=$(test -f '/opt/nt/emery vpn orchestrator/src/bot/utils/geoip.py' && echo yes || echo no)"
+          echo "XRAY_CRED=$(test -f '/opt/nt/emery vpn orchestrator/src/backend/services/xray_credential_service.py' && echo yes || echo no)"
+          EOF
