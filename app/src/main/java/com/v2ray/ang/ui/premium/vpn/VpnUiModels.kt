@@ -25,7 +25,8 @@ data class VpnLocationOption(
             }
             if (
                 decodedFragment.startsWith("In ", ignoreCase = true) ||
-                isRussianLocationLabel(decodedFragment)
+                isRussianLocationLabel(decodedFragment) ||
+                countryCodeFromFlag(decodedFragment).isNotBlank()
             ) {
                 return decodedFragment
             }
@@ -35,6 +36,7 @@ data class VpnLocationOption(
 
     fun cityLabel(): String {
         val value = sourceLocationLabel()
+        if (countryCodeFromFlag(value).isNotBlank()) return stripLeadingFlag(value)
         if (value.startsWith("In ", ignoreCase = true)) return value
         if (isRussianLocationLabel(value)) return value
 
@@ -61,7 +63,11 @@ data class VpnLocationOption(
     }
 
     fun countryCodeLabel(): String {
-        val value = sourceLocationLabel()
+        val sourceValue = sourceLocationLabel()
+        val flagCode = countryCodeFromFlag(sourceValue)
+        if (flagCode.isNotBlank()) return flagCode
+
+        val value = sourceValue
             .lowercase()
             .replace('_', '-')
             .replace('.', '-')
@@ -205,6 +211,38 @@ private val RUSSIAN_LOCATION_PREFIXES = listOf(
     "Украина",
     "США",
 )
+
+private fun countryCodeFromFlag(value: String): String {
+    val text = value.trim()
+    if (text.isEmpty()) return ""
+
+    val first = Character.codePointAt(text, 0)
+    val firstLength = Character.charCount(first)
+    if (text.length <= firstLength) return ""
+
+    val second = Character.codePointAt(text, firstLength)
+    val base = 0x1F1E6
+    if (first !in base..(base + 25) || second !in base..(base + 25)) return ""
+
+    val firstLetter = ('A'.code + (first - base)).toChar()
+    val secondLetter = ('A'.code + (second - base)).toChar()
+    return "$firstLetter$secondLetter"
+}
+
+private fun stripLeadingFlag(value: String): String {
+    val text = value.trim()
+    if (countryCodeFromFlag(text).isBlank()) return text
+
+    val first = Character.codePointAt(text, 0)
+    val firstLength = Character.charCount(first)
+    val second = Character.codePointAt(text, firstLength)
+    val secondLength = Character.charCount(second)
+    return text
+        .substring(firstLength + secondLength)
+        .trimStart()
+        .trimStart('•', '·', '-', '—', '|')
+        .trimStart()
+}
 
 private fun isRussianLocationLabel(value: String): Boolean {
     val normalized = value.trim()

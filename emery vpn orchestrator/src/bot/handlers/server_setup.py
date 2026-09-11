@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import shlex
+import unicodedata
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -17,50 +19,147 @@ logger = logging.getLogger(__name__)
 router = Router(name="server_setup")
 client = BackendClient()
 
-COUNTRY_NAME_EN_BY_CODE: dict[str, str] = {
-    "AT": "Austria",
-    "BE": "Belgium",
-    "BG": "Bulgaria",
-    "CA": "Canada",
-    "CH": "Switzerland",
-    "CZ": "Czechia",
-    "DE": "Germany",
-    "DK": "Denmark",
-    "EE": "Estonia",
-    "ES": "Spain",
-    "FI": "Finland",
-    "FR": "France",
-    "GB": "United Kingdom",
-    "GR": "Greece",
-    "HK": "Hong Kong",
-    "HR": "Croatia",
-    "HU": "Hungary",
-    "IE": "Ireland",
-    "IL": "Israel",
-    "IS": "Iceland",
-    "IT": "Italy",
-    "JP": "Japan",
-    "KZ": "Kazakhstan",
-    "LT": "Lithuania",
-    "LU": "Luxembourg",
-    "LV": "Latvia",
-    "MD": "Moldova",
-    "NL": "Netherlands",
-    "NO": "Norway",
-    "PL": "Poland",
-    "PT": "Portugal",
-    "RO": "Romania",
-    "RS": "Serbia",
-    "RU": "Russia",
-    "SE": "Sweden",
-    "SG": "Singapore",
-    "SI": "Slovenia",
-    "SK": "Slovakia",
-    "TR": "Turkey",
-    "UA": "Ukraine",
-    "UK": "United Kingdom",
-    "US": "United States",
+CITY_NAME_RU_OVERRIDES: dict[str, str] = {
+    "amsterdam": "Амстердам",
+    "barcelona": "Барселона",
+    "berlin": "Берлин",
+    "bucharest": "Бухарест",
+    "budapest": "Будапешт",
+    "chisinau": "Кишинёв",
+    "cologne": "Кёльн",
+    "dusseldorf": "Дюссельдорф",
+    "düsseldorf": "Дюссельдорф",
+    "falkenstein": "Фалькенштайн",
+    "frankfurt": "Франкфурт",
+    "frankfurt am main": "Франкфурт-на-Майне",
+    "helsinki": "Хельсинки",
+    "hong kong": "Гонконг",
+    "istanbul": "Стамбул",
+    "kleve": "Клеве",
+    "kiev": "Киев",
+    "kyiv": "Киев",
+    "london": "Лондон",
+    "madrid": "Мадрид",
+    "milan": "Милан",
+    "moscow": "Москва",
+    "munich": "Мюнхен",
+    "new york": "Нью-Йорк",
+    "nuremberg": "Нюрнберг",
+    "paris": "Париж",
+    "prague": "Прага",
+    "riga": "Рига",
+    "rome": "Рим",
+    "rotterdam": "Роттердам",
+    "saint petersburg": "Санкт-Петербург",
+    "san francisco": "Сан-Франциско",
+    "singapore": "Сингапур",
+    "sofia": "София",
+    "stockholm": "Стокгольм",
+    "tallinn": "Таллин",
+    "tokyo": "Токио",
+    "vienna": "Вена",
+    "vilnius": "Вильнюс",
+    "warsaw": "Варшава",
 }
+
+_TRANSLIT_MULTI: tuple[tuple[str, str], ...] = (
+    ("shch", "щ"),
+    ("tsch", "ч"),
+    ("sch", "ш"),
+    ("zh", "ж"),
+    ("kh", "х"),
+    ("ch", "ч"),
+    ("sh", "ш"),
+    ("ts", "ц"),
+    ("ya", "я"),
+    ("yo", "ё"),
+    ("yu", "ю"),
+    ("ye", "е"),
+    ("ph", "ф"),
+    ("th", "т"),
+    ("ck", "к"),
+)
+
+_TRANSLIT_SINGLE: dict[str, str] = {
+    "a": "а",
+    "b": "б",
+    "c": "к",
+    "d": "д",
+    "e": "е",
+    "f": "ф",
+    "g": "г",
+    "h": "х",
+    "i": "и",
+    "j": "дж",
+    "k": "к",
+    "l": "л",
+    "m": "м",
+    "n": "н",
+    "o": "о",
+    "p": "п",
+    "q": "к",
+    "r": "р",
+    "s": "с",
+    "t": "т",
+    "u": "у",
+    "v": "в",
+    "w": "в",
+    "x": "кс",
+    "y": "й",
+    "z": "з",
+}
+
+
+def _country_flag(country_code: str) -> str:
+    code = (country_code or "").strip().upper()
+    if len(code) != 2 or not code.isascii() or not code.isalpha():
+        return ""
+    base = 0x1F1E6
+    return "".join(chr(base + ord(char) - ord("A")) for char in code)
+
+
+def _city_name_ru(city: str) -> str:
+    value = (city or "").strip()
+    if not value:
+        return ""
+    if re.search(r"[А-Яа-яЁё]", value):
+        return value
+
+    normalized_key = re.sub(r"\s+", " ", value.casefold()).strip()
+    override = CITY_NAME_RU_OVERRIDES.get(normalized_key)
+    if override:
+        return override
+
+    ascii_value = (
+        unicodedata.normalize("NFKD", value)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+    )
+    result: list[str] = []
+    index = 0
+    while index < len(ascii_value):
+        matched = False
+        for latin, cyrillic in _TRANSLIT_MULTI:
+            if ascii_value.startswith(latin, index):
+                result.append(cyrillic)
+                index += len(latin)
+                matched = True
+                break
+        if matched:
+            continue
+
+        char = ascii_value[index]
+        result.append(_TRANSLIT_SINGLE.get(char, char))
+        index += 1
+
+    transliterated = "".join(result).strip()
+    if not transliterated:
+        return value
+    return " ".join(
+        part[:1].upper() + part[1:] if part else part
+        for part in transliterated.split(" ")
+    )
 
 
 def _command_args(text: str) -> str:
@@ -90,7 +189,6 @@ def _credentials(raw_args: str) -> tuple[str, str]:
 
 
 def _auto_location_title(location: dict | None) -> str:
-    """Build the public VPN label from GeoIP country and city only."""
     if not location:
         return ""
 
@@ -98,18 +196,16 @@ def _auto_location_title(location: dict | None) -> str:
     region_code = str(location.get("region_code") or "").strip().lower()
     region_name = str(location.get("region_name") or "").strip()
 
-    # detect_node_location stores the city in region_name when a city exists;
-    # otherwise region_name is the country name. A city makes region_code look
-    # like de-kleve rather than plain de.
-    city = region_name if "-" in region_code else ""
-    country = COUNTRY_NAME_EN_BY_CODE.get(code)
-    if not country and not city:
-        country = region_name
-    if not country:
-        country = code
+    # A city result has a country-city region code (for example de-kleve).
+    # If GeoIP only knows the country, do not publish a country as a fake city.
+    if "-" not in region_code or not region_name:
+        return ""
 
-    parts = [part for part in (country, city) if part]
-    return f"In {' '.join(parts)}" if parts else ""
+    flag = _country_flag(code)
+    city = _city_name_ru(region_name)
+    if not flag or not city:
+        return ""
+    return f"{flag} {city}"
 
 
 @router.message(Command("setup_server", "setupserver"))
@@ -195,7 +291,6 @@ async def setup_server_handler(message: Message) -> None:
         "✅ VPS настроен и добавлен в пул.\n\n"
         f"ID: #{node.get('id')}\n"
         f"Название: {node.get('name')}\n"
-        f"Регион: {node.get('region_code')}\n"
         f"Endpoint: {node.get('endpoint')}\n"
         f"Выход: {egress_label}\n"
         f"Статус: {node.get('status')} / {node.get('health_status')}\n"
