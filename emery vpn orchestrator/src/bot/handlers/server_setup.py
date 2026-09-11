@@ -11,32 +11,12 @@ from src.bot.api.backend_client import BackendClient, BackendClientError
 from src.bot.handlers.admin import _detect_node_location
 from src.bot.utils.access import is_admin
 from src.bot.utils.command_parse import parse_key_values
+from src.common.location_labels import russian_location_label
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="server_setup")
 client = BackendClient()
-
-_COUNTRY_NAME_BY_CODE = {
-    "DE": "Germany",
-    "ES": "Spain",
-    "FI": "Finland",
-    "FR": "France",
-    "GB": "United Kingdom",
-    "HK": "Hong Kong",
-    "IT": "Italy",
-    "JP": "Japan",
-    "KZ": "Kazakhstan",
-    "NL": "Netherlands",
-    "PL": "Poland",
-    "RU": "Russia",
-    "SE": "Sweden",
-    "SG": "Singapore",
-    "TR": "Turkey",
-    "UA": "Ukraine",
-    "UK": "United Kingdom",
-    "US": "United States",
-}
 
 
 def _command_args(text: str) -> str:
@@ -66,19 +46,24 @@ def _credentials(raw_args: str) -> tuple[str, str]:
 
 
 def _auto_location_title(location: dict | None) -> str:
-    """Return a stable public label made only from GeoIP country/city data."""
+    """Build the public VPN label from GeoIP only, in Russian."""
     if not location:
-        return "In Unknown region"
+        return "Регион"
 
     code = str(location.get("country_code") or "").strip().upper()
-    city = str(location.get("region_name") or "").strip()
-    country = _COUNTRY_NAME_BY_CODE.get(code, code or "Unknown region")
+    region_code = str(location.get("region_code") or "").strip().lower()
+    region_name = str(location.get("region_name") or "").strip()
 
-    # When GeoIP has no city, _detect_node_location may expose the country name
-    # as region_name. Do not repeat it as e.g. "In Germany Germany".
-    if city and city.casefold() not in {country.casefold(), code.casefold()}:
-        return f"In {country} {city}"
-    return f"In {country}"
+    # _detect_node_location stores the city in region_name when a city exists;
+    # otherwise region_name is the country name. The region code tells the two
+    # cases apart: de-kleve has a city, plain de does not.
+    city = region_name if "-" in region_code else ""
+    fallback_country = region_name if not city else ""
+    return russian_location_label(
+        code,
+        city,
+        fallback_country=fallback_country,
+    )
 
 
 @router.message(Command("setup_server", "setupserver"))
