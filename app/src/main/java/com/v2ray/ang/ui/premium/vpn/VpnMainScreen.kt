@@ -426,7 +426,7 @@ private fun RegionSelectorCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Регион",
+                    text = "Сервер",
                     style = MaterialTheme.typography.bodySmall,
                     color = AppUiColors.TextSecondary,
                     fontWeight = FontWeight.Medium,
@@ -437,7 +437,7 @@ private fun RegionSelectorCard(
                     FlagMark(code = selectedCode, modifier = Modifier.width(28.dp).height(20.dp))
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = "$selectedTitle • $selectedCode",
+                        text = selectedTitle,
                         style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
                         color = AppUiColors.TextPrimary,
                         fontWeight = FontWeight.SemiBold,
@@ -471,12 +471,6 @@ private fun RegionSelectorCard(
                                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = code,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = AppUiColors.TextSecondary,
-                                    maxLines = 1,
                                 )
                             }
                         }
@@ -528,76 +522,30 @@ private fun RegionChip(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = code,
-                style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextSecondary,
-                maxLines = 1,
-            )
         }
     }
 }
 
 @Composable
 private fun FlagMark(code: String, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.clip(RoundedCornerShape(3.dp))) {
-        val w = size.width
-        val h = size.height
-        fun stripe(color: Color, left: Float, top: Float, right: Float, bottom: Float) {
-            drawRect(color, topLeft = Offset(w * left, h * top), size = androidx.compose.ui.geometry.Size(w * (right - left), h * (bottom - top)))
-        }
-
-        when (code.uppercase()) {
-            "FR" -> {
-                stripe(Color(0xFF21468B), 0f, 0f, 0.333f, 1f)
-                stripe(Color.White, 0.333f, 0f, 0.666f, 1f)
-                stripe(Color(0xFFEF4135), 0.666f, 0f, 1f, 1f)
-            }
-            "DE" -> {
-                stripe(Color(0xFF111111), 0f, 0f, 1f, 0.333f)
-                stripe(Color(0xFFDD0000), 0f, 0.333f, 1f, 0.666f)
-                stripe(Color(0xFFFFCE00), 0f, 0.666f, 1f, 1f)
-            }
-            "NL" -> {
-                stripe(Color(0xFFAE1C28), 0f, 0f, 1f, 0.333f)
-                stripe(Color.White, 0f, 0.333f, 1f, 0.666f)
-                stripe(Color(0xFF21468B), 0f, 0.666f, 1f, 1f)
-            }
-            "UK", "GB" -> {
-                drawRect(Color(0xFF012169))
-                stripe(Color.White, 0.42f, 0f, 0.58f, 1f)
-                stripe(Color.White, 0f, 0.40f, 1f, 0.60f)
-                stripe(Color(0xFFC8102E), 0.46f, 0f, 0.54f, 1f)
-                stripe(Color(0xFFC8102E), 0f, 0.45f, 1f, 0.55f)
-            }
-            "PL" -> {
-                stripe(Color.White, 0f, 0f, 1f, 0.5f)
-                stripe(Color(0xFFDC143C), 0f, 0.5f, 1f, 1f)
-            }
-            "RU" -> {
-                stripe(Color.White, 0f, 0f, 1f, 0.333f)
-                stripe(Color(0xFF0039A6), 0f, 0.333f, 1f, 0.666f)
-                stripe(Color(0xFFD52B1E), 0f, 0.666f, 1f, 1f)
-            }
-            "US" -> {
-                stripe(Color(0xFFB22234), 0f, 0f, 1f, 1f)
-                stripe(Color.White, 0f, 0.15f, 1f, 0.28f)
-                stripe(Color.White, 0f, 0.43f, 1f, 0.56f)
-                stripe(Color.White, 0f, 0.71f, 1f, 0.84f)
-                stripe(Color(0xFF3C3B6E), 0f, 0f, 0.45f, 0.55f)
-            }
-            "EU" -> {
-                drawRect(Color(0xFF244AA5))
-                drawCircle(Color(0xFFFFD700), radius = h * 0.12f, center = Offset(w * 0.50f, h * 0.50f))
-            }
-            else -> {
-                drawRect(AppUiColors.Border)
-                stripe(Color.White.copy(alpha = 0.62f), 0f, 0f, 1f, 0.5f)
-            }
-        }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Text(
+            text = countryFlagEmoji(code),
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+        )
     }
 }
+
+private fun countryFlagEmoji(code: String): String {
+    val normalized = code.trim().uppercase().let { if (it == "UK") "GB" else it }
+    if (normalized.length != 2 || normalized.any { it !in 'A'..'Z' }) return "🌐"
+    val base = 0x1F1E6
+    return normalized.map { letter ->
+        String(Character.toChars(base + (letter.code - 'A'.code)))
+    }.joinToString("")
+}
+
 
 @Composable
 private fun AutoConnectCard(
