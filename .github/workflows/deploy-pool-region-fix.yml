@@ -1,0 +1,129 @@
+name: Deploy pool region bridge fix
+
+on:
+  push:
+    branches:
+      - ops/deploy-pool-region-fix
+    paths:
+      - '.github/workflows/deploy-pool-region-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate bridge
+        run: |
+          set -euo pipefail
+          python3 -m py_compile orchestrator/pool_reservation_bridge.py
+          PYTHONPATH=orchestrator python3 - <<'PY'
+          import pool_reservation_bridge as bridge
+          assert bridge._REGION_RE.fullmatch('de-frankfurt-am-main')
+          assert bridge._REGION_RE.fullmatch('a' * 64)
+          assert bridge._REGION_RE.fullmatch('a' * 65) is None
+          print('bridge-validation-ok')
+          PY
+
+      - name: Configure deploy key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Verify backend SSH
+        run: |
+          set -euo pipefail
+          ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=accept-new \
+            root@31.70.76.155 \
+            'printf "bridge-ssh-ok\\n"'
+
+      - name: Transfer bridge file
+        run: |
+          set -euo pipefail
+          scp \
+            -4 \
+            -P 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=accept-new \
+            orchestrator/pool_reservation_bridge.py \
+            root@31.70.76.155:/tmp/pool_reservation_bridge.py.new
+
+      - name: Install bridge with rollback
+        run: |
+          set -euo pipefail
+          ssh \
+            -4 \
+            -p 8443 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 \
+            -o StrictHostKeyChecking=accept-new \
+            root@31.70.76.155 <<'EOF'
+          set -Eeuo pipefail
+          src=/tmp/pool_reservation_bridge.py.new
+          dst=/opt/nt/orchestrator/pool_reservation_bridge.py
+          backup="/opt/nt-deploy-backups/pool-region-$(date -u +%Y%m%dT%H%M%SZ)"
+
+          [[ -f "$src" ]]
+          [[ -f "$dst" ]]
+          systemctl cat skryon-api.service >/dev/null
+
+          mkdir -p "$backup"
+          cp -a "$dst" "$backup/pool_reservation_bridge.py"
+          /opt/nt/.runtime/modern/bin/python -m py_compile "$src"
+
+          changed=0
+          rollback() {
+            status=$?
+            trap - ERR
+            if [[ "$changed" == 1 ]]; then
+              echo 'Bridge deploy failed; restoring previous file.' >&2
+              cp -a "$backup/pool_reservation_bridge.py" "$dst"
+              systemctl restart skryon-api.service || true
+            fi
+            rm -f "$src"
+            exit "$status"
+          }
+          trap rollback ERR
+
+          cp -a "$src" "$dst"
+          changed=1
+          /opt/nt/.runtime/modern/bin/python -m py_compile "$dst"
+
+          systemctl restart skryon-api.service
+          sleep 2
+          systemctl is-active --quiet skryon-api.service
+          curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null
+
+          PYTHONPATH=/opt/nt/orchestrator /opt/nt/.runtime/modern/bin/python - <<'PY'
+          import pool_reservation_bridge as bridge
+          assert bridge._REGION_RE.fullmatch('de-frankfurt-am-main')
+          assert bridge._REGION_RE.fullmatch('a' * 64)
+          assert bridge._REGION_RE.fullmatch('a' * 65) is None
+          print('live-bridge-region-validation-ok')
+          PY
+
+          rm -f "$src"
+          trap - ERR
+          printf 'pool-region-bridge-deploy-ok\n'
+          EOF
