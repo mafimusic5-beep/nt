@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from src.common.location_labels import COUNTRY_NAME_RU_BY_CODE, russian_location_label
 from src.common.models import VpnNode
 
 _CITY_BY_TOKEN: dict[str, str] = {
@@ -15,24 +16,6 @@ _CITY_BY_TOKEN: dict[str, str] = {
     "yekaterinburg": "Екатеринбург",
     "ekb": "Екатеринбург",
     "kazan": "Казань",
-}
-
-_COUNTRY_BY_CODE: dict[str, str] = {
-    "de": "Germany",
-    "fi": "Finland",
-    "fr": "France",
-    "gb": "United Kingdom",
-    "hk": "Hong Kong",
-    "jp": "Japan",
-    "kz": "Kazakhstan",
-    "nl": "Netherlands",
-    "pl": "Poland",
-    "ru": "Russia",
-    "se": "Sweden",
-    "sg": "Singapore",
-    "tr": "Turkey",
-    "ua": "Ukraine",
-    "us": "United States",
 }
 
 
@@ -50,39 +33,50 @@ def _title_from_slug(value: str) -> str:
     return " ".join(word[:1].upper() + word[1:] for word in words)
 
 
-def _city_from_region_code(region_code: str) -> str:
+def _location_from_region_code(region_code: str) -> str:
     normalized = region_code.strip().lower()
     if not normalized:
         return ""
-    if normalized in _COUNTRY_BY_CODE:
-        return _COUNTRY_BY_CODE[normalized]
-    if "-" not in normalized:
-        return _title_from_slug(normalized)
-    country, city_slug = normalized.split("-", 1)
-    if city_slug:
-        return _title_from_slug(city_slug)
-    return _COUNTRY_BY_CODE.get(country, country.upper())
+
+    country, separator, city_slug = normalized.partition("-")
+    country_code = country.upper()
+    if country_code not in COUNTRY_NAME_RU_BY_CODE:
+        return ""
+
+    city = city_slug.replace("-", " ").strip() if separator else ""
+    return russian_location_label(country_code, city)
 
 
 def _city_from_node_name(name: str) -> str:
-    # Bot-created names look like: "VPS-506295 (Singapore)".
+    # Historical bot-created names can look like: "VPS-506295 (Singapore)".
     match = re.search(r"\(([^()]{2,64})\)\s*$", name.strip())
     return match.group(1).strip() if match else ""
 
 
 def normalize_node_city(node: VpnNode) -> str:
+    # New auto-setup region codes carry both country and city (for example
+    # de-kleve). Prefer that stable machine metadata and expose a Russian label
+    # such as "Германия Клеве" to clients.
+    from_region = _location_from_region_code(node.region_code or "")
+    if from_region:
+        return from_region
+
     candidates = [node.region_code or "", node.name or "", node.endpoint or ""]
     for candidate in candidates:
         for token in _tokenize(candidate):
             if token in _CITY_BY_TOKEN:
                 return _CITY_BY_TOKEN[token]
 
-    from_name = _city_from_node_name(node.name or "")
+    # If the bootstrap already stored a Russian human label, preserve it.
+    name = (node.name or "").strip()
+    if re.search(r"[А-Яа-яЁё]", name):
+        return name
+
+    from_name = _city_from_node_name(name)
     if from_name:
         return from_name
 
-    from_region = _city_from_region_code(node.region_code or "")
-    if from_region:
-        return from_region
+    if node.region_code:
+        return _title_from_slug(node.region_code)
 
-    return "Unknown"
+    return "Неизвестный регион"
