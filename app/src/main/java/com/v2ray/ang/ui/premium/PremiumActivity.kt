@@ -399,12 +399,6 @@ private fun RegionalPolicyOnboardingScreen(
                     color = Color(0xFF111319),
                     fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Ни один режим не выбирается автоматически.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF6F7580),
-                )
                 Spacer(Modifier.height(if (compact) 14.dp else 18.dp))
                 OnboardingPolicyChoice(
                     selected = selectedMode == RegionalPolicyMode.International,
