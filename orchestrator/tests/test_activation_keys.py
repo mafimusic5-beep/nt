@@ -149,6 +149,38 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
             app_version='test',
         )
 
+    def validate_registration(
+        self,
+        *,
+        code: str,
+        device_id: str,
+        private_key=None,
+        device_name: str = 'Test Android',
+    ):
+        key = private_key or self.new_private_key()
+        path = '/api/activate/validate'
+        nonce = uuid.uuid4().hex
+        timestamp = str(int(time.time() * 1000))
+        canonical = self.activation_canonical(
+            path=path,
+            raw_code=code,
+            device_id=device_id,
+            device_name=device_name,
+            timestamp=timestamp,
+            nonce=nonce,
+        )
+        return device_auth.validate_device_registration(
+            raw_code=code,
+            path=path,
+            device_id=device_id,
+            device_name=device_name,
+            public_key_base64=self.public_key_base64(key),
+            timestamp=timestamp,
+            nonce=nonce,
+            signature_base64=self.sign(key, canonical),
+            signature_algorithm='SHA256withECDSA',
+        )
+
     def authenticate(self, *, code: str, device_id: str, private_key, path: str = '/profile'):
         timestamp = str(int(time.time() * 1000))
         nonce = uuid.uuid4().hex
@@ -185,6 +217,49 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         self.assert_limit('personal', 1)
         self.assert_limit('personal_plus', 2)
         self.assert_limit('family', 5)
+
+    def test_validation_does_not_consume_slot_until_registration(self) -> None:
+        code = self.create_code('personal', 1)
+        first_key = self.new_private_key()
+        second_key = self.new_private_key()
+
+        first = self.validate_registration(
+            code=code,
+            device_id='validated-device-1',
+            private_key=first_key,
+        )
+        second = self.validate_registration(
+            code=code,
+            device_id='validated-device-2',
+            private_key=second_key,
+        )
+        self.assertEqual(0, first['devices_used'])
+        self.assertEqual(0, second['devices_used'])
+
+        with sqlite3.connect(self.db_path) as con:
+            registered = con.execute(
+                'SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1',
+                (storage.format_code(code),),
+            ).fetchone()[0]
+            used_at = con.execute(
+                'SELECT used_at FROM activation_codes WHERE code = ?',
+                (storage.format_code(code),),
+            ).fetchone()[0]
+        self.assertEqual(0, registered)
+        self.assertIsNone(used_at)
+
+        self.register(
+            code=code,
+            device_id='validated-device-1',
+            private_key=first_key,
+        )
+        with self.assertRaises(device_auth.DeviceAuthError) as caught:
+            self.validate_registration(
+                code=code,
+                device_id='validated-device-2',
+                private_key=second_key,
+            )
+        self.assertEqual('device_limit_reached', caught.exception.reason)
 
     def test_parallel_registration_cannot_exceed_limit(self) -> None:
         code = self.create_code('personal', 1)

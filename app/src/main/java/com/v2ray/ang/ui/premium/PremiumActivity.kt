@@ -141,6 +141,7 @@ private fun EmeryApp(
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    var pendingActivationCode by remember { mutableStateOf("") }
 
     Scaffold(
         containerColor = Color.White,
@@ -166,16 +167,9 @@ private fun EmeryApp(
                 ActivationScreen(
                     onActivated = { code ->
                         val formattedCode = formatSkryonActivationCode(code)
-                        val result = activateSkryonCode(context, code, formattedCode)
+                        val result = validateSkryonCode(context, code, formattedCode)
                         if (result.ok) {
-                            val guid = saveActivatedSkryonConfig(result.config)
-                            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CODE_PREF, result.code.ifBlank { formattedCode })
-                            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, result.config)
-                            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
-                            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, result.serverId)
-                            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, result.revision)
-                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_MODE, "")
-                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, true)
+                            pendingActivationCode = result.code.ifBlank { formattedCode }
                             navController.navigate(EmeryRoute.RegionalPolicy.name) {
                                 popUpTo(EmeryRoute.Activation.name) { inclusive = true }
                             }
@@ -185,19 +179,45 @@ private fun EmeryApp(
                 )
             }
             composable(EmeryRoute.RegionalPolicy.name) {
-                RegionalPolicyOnboardingScreen(
-                    initialMode = RegionalPolicyManager.readMode(),
-                    onContinue = { mode ->
-                        val result = RegionalPolicyManager.apply(context, mode)
-                        if (result.isSuccess) {
-                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
-                            navController.navigate(EmeryRoute.Home.name) {
+                if (savedActivationCode().isBlank()) {
+                    PendingActivationCommitScreen(
+                        code = pendingActivationCode,
+                        onCommitted = { result, formattedCode ->
+                            val guid = saveActivatedSkryonConfig(result.config)
+                            MmkvManager.encodeSettings(
+                                SKRYON_ACTIVATION_CODE_PREF,
+                                result.code.ifBlank { formattedCode },
+                            )
+                            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, result.config)
+                            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
+                            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, result.serverId)
+                            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, result.revision)
+                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_MODE, "")
+                            MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, true)
+                            pendingActivationCode = ""
+                        },
+                        onBack = {
+                            pendingActivationCode = ""
+                            navController.navigate(EmeryRoute.Activation.name) {
                                 popUpTo(EmeryRoute.RegionalPolicy.name) { inclusive = true }
                             }
-                        }
-                        result
-                    },
-                )
+                        },
+                    )
+                } else {
+                    RegionalPolicyOnboardingScreen(
+                        initialMode = RegionalPolicyManager.readMode(),
+                        onContinue = { mode ->
+                            val result = RegionalPolicyManager.apply(context, mode)
+                            if (result.isSuccess) {
+                                MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
+                                navController.navigate(EmeryRoute.Home.name) {
+                                    popUpTo(EmeryRoute.RegionalPolicy.name) { inclusive = true }
+                                }
+                            }
+                            result
+                        },
+                    )
+                }
             }
             composable(EmeryRoute.Home.name) {
                 val vpnMainViewModel: VpnMainViewModel = viewModel()
@@ -235,6 +255,90 @@ private fun savedActivationCode(): String {
 
 private fun regionalPolicyPending(): Boolean {
     return MmkvManager.decodeSettingsBool(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
+}
+
+@Composable
+private fun PendingActivationCommitScreen(
+    code: String,
+    onCommitted: (SkryonActivationResult, String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    var error by remember(code) { mutableStateOf("") }
+    var working by remember(code) { mutableStateOf(true) }
+
+    LaunchedEffect(code) {
+        if (code.isBlank()) {
+            error = "Код активации не найден. Введите его ещё раз."
+            working = false
+            return@LaunchedEffect
+        }
+        val formattedCode = formatSkryonActivationCode(code)
+        val result = activateSkryonCode(context, code, formattedCode)
+        if (result.ok) {
+            onCommitted(result, formattedCode)
+        } else {
+            error = result.error.ifBlank { "Не удалось завершить активацию" }
+            working = false
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .navigationBarsPadding()
+            .padding(horizontal = 28.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "Настройка режима",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color(0xFF111319),
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(18.dp))
+            if (working) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(26.dp),
+                    strokeWidth = 2.dp,
+                    color = Color(0xFF111319),
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Завершаем активацию…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF6F7580),
+                )
+            } else {
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFB42318),
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(18.dp))
+                Button(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF111319),
+                        contentColor = Color.White,
+                    ),
+                ) {
+                    Text("Вернуться к активации")
+                }
+            }
+        }
+    }
 }
 
 @Composable
