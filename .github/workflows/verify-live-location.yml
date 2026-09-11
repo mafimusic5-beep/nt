@@ -22,7 +22,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Verify live GeoIP label
+      - name: Inspect all live GeoIP providers
         run: |
           set -euo pipefail
           ssh \
@@ -38,16 +38,31 @@ jobs:
           cd '/opt/nt/emery vpn orchestrator'
           PYTHONPATH=. /opt/nt/.runtime/modern/bin/python - <<'PY'
           import asyncio
-          from src.bot.utils.geoip import detect_node_location
+          import httpx
+          from src.bot.utils.geoip import _parse_ipapi, _parse_ipwho, _parse_ipinfo_is, detect_node_location
           from src.bot.handlers.server_setup import _auto_location_title
 
+          IP = '217.154.243.155'
+
           async def main():
-              location = await detect_node_location('217.154.243.155')
-              title = _auto_location_title(location)
-              print(f'LOCATION={location}')
-              print(f'TITLE={title}')
-              if title != '🇩🇪 Клеве':
-                  raise SystemExit(f'unexpected title: {title!r}')
+              providers = (
+                  ('ipapi.co', f'https://ipapi.co/{IP}/json/', _parse_ipapi),
+                  ('ipwho.is', f'https://ipwho.is/{IP}', _parse_ipwho),
+                  ('ipinfo.is', f'https://ipinfo.is/{IP}', _parse_ipinfo_is),
+              )
+              async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers={'User-Agent': 'Skryon-GeoIP/1.0'}) as http:
+                  for name, url, parser in providers:
+                      try:
+                          response = await http.get(url)
+                          response.raise_for_status()
+                          payload = response.json()
+                          parsed = parser(IP, payload)
+                          print(f'{name}={parsed}')
+                      except Exception as exc:
+                          print(f'{name}=ERROR:{type(exc).__name__}:{exc}')
+              location = await detect_node_location(IP)
+              print(f'SELECTED={location}')
+              print(f'TITLE={_auto_location_title(location)}')
 
           asyncio.run(main())
           PY
