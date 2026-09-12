@@ -39,7 +39,7 @@ class AboutActivity : BaseActivity() {
         }
 
         binding.layoutPrivacyPolicy.setOnClickListener {
-            Utils.openUri(this, AppConfig.APP_PRIVACY_POLICY)
+            Utils.openUri(this, "https://skryon.ru/privacy.html")
         }
 
         "v${BuildConfig.VERSION_NAME} (${V2RayNativeManager.getLibVersion()})".also {
