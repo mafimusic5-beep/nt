@@ -8,9 +8,11 @@ from collections import defaultdict, deque
 from typing import Deque, Dict, Optional
 
 from config import CHECKOUT_SECRET
+from device_recovery_routes import router as device_recovery_router
 from storage import create_checkout_code, get_activation_code, get_checkout_order, renew_activation_code
 
 router = APIRouter()
+router.include_router(device_recovery_router)
 WEB_DIR = Path(__file__).resolve().parent / 'web'
 PLANS = {
     'personal': {'title': 'Личный', 'devices': 1, 'days': 30},
