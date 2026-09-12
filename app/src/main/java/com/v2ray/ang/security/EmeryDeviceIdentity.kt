@@ -1,5 +1,6 @@
 package com.v2ray.ang.security
 
+import android.os.Build
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -18,12 +19,16 @@ private const val PREF_EMERY_DEVICE_ID = "pref_emery_device_id"
 private const val PREF_EMERY_DEVICE_NAME = "pref_emery_device_name"
 private const val BROKEN_LEGACY_ANDROID_ID = "9774d56d682e549c"
 private const val DEFAULT_DEVICE_NAME = "Android-устройство"
+private const val DEVICE_PROBE_PREFIX = "dp1:"
+private const val DEVICE_PROBE_DOMAIN = "skryon-device-v1:"
 
 object EmeryDeviceIdentity {
 
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
-    private const val KEY_ALIAS_PREFIX = "emery_device_key_"
+    private const val LEGACY_KEY_ALIAS_PREFIX = "emery_device_key_"
+    private const val KEY_ALIAS_PREFIX = "skryon_device_key_v2_"
     private const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
+    private const val RECOVERY_PROTOCOL = "skryon-device-recovery-v1"
 
     private val technicalNameMarkers = listOf(
         "sdk_gphone",
@@ -62,32 +67,50 @@ object EmeryDeviceIdentity {
         val signatureAlgorithm: String = SIGNATURE_ALGORITHM,
     )
 
+    data class RecoveryProof(
+        val deviceId: String,
+        val publicKeyBase64: String,
+        val publicKeyFingerprintSha256: String,
+        val timestampMillis: String,
+        val nonce: String,
+        val signatureBase64: String,
+        val signatureAlgorithm: String = SIGNATURE_ALGORITHM,
+    )
+
     /**
-     * Android 8+ keeps this value stable for the same device, Android user and app
-     * signing key across an ordinary reinstall. The Keystore private key itself
-     * is removed by uninstall; the backend deliberately requires an explicit
-     * recovery reset before accepting a replacement key for the same device ID.
+     * The raw ANDROID_ID never leaves this process and is never persisted by Skryon.
+     * Android 8+ keeps it stable for the same Android user and Skryon signing key
+     * across an ordinary uninstall/reinstall. We expose only a domain-separated
+     * one-way probe so the backend can recognize the same installation target
+     * without receiving the platform identifier itself.
      */
     fun deviceId(): String {
-        val androidId = runCatching {
+        val androidId = rawAndroidId()
+        val resolved = if (androidId.isNotBlank()) {
+            DEVICE_PROBE_PREFIX + sha256Hex(DEVICE_PROBE_DOMAIN + androidId.lowercase(Locale.ROOT))
+        } else {
+            val saved = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_ID)?.trim().orEmpty()
+            if (saved.startsWith(DEVICE_PROBE_PREFIX) && saved.length == 68) {
+                saved
+            } else {
+                DEVICE_PROBE_PREFIX + sha256Hex("skryon-fallback-v1:" + UUID.randomUUID())
+            }
+        }
+        MmkvManager.encodeSettings(PREF_EMERY_DEVICE_ID, resolved)
+        return resolved
+    }
+
+    /** The raw platform identifier is used only locally to derive the v2 probe. */
+    private fun rawAndroidId(): String {
+        return runCatching {
             Settings.Secure.getString(
                 AngApplication.application.contentResolver,
                 Settings.Secure.ANDROID_ID,
             )
-        }.getOrNull()?.trim().orEmpty()
-
-        if (androidId.isNotBlank() && androidId != BROKEN_LEGACY_ANDROID_ID) {
-            MmkvManager.encodeSettings(PREF_EMERY_DEVICE_ID, androidId)
-            return androidId
-        }
-
-        val saved = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_ID)?.trim().orEmpty()
-        if (saved.isNotEmpty()) {
-            return saved
-        }
-        val generated = UUID.randomUUID().toString()
-        MmkvManager.encodeSettings(PREF_EMERY_DEVICE_ID, generated)
-        return generated
+        }.getOrNull()
+            ?.trim()
+            ?.takeIf { value -> value.isNotBlank() && value != BROKEN_LEGACY_ANDROID_ID }
+            .orEmpty()
     }
 
     /**
@@ -101,6 +124,13 @@ object EmeryDeviceIdentity {
             MmkvManager.encodeSettings(PREF_EMERY_DEVICE_NAME, resolved)
         }
         return resolved
+    }
+
+    fun currentPublicKeyBase64(): String = publicKeyBase64()
+
+    fun currentPublicKeyFingerprintSha256(): String {
+        val entry = getOrCreatePrivateKeyEntry()
+        return sha256Hex(entry.certificate.publicKey.encoded)
     }
 
     fun buildActivationProof(path: String, accessKey: String): ActivationProof {
@@ -121,6 +151,66 @@ object EmeryDeviceIdentity {
             deviceId = resolvedDeviceId,
             deviceName = resolvedDeviceName,
             publicKeyBase64 = publicKeyBase64(),
+            timestampMillis = timestamp,
+            nonce = nonce,
+            signatureBase64 = signCanonical(canonical),
+        )
+    }
+
+    fun buildRecoveryChallengeProof(accessKey: String): RecoveryProof {
+        val resolvedDeviceId = deviceId()
+        val publicKey = publicKeyBase64()
+        val fingerprint = currentPublicKeyFingerprintSha256()
+        val timestamp = System.currentTimeMillis().toString()
+        val nonce = randomNonce()
+        val canonical = listOf(
+            "protocol=$RECOVERY_PROTOCOL",
+            "stage=challenge",
+            "path=/api/device/recovery/challenge",
+            "device_id=$resolvedDeviceId",
+            "new_key_sha256=$fingerprint",
+            "timestamp=$timestamp",
+            "nonce=$nonce",
+            "auth_sha256=${sha256Hex(accessKey.trim())}",
+        ).joinToString(separator = "\n")
+        return RecoveryProof(
+            deviceId = resolvedDeviceId,
+            publicKeyBase64 = publicKey,
+            publicKeyFingerprintSha256 = fingerprint,
+            timestampMillis = timestamp,
+            nonce = nonce,
+            signatureBase64 = signCanonical(canonical),
+        )
+    }
+
+    fun buildRecoveryConfirmProof(
+        accessKey: String,
+        challengeId: String,
+        serverChallenge: String,
+        integrityToken: String,
+    ): RecoveryProof {
+        val resolvedDeviceId = deviceId()
+        val publicKey = publicKeyBase64()
+        val fingerprint = currentPublicKeyFingerprintSha256()
+        val timestamp = System.currentTimeMillis().toString()
+        val nonce = randomNonce()
+        val canonical = listOf(
+            "protocol=$RECOVERY_PROTOCOL",
+            "stage=confirm",
+            "path=/api/device/recovery/confirm",
+            "challenge_id=${challengeId.trim()}",
+            "server_challenge_sha256=${sha256Hex(serverChallenge)}",
+            "device_id=$resolvedDeviceId",
+            "new_key_sha256=$fingerprint",
+            "timestamp=$timestamp",
+            "nonce=$nonce",
+            "auth_sha256=${sha256Hex(accessKey.trim())}",
+            "integrity_token_sha256=${sha256Hex(integrityToken)}",
+        ).joinToString(separator = "\n")
+        return RecoveryProof(
+            deviceId = resolvedDeviceId,
+            publicKeyBase64 = publicKey,
+            publicKeyFingerprintSha256 = fingerprint,
             timestampMillis = timestamp,
             nonce = nonce,
             signatureBase64 = signCanonical(canonical),
@@ -213,34 +303,63 @@ object EmeryDeviceIdentity {
 
     private fun getOrCreatePrivateKeyEntry(): KeyStore.PrivateKeyEntry {
         val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
-        val alias = keyAlias()
+
+        legacyKeyAlias()?.let { legacyAlias ->
+            val legacy = keyStore.getEntry(legacyAlias, null) as? KeyStore.PrivateKeyEntry
+            if (legacy != null) {
+                return legacy
+            }
+        }
+
+        val alias = KEY_ALIAS_PREFIX + deviceId().removePrefix(DEVICE_PROBE_PREFIX)
         val existing = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
         if (existing != null) {
             return existing
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                generateKey(alias, strongBox = true)
+                return keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+                    ?: error("Unable to read StrongBox Skryon device key")
+            } catch (_: Exception) {
+                // StrongBox is optional. A hardware-backed Android Keystore key is
+                // still preferable to falling back to an exportable app secret.
+            }
+        }
+
+        generateKey(alias, strongBox = false)
+        return keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+            ?: error("Unable to create Skryon device key")
+    }
+
+    private fun legacyKeyAlias(): String? {
+        val rawId = rawAndroidId()
+        return rawId.takeIf { it.isNotBlank() }?.let { LEGACY_KEY_ALIAS_PREFIX + it }
+    }
+
+    private fun generateKey(alias: String, strongBox: Boolean) {
         val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE_PROVIDER)
-        val spec = KeyGenParameterSpec.Builder(
+        val builder = KeyGenParameterSpec.Builder(
             alias,
             KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
         )
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
             .setUserAuthenticationRequired(false)
-            .build()
-        generator.initialize(spec)
+        if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            builder.setIsStrongBoxBacked(true)
+        }
+        generator.initialize(builder.build())
         generator.generateKeyPair()
-
-        return keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-            ?: error("Unable to create Emery device key")
     }
-
-    private fun keyAlias(): String = KEY_ALIAS_PREFIX + deviceId()
 
     private fun randomNonce(): String = UUID.randomUUID().toString().replace("-", "")
 
-    private fun sha256Hex(value: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+    private fun sha256Hex(value: String): String = sha256Hex(value.toByteArray(Charsets.UTF_8))
+
+    private fun sha256Hex(value: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value)
         return digest.joinToString(separator = "") { byte -> String.format(Locale.US, "%02x", byte.toInt() and 0xff) }
     }
 }
