@@ -47,7 +47,8 @@ abstract class HelperBaseActivity : BaseActivity() {
 
     /**
      * Launch file chooser with ACTION_GET_CONTENT intent.
-     * Convenience method that delegates to fileChooser helper.
+     * Storage Access Framework grants access to the URI selected by the user,
+     * so broad storage/media permission is not required.
      *
      * @param mimeType MIME type filter for files
      * @param onResult Callback invoked with the selected file URI (null if cancelled)
@@ -56,9 +57,7 @@ abstract class HelperBaseActivity : BaseActivity() {
         mimeType: String = "*/*",
         onResult: (Uri?) -> Unit
     ) {
-        checkAndRequestPermission(PermissionType.READ_STORAGE) {
-            fileChooser.launch(mimeType, onResult)
-        }
+        fileChooser.launch(mimeType, onResult)
     }
 
     /**
