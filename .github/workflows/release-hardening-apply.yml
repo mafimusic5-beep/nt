@@ -35,7 +35,9 @@ jobs:
           cache: gradle
 
       - name: Apply release hardening patch
-        run: python tools/finalize_play_release.py
+        run: |
+          python tools/finalize_play_release.py
+          python tools/fix_release_test.py
 
       - name: Validate patch whitespace
         run: git diff --check
@@ -63,7 +65,8 @@ jobs:
           git rm .github/workflows/release-hardening-apply.yml
           git rm .github/workflows/device-hardening-patch.yml
           git rm tools/finalize_play_release.py
-          git add orchestrator/device_recovery_routes.py orchestrator/tests/test_device_recovery.py app/src/main/java/com/v2ray/ang/security/SkryonVpnDisclosure.kt app/src/main/java/com/v2ray/ang/ui/MainActivity.kt app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt
+          git rm tools/fix_release_test.py
+          git add orchestrator/device_recovery_routes.py orchestrator/tests/test_device_recovery.py orchestrator/tests/test_pool_reservation_bridge.py app/src/main/java/com/v2ray/ang/security/SkryonVpnDisclosure.kt app/src/main/java/com/v2ray/ang/ui/MainActivity.kt app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt
           git diff --cached --check
           git commit -m 'Harden Play release device recovery and VPN disclosure'
           git push origin HEAD:security/device-reinstall-hardening
