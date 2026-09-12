@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -312,6 +313,85 @@ class DeviceRecoveryTests(unittest.TestCase):
 
         profile = self.authenticate(code=code, device_id=device_id, key=old_key)
         self.assertEqual(device_id, profile['device_id'])
+
+
+    def test_integrity_failure_keeps_old_key_and_challenge_unconsumed(self) -> None:
+        code = self.create_code()
+        device_id = self.probe('0123456789abcdef')
+        old_key = self.new_private_key()
+        new_key = self.new_private_key()
+        self.register(code=code, device_id=device_id, key=old_key)
+
+        status, challenge = self.response_payload(
+            device_recovery_routes.recovery_challenge(
+                self.challenge_payload(code=code, device_id=device_id, key=new_key)
+            )
+        )
+        self.assertEqual(200, status)
+
+        def reject_integrity(token, expected_hash):
+            raise play_integrity.PlayIntegrityError('play_integrity_device_failed')
+        play_integrity.verify_standard_token = reject_integrity
+
+        request = self.confirm_payload(
+            code=code,
+            device_id=device_id,
+            key=new_key,
+            challenge=challenge,
+            token='rejected-integrity-token-' + uuid.uuid4().hex,
+        )
+        status, body = self.response_payload(device_recovery_routes.recovery_confirm(request))
+        self.assertEqual(403, status)
+        self.assertEqual('play_integrity_device_failed', body['reason'])
+
+        profile = self.authenticate(code=code, device_id=device_id, key=old_key)
+        self.assertEqual(device_id, profile['device_id'])
+        with sqlite3.connect(self.db_path) as con:
+            consumed = con.execute(
+                'SELECT consumed_at_epoch FROM device_recovery_challenges WHERE challenge_id = ?',
+                (challenge['challenge_id'],),
+            ).fetchone()[0]
+        self.assertIsNone(consumed)
+
+    def test_legacy_pool_subject_alias_is_preserved_during_id_scrub(self) -> None:
+        code = self.create_code()
+        legacy_android_id = '0123456789abcdef'
+        device_id = self.probe(legacy_android_id)
+        old_key = self.new_private_key()
+        self.register(code=code, device_id=legacy_android_id, key=old_key)
+
+        original_secret = device_identity_aliases.POOL_BRIDGE_PSEUDONYM_KEY
+        device_identity_aliases.POOL_BRIDGE_PSEUDONYM_KEY = 'test-pool-pseudonym-secret'
+        try:
+            with sqlite3.connect(self.db_path) as con:
+                con.execute(
+                    'UPDATE code_devices SET pool_assignment_id = 4242 WHERE code = ? AND device_id = ?',
+                    (code, legacy_android_id),
+                )
+                con.commit()
+
+            status, body = self.response_payload(
+                device_recovery_routes.recovery_challenge(
+                    self.challenge_payload(code=code, device_id=device_id, key=old_key)
+                )
+            )
+            self.assertEqual(200, status)
+            self.assertEqual('migrated', body['status'])
+
+            expected = hmac.new(
+                b'test-pool-pseudonym-secret',
+                ('legacy-device-v1\0' + code + '\0' + legacy_android_id).encode('utf-8'),
+                hashlib.sha256,
+            ).hexdigest()
+            with sqlite3.connect(self.db_path) as con:
+                row = con.execute(
+                    'SELECT subject_key FROM device_pool_subject_aliases WHERE code = ? AND device_id = ?',
+                    (code, device_id),
+                ).fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(expected, row[0])
+        finally:
+            device_identity_aliases.POOL_BRIDGE_PSEUDONYM_KEY = original_secret
 
 
 if __name__ == '__main__':

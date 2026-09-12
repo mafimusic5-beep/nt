@@ -71,6 +71,7 @@ def _ensure_storage(con: sqlite3.Connection) -> None:
             old_device_id TEXT NOT NULL,
             requested_device_id TEXT NOT NULL,
             new_key_fingerprint TEXT NOT NULL,
+            old_key_fingerprint TEXT NOT NULL DEFAULT '',
             challenge_hash TEXT NOT NULL,
             request_hash TEXT NOT NULL,
             created_at_epoch INTEGER NOT NULL,
@@ -79,6 +80,11 @@ def _ensure_storage(con: sqlite3.Connection) -> None:
         )
         '''
     )
+    columns = {str(row["name"]) for row in con.execute("PRAGMA table_info(device_recovery_challenges)").fetchall()}
+    if "old_key_fingerprint" not in columns:
+        con.execute(
+            "ALTER TABLE device_recovery_challenges ADD COLUMN old_key_fingerprint TEXT NOT NULL DEFAULT ''"
+        )
     con.execute(
         "CREATE INDEX IF NOT EXISTS idx_device_recovery_expiry ON device_recovery_challenges(expires_at_epoch)"
     )
@@ -377,11 +383,12 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
                     old_device_id,
                     requested_device_id,
                     new_key_fingerprint,
+                    old_key_fingerprint,
                     challenge_hash,
                     request_hash,
                     created_at_epoch,
                     expires_at_epoch
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     challenge_id,
@@ -390,6 +397,7 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
                     str(row["device_id"]),
                     requested_device_id,
                     new_key_fingerprint,
+                    old_key_fingerprint,
                     challenge_hash,
                     request_hash,
                     now_epoch,
@@ -416,6 +424,32 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
         return _json_error(exc.reason, exc.status_code)
     except Exception:
         return _json_error("device_recovery_failed", 500)
+
+
+def _validate_confirm_challenge(
+    row: sqlite3.Row | None,
+    *,
+    code: str,
+    requested_device_id: str,
+    new_key_fingerprint: str,
+    server_challenge: str,
+    now_epoch: int,
+) -> None:
+    if not row:
+        raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
+    if row["consumed_at_epoch"] is not None:
+        raise device_auth.DeviceAuthError("device_recovery_replay_detected", 401)
+    if int(row["expires_at_epoch"] or 0) < now_epoch:
+        raise device_auth.DeviceAuthError("device_recovery_challenge_expired", 401)
+    if str(row["code"]) != code:
+        raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
+    if str(row["requested_device_id"]) != requested_device_id:
+        raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
+    if not hmac.compare_digest(str(row["new_key_fingerprint"]), new_key_fingerprint):
+        raise device_auth.DeviceAuthError("device_recovery_key_mismatch", 401)
+    supplied_challenge_hash = hashlib.sha256(server_challenge.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(str(row["challenge_hash"]), supplied_challenge_hash):
+        raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
 
 
 @router.post("/confirm")
@@ -448,68 +482,104 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
         if not hmac.compare_digest(verified_fingerprint, new_key_fingerprint):
             raise device_auth.DeviceAuthError("device_signature_invalid", 401)
 
+        # Phase 1: verify immutable challenge state without keeping a SQLite
+        # write lock while the remote Play Integrity API is contacted.
+        con = _connect()
+        try:
+            _ensure_storage(con)
+            activation = device_auth._activation_row(con, payload.code)
+            code = str(activation["code"])
+            row = con.execute(
+                "SELECT * FROM device_recovery_challenges WHERE challenge_id = ?",
+                (payload.challenge_id.strip(),),
+            ).fetchone()
+            _validate_confirm_challenge(
+                row,
+                code=code,
+                requested_device_id=requested_device_id,
+                new_key_fingerprint=new_key_fingerprint,
+                server_challenge=payload.server_challenge,
+                now_epoch=int(time.time()),
+            )
+            expected_request_hash = str(row["request_hash"])
+            con.commit()
+        except device_auth.DeviceAuthError as error:
+            if error.reason == "expired":
+                con.commit()
+            else:
+                con.rollback()
+            raise
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
+
+        try:
+            play_integrity.verify_standard_token(payload.integrity_token, expected_request_hash)
+        except play_integrity.PlayIntegrityError as exc:
+            reason = str(exc)
+            transient = reason in {
+                "play_integrity_not_configured",
+                "play_integrity_credentials_invalid",
+                "play_integrity_oauth_failed",
+                "play_integrity_decode_failed",
+            }
+            raise device_auth.DeviceAuthError(reason, 503 if transient else 403) from exc
+
+        # Phase 2: re-check everything under one write transaction. Only this
+        # transaction can consume the challenge and replace the registered key.
         con = _connect()
         try:
             con.execute("BEGIN IMMEDIATE")
             _ensure_storage(con)
             activation = device_auth._activation_row(con, payload.code)
-            code = str(activation["code"])
+            code_after_integrity = str(activation["code"])
+            if code_after_integrity != code:
+                raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
+
+            row = con.execute(
+                "SELECT * FROM device_recovery_challenges WHERE challenge_id = ?",
+                (payload.challenge_id.strip(),),
+            ).fetchone()
+            now_epoch = int(time.time())
+            _validate_confirm_challenge(
+                row,
+                code=code,
+                requested_device_id=requested_device_id,
+                new_key_fingerprint=new_key_fingerprint,
+                server_challenge=payload.server_challenge,
+                now_epoch=now_epoch,
+            )
+            if not hmac.compare_digest(str(row["request_hash"]), expected_request_hash):
+                raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
+
+            device = con.execute(
+                """
+                SELECT id, device_id, public_key, public_key_fingerprint, active, pool_assignment_id
+                FROM code_devices
+                WHERE id = ? AND code = ?
+                """,
+                (int(row["device_row_id"]), code),
+            ).fetchone()
+            if not device or not bool(device["active"]):
+                raise device_auth.DeviceAuthError("device_revoked", 403)
+
+            current_device_id = str(device["device_id"] or "")
+            if current_device_id not in {str(row["old_device_id"]), requested_device_id}:
+                raise device_auth.DeviceAuthError("device_recovery_conflict", 409)
+
+            expected_old_key = str(row["old_key_fingerprint"] or "").strip()
+            current_old_key = _stored_key_fingerprint(device)
+            if expected_old_key and not hmac.compare_digest(expected_old_key, current_old_key):
+                raise device_auth.DeviceAuthError("device_recovery_conflict", 409)
+
             device_auth._consume_nonce(
                 con,
                 code=code,
                 device_id=requested_device_id,
                 nonce=payload.nonce,
             )
-            row = con.execute(
-                '''
-                SELECT * FROM device_recovery_challenges
-                WHERE challenge_id = ?
-                ''',
-                (payload.challenge_id.strip(),),
-            ).fetchone()
-            now_epoch = int(time.time())
-            if not row:
-                raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
-            if row["consumed_at_epoch"] is not None:
-                raise device_auth.DeviceAuthError("device_recovery_replay_detected", 401)
-            if int(row["expires_at_epoch"] or 0) < now_epoch:
-                raise device_auth.DeviceAuthError("device_recovery_challenge_expired", 401)
-            if str(row["code"]) != code:
-                raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
-            if str(row["requested_device_id"]) != requested_device_id:
-                raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
-            if not hmac.compare_digest(str(row["new_key_fingerprint"]), new_key_fingerprint):
-                raise device_auth.DeviceAuthError("device_recovery_key_mismatch", 401)
-            supplied_challenge_hash = hashlib.sha256(payload.server_challenge.encode("utf-8")).hexdigest()
-            if not hmac.compare_digest(str(row["challenge_hash"]), supplied_challenge_hash):
-                raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
-
-            expected_request_hash = str(row["request_hash"])
-            try:
-                play_integrity.verify_standard_token(payload.integrity_token, expected_request_hash)
-            except play_integrity.PlayIntegrityError as exc:
-                transient = exc.args and str(exc.args[0]) in {
-                    "play_integrity_not_configured",
-                    "play_integrity_credentials_invalid",
-                    "play_integrity_oauth_failed",
-                    "play_integrity_decode_failed",
-                }
-                raise device_auth.DeviceAuthError(str(exc), 503 if transient else 403) from exc
-
-            device = con.execute(
-                '''
-                SELECT id, device_id, public_key, public_key_fingerprint, active, pool_assignment_id
-                FROM code_devices
-                WHERE id = ? AND code = ?
-                ''',
-                (int(row["device_row_id"]), code),
-            ).fetchone()
-            if not device or not bool(device["active"]):
-                raise device_auth.DeviceAuthError("device_revoked", 403)
-            current_device_id = str(device["device_id"] or "")
-            if current_device_id not in {str(row["old_device_id"]), requested_device_id}:
-                raise device_auth.DeviceAuthError("device_recovery_conflict", 409)
-
             _migrate_device_id_if_needed(
                 con,
                 code=code,
@@ -517,14 +587,14 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
                 requested_device_id=requested_device_id,
             )
             con.execute(
-                '''
+                """
                 UPDATE code_devices
                 SET public_key = ?,
                     public_key_fingerprint = ?,
                     last_seen_at = ?,
                     active = 1
                 WHERE id = ?
-                ''',
+                """,
                 (
                     payload.client_public_key,
                     new_key_fingerprint,
@@ -532,10 +602,16 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
                     int(device["id"]),
                 ),
             )
-            con.execute(
-                "UPDATE device_recovery_challenges SET consumed_at_epoch = ? WHERE challenge_id = ?",
+            updated = con.execute(
+                """
+                UPDATE device_recovery_challenges
+                SET consumed_at_epoch = ?
+                WHERE challenge_id = ? AND consumed_at_epoch IS NULL
+                """,
                 (now_epoch, payload.challenge_id.strip()),
             )
+            if updated.rowcount != 1:
+                raise device_auth.DeviceAuthError("device_recovery_replay_detected", 401)
             con.commit()
             return {
                 "ok": True,
@@ -543,6 +619,12 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
                 "recovered": True,
                 "integrity_required": True,
             }
+        except device_auth.DeviceAuthError as error:
+            if error.reason == "expired":
+                con.commit()
+            else:
+                con.rollback()
+            raise
         except Exception:
             con.rollback()
             raise
