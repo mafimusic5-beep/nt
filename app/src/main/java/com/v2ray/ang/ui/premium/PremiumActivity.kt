@@ -73,6 +73,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.V2RayServiceManager
+import com.v2ray.ang.security.SkryonVpnDisclosure
 import com.v2ray.ang.ui.premium.vpn.VpnConnectionDiagnosticsOverlay
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
@@ -113,13 +114,18 @@ class PremiumActivity : ComponentActivity() {
             EmeryTheme {
                 EmeryApp(
                     requestVpnPermission = { onGranted ->
-                        val intent = VpnService.prepare(this)
-                        if (intent == null) {
-                            onGranted()
-                        } else {
-                            onVpnPermissionGranted = onGranted
-                            vpnPermissionLauncher.launch(intent)
-                        }
+                        SkryonVpnDisclosure.showIfNeeded(
+                            activity = this,
+                            onAccepted = {
+                                val intent = VpnService.prepare(this)
+                                if (intent == null) {
+                                    onGranted()
+                                } else {
+                                    onVpnPermissionGranted = onGranted
+                                    vpnPermissionLauncher.launch(intent)
+                                }
+                            },
+                        )
                     },
                     startVpnService = { guid ->
                         V2RayServiceManager.startVService(this, guid)

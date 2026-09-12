@@ -18,6 +18,7 @@ from config import (
     POOL_BRIDGE_TIMEOUT_SECONDS,
     POOL_BRIDGE_URL,
 )
+from device_identity_aliases import get_pool_subject_alias
 
 
 _REGION_RE = re.compile(r'^[a-z0-9-]{1,64}$')
@@ -53,6 +54,9 @@ def _pseudonym(namespace: str, *parts: str) -> str:
 
 
 def _subject_key(formatted_code: str, device_id: str) -> str:
+    preserved = get_pool_subject_alias(formatted_code, device_id)
+    if preserved:
+        return preserved
     return _pseudonym('legacy-device-v1', formatted_code, device_id)
 
 

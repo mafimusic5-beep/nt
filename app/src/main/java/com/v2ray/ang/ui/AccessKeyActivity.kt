@@ -9,6 +9,7 @@ import com.v2ray.ang.databinding.ActivityAccessKeyBinding
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.network.EmeryAuthClient
+import com.v2ray.ang.security.SkryonDeviceRecoveryClient
 import com.v2ray.ang.ui.premium.PremiumActivity
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
 import kotlinx.coroutines.launch
@@ -64,7 +65,12 @@ class AccessKeyActivity : BaseActivity() {
         binding.buttonActivate.isEnabled = false
         showLoading()
         lifecycleScope.launch {
-            val result = EmeryAuthClient.verifyAccessKey(key)
+            val recovery = SkryonDeviceRecoveryClient.recoverIfNeeded(this@AccessKeyActivity, key)
+            val result = if (recovery.isSuccess) {
+                EmeryAuthClient.verifyAccessKey(key)
+            } else {
+                Result.failure(recovery.exceptionOrNull() ?: IllegalStateException("device_recovery_failed"))
+            }
             AgentDebugNdjsonLogger.log(
                 hypothesisId = "H1",
                 location = "AccessKeyActivity.kt:onActivateClicked",

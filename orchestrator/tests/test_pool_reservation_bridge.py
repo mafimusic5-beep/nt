@@ -91,6 +91,7 @@ def test_bridge_sends_only_hmac_pseudonyms(monkeypatch):
     monkeypatch.setattr(bridge, 'POOL_BRIDGE_URL', 'https://pool.example.test')
     monkeypatch.setattr(bridge, 'POOL_BRIDGE_API_KEY', 'bridge-api-secret')
     monkeypatch.setattr(bridge, 'POOL_BRIDGE_PSEUDONYM_KEY', 'pseudonym-secret')
+    monkeypatch.setattr(bridge, 'get_pool_subject_alias', lambda code, device_id: '')
     captured = []
 
     def fake_post(url, *, headers, json, timeout):

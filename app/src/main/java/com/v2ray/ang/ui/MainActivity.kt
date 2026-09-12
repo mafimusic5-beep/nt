@@ -36,6 +36,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
+import com.v2ray.ang.security.SkryonVpnDisclosure
 import com.v2ray.ang.util.Utils
 import com.v2ray.ang.viewmodel.MainViewModel
 import kotlinx.coroutines.Dispatchers
@@ -152,12 +153,18 @@ class MainActivity : HelperBaseActivity(), NavigationView.OnNavigationItemSelect
         if (mainViewModel.isRunning.value == true) {
             V2RayServiceManager.stopVService(this)
         } else if (SettingsManager.isVpnMode()) {
-            val intent = VpnService.prepare(this)
-            if (intent == null) {
-                startV2Ray()
-            } else {
-                requestVpnPermission.launch(intent)
-            }
+            SkryonVpnDisclosure.showIfNeeded(
+                activity = this,
+                onAccepted = {
+                    val intent = VpnService.prepare(this)
+                    if (intent == null) {
+                        startV2Ray()
+                    } else {
+                        requestVpnPermission.launch(intent)
+                    }
+                },
+                onDeclined = { applyRunningState(isLoading = false, isRunning = false) },
+            )
         } else {
             startV2Ray()
         }

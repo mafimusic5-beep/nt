@@ -27,6 +27,20 @@ android {
         multiDexEnabled = true
         buildConfigField("int", "SKRYON_VERSION_CODE", appVersionCode.toString())
 
+        val playIntegrityCloudProjectNumber =
+            (project.findProperty("SKRYON_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER") as String?)
+                ?.trim()
+                ?.toLongOrNull()
+                ?: System.getenv("SKRYON_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER")
+                    ?.trim()
+                    ?.toLongOrNull()
+                ?: 0L
+        buildConfigField(
+            "long",
+            "SKRYON_PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER",
+            "${playIntegrityCloudProjectNumber}L",
+        )
+
         // Emery orchestrator API on deployed VPS backend.
         buildConfigField("String", "EMERY_API_BASE_URL", "\"https://skryon.ru\"")
 
@@ -180,6 +194,7 @@ dependencies {
     implementation(libs.mmkv.static)
     implementation(libs.gson)
     implementation(libs.okhttp)
+    implementation("com.google.android.play:integrity:1.6.0")
 
     // Reactive and Utility Libraries
     implementation(libs.kotlinx.coroutines.android)
