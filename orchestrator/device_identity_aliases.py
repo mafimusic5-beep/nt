@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import sqlite3
 
-from config import DATABASE_PATH
+from config import DATABASE_PATH, POOL_BRIDGE_PSEUDONYM_KEY
 
 
 def _connect() -> sqlite3.Connection:
     con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
     con.row_factory = sqlite3.Row
     return con
+
+
+def derive_legacy_pool_subject_key(code: str, device_id: str) -> str:
+    key = POOL_BRIDGE_PSEUDONYM_KEY.strip()
+    if not key:
+        return ""
+    message = "\0".join(("legacy-device-v1", code.strip(), device_id.strip()))
+    return hmac.new(key.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def ensure_alias_storage(con: sqlite3.Connection | None = None) -> None:
