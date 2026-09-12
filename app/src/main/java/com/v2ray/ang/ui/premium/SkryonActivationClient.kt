@@ -11,6 +11,7 @@ import com.v2ray.ang.handler.EmeryDeviceRecord
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.validateDeviceLimit
 import com.v2ray.ang.security.EmeryDeviceIdentity
+import com.v2ray.ang.security.SkryonDeviceRecoveryClient
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -148,6 +149,19 @@ private fun activationFailure(
     )
 }
 
+private suspend fun ensureSecureDeviceRecovery(
+    context: Context,
+    submittedCode: String,
+): SkryonActivationResult? {
+    val recovery = SkryonDeviceRecoveryClient.recoverIfNeeded(context, submittedCode)
+    if (recovery.isSuccess) return null
+    val reason = recovery.exceptionOrNull()?.message.orEmpty().ifBlank { "device_recovery_failed" }
+    return activationFailure(
+        error = activationReasonText(reason),
+        reason = reason,
+    )
+}
+
 internal suspend fun validateSkryonCode(
     context: Context,
     code: String,
@@ -155,6 +169,7 @@ internal suspend fun validateSkryonCode(
 ): SkryonActivationResult = withContext(Dispatchers.IO) {
     try {
         val submittedCode = formattedCode.ifBlank { code.trim() }
+        ensureSecureDeviceRecovery(context, submittedCode)?.let { return@withContext it }
         val validationPath = "/api/activate/validate"
         val proof = EmeryDeviceIdentity.buildActivationProof(
             path = validationPath,
@@ -249,6 +264,7 @@ internal suspend fun activateSkryonCode(
 ): SkryonActivationResult = withContext(Dispatchers.IO) {
     try {
         val submittedCode = formattedCode.ifBlank { code.trim() }
+        ensureSecureDeviceRecovery(context, submittedCode)?.let { return@withContext it }
         val activationPath = "/api/activate"
         val proof = EmeryDeviceIdentity.buildActivationProof(
             path = activationPath,
@@ -656,8 +672,17 @@ private fun activationReasonText(reason: String): String {
         "already_bound" -> "Код уже активирован на другом устройстве"
         "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
         "device_signature_invalid", "device_signature_missing" -> "Не удалось подтвердить подлинность устройства"
-        "device_key_rotation_requires_reset" ->
-            "Ключ этого устройства уже зарегистрирован. После переустановки обратитесь в поддержку для безопасного сброса"
+        "device_key_rotation_requires_reset" -> "Требуется безопасное восстановление этого устройства"
+        "play_integrity_not_configured", "device_recovery_unavailable" ->
+            "Безопасное восстановление временно недоступно. Попробуйте позже"
+        "play_integrity_failed", "play_integrity_decode_failed", "play_integrity_oauth_failed" ->
+            "Не удалось подтвердить подлинность приложения. Проверьте Google Play и попробуйте снова"
+        "play_integrity_app_unrecognized", "play_integrity_device_failed", "play_integrity_certificate_mismatch" ->
+            "Устройство или приложение не прошло проверку безопасности"
+        "device_recovery_challenge_expired", "device_recovery_challenge_invalid" ->
+            "Проверка устройства истекла. Повторите активацию"
+        "device_recovery_replay_detected", "device_recovery_key_mismatch", "device_recovery_conflict" ->
+            "Безопасное восстановление устройства отклонено"
         "device_revoked" -> "Доступ этого устройства отозван"
         "device_not_registered", "device_confirmation_missing" -> "Сервер не подтвердил регистрацию устройства"
         "device_mismatch", "device_inventory_mismatch" -> "Сервер вернул другое устройство"
