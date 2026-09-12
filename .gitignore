@@ -11,3 +11,21 @@ pytest-of-root/
 app/WinRAR ZIP archive.zip
 .env
 **/.env
+
+# Runtime state / sensitive local data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+
+# Sensitive/runtime environment files
+.env.*
+!.env.example
+**/.env.*
+!**/.env.example
+
+.runtime/
+**/.runtime/
+.venv/
+**/.venv/
