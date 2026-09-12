@@ -8,6 +8,7 @@ import secrets
 import sqlite3
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from typing import Deque
 
 from fastapi import APIRouter
@@ -22,7 +23,7 @@ from device_identity_aliases import (
     ensure_alias_storage,
     save_pool_subject_alias,
 )
-from storage import format_code, now_iso
+from storage import format_code, now_iso, parse_iso
 
 
 router = APIRouter(prefix="/api/device/recovery")
@@ -31,6 +32,7 @@ RECOVERY_PROTOCOL = "skryon-device-recovery-v1"
 RECOVERY_CHALLENGE_TTL_SECONDS = 120
 RECOVERY_RATE_WINDOW_SECONDS = 10 * 60
 RECOVERY_RATE_MAX_ATTEMPTS = 6
+TRUSTED_KEY_ACTIVITY_WINDOW_SECONDS = 60
 DEVICE_PROBE_RE = re.compile(r"^dp1:[0-9a-f]{64}$")
 LEGACY_ANDROID_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
@@ -198,7 +200,7 @@ def _confirm_canonical(
 def _resolve_device_row(con: sqlite3.Connection, code: str, requested_device_id: str) -> tuple[sqlite3.Row | None, bool]:
     exact = con.execute(
         '''
-        SELECT id, device_id, public_key, public_key_fingerprint, active, pool_assignment_id
+        SELECT id, device_id, public_key, public_key_fingerprint, active, pool_assignment_id, last_seen_at
         FROM code_devices
         WHERE code = ? AND device_id = ?
         ''',
@@ -212,7 +214,7 @@ def _resolve_device_row(con: sqlite3.Connection, code: str, requested_device_id:
 
     rows = con.execute(
         '''
-        SELECT id, device_id, public_key, public_key_fingerprint, active, pool_assignment_id
+        SELECT id, device_id, public_key, public_key_fingerprint, active, pool_assignment_id, last_seen_at
         FROM code_devices
         WHERE code = ?
         ''',
@@ -237,6 +239,19 @@ def _stored_key_fingerprint(row: sqlite3.Row) -> str:
         return ""
     _, fingerprint = device_auth._decode_public_key(public_key)
     return fingerprint
+
+
+def _trusted_key_retry_after(row: sqlite3.Row) -> int:
+    raw_last_seen = str(row["last_seen_at"] or "").strip()
+    if not raw_last_seen:
+        return 0
+    last_seen = parse_iso(raw_last_seen)
+    if last_seen is None:
+        return 0
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    age_seconds = max(0, int((datetime.now(timezone.utc) - last_seen).total_seconds()))
+    return max(0, TRUSTED_KEY_ACTIVITY_WINDOW_SECONDS - age_seconds)
 
 
 def _migrate_device_id_if_needed(
@@ -356,6 +371,18 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
                     "recovered": True,
                     "integrity_required": False,
                 }
+
+            retry_after_seconds = _trusted_key_retry_after(row)
+            if old_key_fingerprint and retry_after_seconds > 0:
+                con.commit()
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "ok": False,
+                        "reason": "device_recovery_trusted_key_active",
+                        "retry_after_seconds": retry_after_seconds,
+                    },
+                )
 
             challenge_id = secrets.token_urlsafe(24)
             server_challenge = secrets.token_urlsafe(32)
