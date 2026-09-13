@@ -147,7 +147,7 @@ class DeviceSecurityGuardTests(unittest.TestCase):
             signature_algorithm='SHA256withECDSA',
         )
 
-    def test_original_key_sync_reclaims_slot_and_locks_replacement(self) -> None:
+    def test_original_key_sync_reclaims_slot_and_ejects_replacement(self) -> None:
         code = self.create_code()
         device_id = self.probe('0123456789abcdef')
         key1 = self.key()
@@ -160,8 +160,8 @@ class DeviceSecurityGuardTests(unittest.TestCase):
 
         with self.assertRaises(device_auth.DeviceAuthError) as blocked:
             self.sync(code, device_id, key2)
-        self.assertEqual('device_recovery_security_lock', blocked.exception.reason)
-        self.assertEqual(423, blocked.exception.status_code)
+        self.assertEqual('not_bound', blocked.exception.reason)
+        self.assertEqual(200, blocked.exception.status_code)
 
 
 if __name__ == '__main__':
