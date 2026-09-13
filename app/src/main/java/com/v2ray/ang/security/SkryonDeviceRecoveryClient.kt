@@ -16,6 +16,7 @@ object SkryonDeviceRecoveryClient {
     private const val BASE_URL = "https://skryon.ru"
     private const val CHALLENGE_PATH = "/api/device/recovery/challenge"
     private const val CONFIRM_PATH = "/api/device/recovery/confirm"
+    private const val TRUSTED_RETURN_PATH = "/api/device/recovery/trusted-return"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -119,6 +120,51 @@ object SkryonDeviceRecoveryClient {
                 }
             }
 
+            Result.success(Unit)
+        } catch (_: IOException) {
+            Result.failure(IllegalStateException("network"))
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    /**
+     * Called only after the server rejects a previously trusted installation key.
+     * If that exact older key is the trusted key saved before a recovery, the server
+     * restores it, revokes the replacement key and security-locks further recovery.
+     */
+    suspend fun reclaimTrustedInstallation(accessKey: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val key = accessKey.trim()
+        if (key.isBlank()) return@withContext Result.failure(IllegalArgumentException("bad_request"))
+
+        try {
+            val proof = EmeryDeviceIdentity.buildTrustedReturnProof(key)
+            val body = JSONObject()
+                .put("code", key)
+                .put("device_id", proof.deviceId)
+                .put("client_public_key", proof.publicKeyBase64)
+                .put("timestamp", proof.timestampMillis)
+                .put("nonce", proof.nonce)
+                .put("signature", proof.signatureBase64)
+                .put("signature_algorithm", proof.signatureAlgorithm)
+                .toString()
+            val request = Request.Builder()
+                .url(BASE_URL + TRUSTED_RETURN_PATH)
+                .header("Accept", "application/json")
+                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (!response.isSuccessful || json == null || !json.optBoolean("ok", false)) {
+                    val reason = json?.optString("reason").orEmpty().ifBlank { "device_security_http_${response.code}" }
+                    return@withContext Result.failure(IllegalStateException(reason))
+                }
+                if (!json.optBoolean("security_conflict", false)) {
+                    return@withContext Result.failure(IllegalStateException("device_security_conflict_not_confirmed"))
+                }
+            }
             Result.success(Unit)
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))
