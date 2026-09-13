@@ -171,13 +171,13 @@ def _authorize(registered_assignment, signing_key, *, server_nonce=None, client_
 def test_registered_device_key_authorizes_only_loopback_target(registered_assignment):
     _, result = _authorize(registered_assignment, registered_assignment["private_key"])
 
-    assert result == {
-        "allowed": True,
-        "target_host": "127.0.0.1",
-        "target_port": 20000,
-        "assignment_id": 17,
-        "node_id": 4,
-    }
+    assert result["allowed"] is True
+    assert result["target_host"] == "127.0.0.1"
+    assert result["target_port"] == 20000
+    assert result["assignment_id"] == 17
+    assert result["node_id"] == 4
+    assert len(result["credential_epoch"]) == 64
+    assert set(result["credential_epoch"]) <= set("0123456789abcdef")
 
 
 def test_copied_vless_metadata_is_useless_with_attacker_key(registered_assignment):
