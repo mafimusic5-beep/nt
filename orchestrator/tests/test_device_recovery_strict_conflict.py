@@ -221,7 +221,7 @@ class StrictDeviceConflictTests(unittest.TestCase):
             signature_algorithm='SHA256withECDSA',
         )
 
-    def test_no_time_window_and_original_key_wins_if_it_returns(self) -> None:
+    def test_original_key_return_restores_key_and_permanently_security_locks_recovery(self) -> None:
         code = self.create_code()
         device_id = self.probe('0123456789abcdef')
         key1 = self.key()
