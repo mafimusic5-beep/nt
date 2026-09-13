@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import os
+import sqlite3
 import sys
 import tempfile
 import time
@@ -162,6 +163,13 @@ class DeviceSecurityGuardTests(unittest.TestCase):
             self.sync(code, device_id, key2)
         self.assertEqual('not_bound', blocked.exception.reason)
         self.assertEqual(200, blocked.exception.status_code)
+
+        with sqlite3.connect(self.db_path) as con:
+            state = con.execute(
+                'SELECT state FROM device_recovery_watch WHERE code = ? AND device_id = ?',
+                (storage.format_code(code), device_id),
+            ).fetchone()[0]
+        self.assertEqual('conflict', state)
 
 
 if __name__ == '__main__':
