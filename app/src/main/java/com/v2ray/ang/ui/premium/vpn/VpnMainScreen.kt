@@ -576,7 +576,7 @@ private fun RegionSelectorCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selectedCode = selectedLocation.countryCodeLabel()
-    val selectedTitle = selectedLocation.cityLabel()
+    val selectedTitle = "Выбрать регион"
     val cardShape = RoundedCornerShape(if (compact) 18.dp else 20.dp)
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
