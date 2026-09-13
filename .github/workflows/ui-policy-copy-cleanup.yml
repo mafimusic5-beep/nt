@@ -19,71 +19,41 @@ jobs:
         with:
           ref: ui-policy-copy-cleanup-20260914
 
-      - name: Clean onboarding copy
+      - name: Clean regional policy copy
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           premium = Path('app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt')
           text = premium.read_text(encoding='utf-8')
-
-          old_conditional = '''                if (selectedMode == RegionalPolicyMode.International) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        text = "Я подтверждаю, что текущее VPN-подключение используется за пределами Российской Федерации.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF111319),
-                        fontWeight = FontWeight.Medium,
-                    )
-                } else if (selectedMode == RegionalPolicyMode.Russia) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF111319),
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-
-'''
-          if text.count(old_conditional) != 1:
-              raise SystemExit(f'Onboarding conditional block count: {text.count(old_conditional)}')
-          text = text.replace(old_conditional, '')
-
-          old_hint = 'text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные»."'
-          new_hint = 'text = "Режим можно изменить позже в разделе «Расширенные»."'
-          if text.count(old_hint) != 1:
-              raise SystemExit(f'Onboarding hint count: {text.count(old_hint)}')
-          text = text.replace(old_hint, new_hint)
-
-          old_location = 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."'
-          new_location = 'text = "Местоположение не определяется автоматически."'
-          if text.count(old_location) != 1:
-              raise SystemExit(f'Onboarding location copy count: {text.count(old_location)}')
-          text = text.replace(old_location, new_location)
+          pattern = r'\n\s*if \(selectedMode == RegionalPolicyMode\.International\) \{.*?Я подтверждаю, что текущее VPN-подключение используется за пределами Российской Федерации\..*?\}\s*else if \(selectedMode == RegionalPolicyMode\.Russia\) \{.*?Ограничения применяются на сервере\. Списки не скачиваются на устройство\..*?\}\n'
+          text, count = re.subn(pattern, '\n', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'Onboarding conditional block count: {count}')
+          old = 'text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные»."'
+          new = 'text = "Режим можно изменить позже в разделе «Расширенные»."'
+          if text.count(old) != 1:
+              raise SystemExit(f'Onboarding hint count: {text.count(old)}')
+          text = text.replace(old, new)
+          old = 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."'
+          new = 'text = "Местоположение не определяется автоматически."'
+          if text.count(old) != 1:
+              raise SystemExit(f'Onboarding location copy count: {text.count(old)}')
+          text = text.replace(old, new)
           premium.write_text(text, encoding='utf-8')
 
           vpn = Path('app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt')
           text = vpn.read_text(encoding='utf-8')
-          old_server = '''        if (selectedMode == RegionalPolicyMode.Russia) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
-                style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextPrimary,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-'''
-          if text.count(old_server) != 1:
-              raise SystemExit(f'Advanced server block count: {text.count(old_server)}')
-          text = text.replace(old_server, '')
-
-          old_location = 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."'
-          new_location = 'text = "Местоположение не определяется автоматически."'
-          if text.count(old_location) != 1:
-              raise SystemExit(f'Advanced location copy count: {text.count(old_location)}')
-          text = text.replace(old_location, new_location)
+          pattern = r'\n\s*if \(selectedMode == RegionalPolicyMode\.Russia\) \{.*?Ограничения применяются на сервере\. Списки не скачиваются на устройство\..*?\}\n'
+          text, count = re.subn(pattern, '\n', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'Advanced server block count: {count}')
+          old = 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."'
+          new = 'text = "Местоположение не определяется автоматически."'
+          if text.count(old) != 1:
+              raise SystemExit(f'Advanced location copy count: {text.count(old)}')
+          text = text.replace(old, new)
           vpn.write_text(text, encoding='utf-8')
           PY
 
