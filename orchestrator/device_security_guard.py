@@ -197,6 +197,12 @@ def authenticate_registered_device_guarded(
         if error.reason != 'device_signature_invalid':
             raise
 
+    # Opening the Skryon home screen starts /api/config/sync. Only that explicit
+    # app-sync event can make the old trusted key reclaim the slot. There is no
+    # last_seen timeout, grace period, or seconds-based heuristic.
+    if path != '/api/config/sync':
+        raise device_auth.DeviceAuthError('device_signature_invalid', 401)
+
     restored = _restore_if_original_key_returned(
         raw_code=raw_code,
         method=method,
