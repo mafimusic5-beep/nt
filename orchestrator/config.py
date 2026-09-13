@@ -106,11 +106,3 @@ APP_UPDATE_MESSAGE = os.getenv(
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
-
-
-# Device identity is the authoritative subscription-slot identity. The guard is
-# installed after all config values are defined so modules importing config during
-# installation see a complete configuration object.
-from device_id_slot_guard import install_device_id_slot_guard  # noqa: E402
-
-install_device_id_slot_guard()
