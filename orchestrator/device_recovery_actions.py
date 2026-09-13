@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 import time
 
 from fastapi.responses import JSONResponse
@@ -19,9 +20,12 @@ from device_recovery_common import (
     _connect,
     _ensure_storage,
     _integrity_binding_canonical,
+    _is_revoked_recovery_key,
     _migrate_device_id_if_needed,
     _rate_limited,
+    _record_security_event,
     _resolve_device_row,
+    _revoke_recovery_key,
     _stored_key_fingerprint,
     _validate_confirm_challenge,
     _verify_new_key_challenge_proof,
@@ -38,18 +42,29 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
     requested_device_id = payload.device_id.strip().lower()
     if not DEVICE_PROBE_RE.fullmatch(requested_device_id):
         return _json_error("device_recovery_probe_invalid", 400)
-    if _rate_limited(payload.code, requested_device_id):
-        return _json_error("too_many_attempts", 429)
 
     try:
         new_key_fingerprint = _verify_new_key_challenge_proof(payload)
+        if _rate_limited(
+            payload.code,
+            requested_device_id,
+            scope="recovery-challenge",
+            key_fingerprint=new_key_fingerprint,
+        ):
+            return _json_error("too_many_attempts", 429)
+
         con = _connect()
         try:
             con.execute("BEGIN IMMEDIATE")
             _ensure_storage(con)
             activation = device_auth._activation_row(con, payload.code)
             code = str(activation["code"])
-            device_auth._consume_nonce(con, code=code, device_id=requested_device_id, nonce=payload.nonce)
+            device_auth._consume_nonce(
+                con,
+                code=code,
+                device_id=requested_device_id,
+                nonce=payload.nonce,
+            )
             row, legacy_migration = _resolve_device_row(con, code, requested_device_id)
             if row is None:
                 con.commit()
@@ -60,8 +75,16 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
             old_key_fingerprint = _stored_key_fingerprint(row)
             if old_key_fingerprint and hmac.compare_digest(old_key_fingerprint, new_key_fingerprint):
                 if legacy_migration:
-                    _migrate_device_id_if_needed(con, code=code, row=row, requested_device_id=requested_device_id)
-                con.execute("UPDATE code_devices SET last_seen_at = ? WHERE id = ?", (now_iso(), int(row["id"])))
+                    _migrate_device_id_if_needed(
+                        con,
+                        code=code,
+                        row=row,
+                        requested_device_id=requested_device_id,
+                    )
+                con.execute(
+                    "UPDATE code_devices SET last_seen_at = ? WHERE id = ?",
+                    (now_iso(), int(row["id"])),
+                )
                 con.commit()
                 return {
                     "ok": True,
@@ -70,16 +93,24 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
                     "integrity_required": False,
                 }
 
-            watch = con.execute(
-                "SELECT state FROM device_recovery_watch WHERE device_row_id = ?",
-                (int(row["id"]),),
-            ).fetchone()
-            if watch is not None:
-                reason = "device_recovery_security_lock" if str(watch["state"]) == "conflict" else "device_recovery_watch_active"
-                raise device_auth.DeviceAuthError(reason, 423)
+            if _is_revoked_recovery_key(
+                con,
+                device_row_id=int(row["id"]),
+                key_fingerprint=new_key_fingerprint,
+            ):
+                _record_security_event(
+                    con,
+                    code=code,
+                    device_row_id=int(row["id"]),
+                    device_id=requested_device_id,
+                    event_type="revoked_key_recovery_rejected",
+                    key_fingerprint=new_key_fingerprint,
+                )
+                con.commit()
+                return _json_error("device_recovery_key_revoked", 403)
 
-            challenge_id = __import__("secrets").token_urlsafe(24)
-            server_challenge = __import__("secrets").token_urlsafe(32)
+            challenge_id = secrets.token_urlsafe(24)
+            server_challenge = secrets.token_urlsafe(32)
             challenge_hash = hashlib.sha256(server_challenge.encode("utf-8")).hexdigest()
             request_hash = _b64url_sha256(
                 _integrity_binding_canonical(
@@ -96,13 +127,13 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
                 (now_epoch - 3600,),
             )
             con.execute(
-                '''
+                """
                 INSERT INTO device_recovery_challenges(
                     challenge_id, code, device_row_id, old_device_id, requested_device_id,
                     new_key_fingerprint, old_key_fingerprint, challenge_hash, request_hash,
                     created_at_epoch, expires_at_epoch
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''',
+                """,
                 (
                     challenge_id,
                     code,
@@ -116,6 +147,14 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
                     now_epoch,
                     now_epoch + RECOVERY_CHALLENGE_TTL_SECONDS,
                 ),
+            )
+            _record_security_event(
+                con,
+                code=code,
+                device_row_id=int(row["id"]),
+                device_id=requested_device_id,
+                event_type="recovery_candidate_started",
+                key_fingerprint=new_key_fingerprint,
             )
             con.commit()
             return {
@@ -143,11 +182,17 @@ def trusted_return(payload: TrustedReturnRequest):
     requested_device_id = payload.device_id.strip().lower()
     if not DEVICE_PROBE_RE.fullmatch(requested_device_id):
         return _json_error("device_recovery_probe_invalid", 400)
-    if _rate_limited(payload.code, requested_device_id):
-        return _json_error("too_many_attempts", 429)
 
     try:
         trusted_fingerprint = _verify_trusted_return_proof(payload)
+        if _rate_limited(
+            payload.code,
+            requested_device_id,
+            scope="trusted-return",
+            key_fingerprint=trusted_fingerprint,
+        ):
+            return _json_error("too_many_attempts", 429)
+
         con = _connect()
         try:
             con.execute("BEGIN IMMEDIATE")
@@ -155,10 +200,10 @@ def trusted_return(payload: TrustedReturnRequest):
             activation = device_auth._activation_row(con, payload.code)
             code = str(activation["code"])
             device = con.execute(
-                '''
+                """
                 SELECT id, device_id, public_key, public_key_fingerprint, active
                 FROM code_devices WHERE code = ? AND device_id = ?
-                ''',
+                """,
                 (code, requested_device_id),
             ).fetchone()
             if not device or not bool(device["active"]):
@@ -178,23 +223,35 @@ def trusted_return(payload: TrustedReturnRequest):
                 raise device_auth.DeviceAuthError("device_security_conflict", 403)
 
             current_fingerprint = _stored_key_fingerprint(device)
-            if not hmac.compare_digest(str(watch["replacement_key_fingerprint"]), current_fingerprint):
+            replacement_fingerprint = str(watch["replacement_key_fingerprint"] or "").strip()
+            if not hmac.compare_digest(replacement_fingerprint, current_fingerprint):
                 raise device_auth.DeviceAuthError("device_recovery_conflict", 409)
 
-            device_auth._consume_nonce(con, code=code, device_id=requested_device_id, nonce=payload.nonce)
+            device_auth._consume_nonce(
+                con,
+                code=code,
+                device_id=requested_device_id,
+                nonce=payload.nonce,
+            )
             now_epoch = int(time.time())
             con.execute(
-                '''
+                """
                 UPDATE code_devices
                 SET public_key = ?, public_key_fingerprint = ?, last_seen_at = ?, active = 1
                 WHERE id = ?
-                ''',
+                """,
                 (
                     str(watch["trusted_public_key"]),
                     str(watch["trusted_key_fingerprint"]),
                     now_iso(),
                     int(device["id"]),
                 ),
+            )
+            _revoke_recovery_key(
+                con,
+                device_row_id=int(device["id"]),
+                key_fingerprint=replacement_fingerprint,
+                public_key=str(watch["replacement_public_key"] or ""),
             )
             con.execute(
                 "UPDATE device_recovery_watch SET state = 'conflict', conflict_at_epoch = ? WHERE device_row_id = ? AND state = 'watching'",
@@ -204,12 +261,28 @@ def trusted_return(payload: TrustedReturnRequest):
                 "UPDATE device_recovery_challenges SET consumed_at_epoch = COALESCE(consumed_at_epoch, ?) WHERE device_row_id = ?",
                 (now_epoch, int(device["id"])),
             )
+            _record_security_event(
+                con,
+                code=code,
+                device_row_id=int(device["id"]),
+                device_id=requested_device_id,
+                event_type="trusted_key_returned",
+                key_fingerprint=trusted_fingerprint,
+            )
+            _record_security_event(
+                con,
+                code=code,
+                device_row_id=int(device["id"]),
+                device_id=requested_device_id,
+                event_type="replacement_key_revoked",
+                key_fingerprint=replacement_fingerprint,
+            )
             con.commit()
             return {
                 "ok": True,
                 "status": "trusted_key_restored",
                 "security_conflict": True,
-                "recovery_locked": True,
+                "replacement_revoked": True,
             }
         except Exception:
             con.rollback()
@@ -226,12 +299,18 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
     requested_device_id = payload.device_id.strip().lower()
     if not DEVICE_PROBE_RE.fullmatch(requested_device_id):
         return _json_error("device_recovery_probe_invalid", 400)
-    if _rate_limited(payload.code, requested_device_id):
-        return _json_error("too_many_attempts", 429)
 
     try:
         device_auth._check_timestamp_with_skew(payload.timestamp, 120)
         _, new_key_fingerprint = device_auth._decode_public_key(payload.client_public_key)
+        if _rate_limited(
+            payload.code,
+            requested_device_id,
+            scope="recovery-confirm",
+            key_fingerprint=new_key_fingerprint,
+        ):
+            return _json_error("too_many_attempts", 429)
+
         canonical = _confirm_canonical(
             challenge_id=payload.challenge_id,
             server_challenge=payload.server_challenge,
@@ -312,19 +391,30 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
                 raise device_auth.DeviceAuthError("device_recovery_challenge_invalid", 401)
 
             device = con.execute(
-                '''
+                """
                 SELECT id, device_id, public_key, public_key_fingerprint, active, pool_assignment_id
                 FROM code_devices WHERE id = ? AND code = ?
-                ''',
+                """,
                 (int(row["device_row_id"]), code),
             ).fetchone()
             if not device or not bool(device["active"]):
                 raise device_auth.DeviceAuthError("device_revoked", 403)
-            if con.execute(
-                "SELECT 1 FROM device_recovery_watch WHERE device_row_id = ?",
-                (int(device["id"]),),
-            ).fetchone():
-                raise device_auth.DeviceAuthError("device_recovery_watch_active", 423)
+
+            if _is_revoked_recovery_key(
+                con,
+                device_row_id=int(device["id"]),
+                key_fingerprint=new_key_fingerprint,
+            ):
+                _record_security_event(
+                    con,
+                    code=code,
+                    device_row_id=int(device["id"]),
+                    device_id=requested_device_id,
+                    event_type="revoked_key_confirm_rejected",
+                    key_fingerprint=new_key_fingerprint,
+                )
+                con.commit()
+                return _json_error("device_recovery_key_revoked", 403)
 
             current_device_id = str(device["device_id"] or "")
             if current_device_id not in {str(row["old_device_id"]), requested_device_id}:
@@ -337,15 +427,30 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
             if not trusted_public_key or not current_old_key:
                 raise device_auth.DeviceAuthError("device_recovery_unavailable", 503)
 
-            device_auth._consume_nonce(con, code=code, device_id=requested_device_id, nonce=payload.nonce)
-            _migrate_device_id_if_needed(con, code=code, row=device, requested_device_id=requested_device_id)
+            device_auth._consume_nonce(
+                con,
+                code=code,
+                device_id=requested_device_id,
+                nonce=payload.nonce,
+            )
+            _migrate_device_id_if_needed(
+                con,
+                code=code,
+                row=device,
+                requested_device_id=requested_device_id,
+            )
+
+            # A legitimate user may reinstall more than once. Only a key that
+            # has been cryptographically proven conflicting is remembered as
+            # revoked; the paid slot itself is never permanently locked.
             con.execute(
-                '''
+                """
                 INSERT OR REPLACE INTO device_recovery_watch(
                     device_row_id, code, device_id, trusted_public_key, trusted_key_fingerprint,
-                    replacement_public_key, replacement_key_fingerprint, state, created_at_epoch, conflict_at_epoch
+                    replacement_public_key, replacement_key_fingerprint, state,
+                    created_at_epoch, conflict_at_epoch
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'watching', ?, NULL)
-                ''',
+                """,
                 (
                     int(device["id"]),
                     code,
@@ -358,11 +463,11 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
                 ),
             )
             con.execute(
-                '''
+                """
                 UPDATE code_devices
                 SET public_key = ?, public_key_fingerprint = ?, last_seen_at = ?, active = 1
                 WHERE id = ?
-                ''',
+                """,
                 (payload.client_public_key, new_key_fingerprint, now_iso(), int(device["id"])),
             )
             updated = con.execute(
@@ -371,6 +476,14 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
             )
             if updated.rowcount != 1:
                 raise device_auth.DeviceAuthError("device_recovery_replay_detected", 401)
+            _record_security_event(
+                con,
+                code=code,
+                device_row_id=int(device["id"]),
+                device_id=requested_device_id,
+                event_type="recovery_completed",
+                key_fingerprint=new_key_fingerprint,
+            )
             con.commit()
             return {
                 "ok": True,

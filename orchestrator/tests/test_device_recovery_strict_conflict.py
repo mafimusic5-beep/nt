@@ -17,8 +17,7 @@ from fastapi.responses import JSONResponse
 ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1]
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
-
-os.environ.setdefault('DATABASE_PATH', ':memory:')
+os.environ.setdefault("DATABASE_PATH", ":memory:")
 
 import config  # noqa: E402
 import device_auth  # noqa: E402
@@ -28,238 +27,209 @@ import play_integrity  # noqa: E402
 import storage  # noqa: E402
 
 
-class StrictDeviceConflictTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = str(Path(self.temp_dir.name) / 'strict-recovery.sqlite3')
-        config.DATABASE_PATH = self.db_path
-        storage.DATABASE_PATH = self.db_path
-        device_auth.DATABASE_PATH = self.db_path
-        device_identity_aliases.DATABASE_PATH = self.db_path
+class UserSafeDeviceRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = str(Path(self.tmp.name) / "user-safe.sqlite3")
+        config.DATABASE_PATH = self.db
+        storage.DATABASE_PATH = self.db
+        device_auth.DATABASE_PATH = self.db
+        device_identity_aliases.DATABASE_PATH = self.db
         device_recovery_routes._attempts.clear()
         storage.init_storage()
         device_auth.ensure_device_auth_storage()
-        self.original_integrity_verifier = play_integrity.verify_standard_token
+        self.old_integrity = play_integrity.verify_standard_token
+        play_integrity.verify_standard_token = lambda token, expected: {"verified": True}
 
-    def tearDown(self) -> None:
-        play_integrity.verify_standard_token = self.original_integrity_verifier
-        self.temp_dir.cleanup()
+    def tearDown(self):
+        play_integrity.verify_standard_token = self.old_integrity
+        self.tmp.cleanup()
 
     @staticmethod
     def key():
         return ec.generate_private_key(ec.SECP256R1())
 
     @staticmethod
-    def public(key) -> str:
-        der = key.public_key().public_bytes(
+    def public(key):
+        raw = key.public_key().public_bytes(
             encoding=serialization.Encoding.DER,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        return base64.b64encode(der).decode('ascii')
+        return base64.b64encode(raw).decode("ascii")
 
     @staticmethod
-    def fingerprint(key) -> str:
-        der = key.public_key().public_bytes(
+    def fingerprint(key):
+        raw = key.public_key().public_bytes(
             encoding=serialization.Encoding.DER,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        return hashlib.sha256(der).hexdigest()
+        return hashlib.sha256(raw).hexdigest()
 
     @staticmethod
-    def sign(key, canonical: str) -> str:
-        signature = key.sign(canonical.encode('utf-8'), ec.ECDSA(hashes.SHA256()))
-        return base64.b64encode(signature).decode('ascii')
+    def sign(key, canonical):
+        raw = key.sign(canonical.encode(), ec.ECDSA(hashes.SHA256()))
+        return base64.b64encode(raw).decode("ascii")
+
+    @staticmethod
+    def probe(raw):
+        return "dp1:" + hashlib.sha256(("skryon-device-v1:" + raw).encode()).hexdigest()
 
     @staticmethod
     def response(value):
         if isinstance(value, JSONResponse):
-            return value.status_code, json.loads(value.body.decode('utf-8'))
+            return value.status_code, json.loads(value.body.decode())
         return 200, value
 
-    @staticmethod
-    def probe(android_id: str) -> str:
-        return 'dp1:' + hashlib.sha256(('skryon-device-v1:' + android_id).encode()).hexdigest()
+    def code(self, plan="personal", limit=1):
+        return str(storage.create_checkout_code(
+            plan=plan, max_devices=limit, days=30,
+            customer="user-safe-tests", external_id="safe-" + uuid.uuid4().hex,
+        )["code"])
 
-    def create_code(self) -> str:
-        row = storage.create_checkout_code(
-            plan='personal',
-            max_devices=1,
-            days=30,
-            customer='strict-conflict-tests',
-            external_id='strict-' + uuid.uuid4().hex,
-        )
-        return str(row['code'])
-
-    def register(self, code: str, device_id: str, key) -> None:
-        timestamp = str(int(time.time() * 1000))
+    def register(self, code, device_id, key):
+        ts = str(int(time.time() * 1000))
         nonce = uuid.uuid4().hex
-        canonical = '\n'.join((
-            'method=POST',
-            'path=/api/activate',
-            f'device_id={device_id}',
-            'device_name=Android-устройство',
-            f'timestamp={timestamp}',
-            f'nonce={nonce}',
-            f'auth_sha256={hashlib.sha256(code.strip().encode()).hexdigest()}',
+        canonical = "\n".join((
+            "method=POST", "path=/api/activate", f"device_id={device_id}",
+            "device_name=Android-устройство", f"timestamp={ts}", f"nonce={nonce}",
+            f"auth_sha256={hashlib.sha256(code.strip().encode()).hexdigest()}",
         ))
-        device_auth.register_device(
-            raw_code=code,
-            path='/api/activate',
-            device_id=device_id,
-            device_name='Android-устройство',
-            public_key_base64=self.public(key),
-            timestamp=timestamp,
-            nonce=nonce,
-            signature_base64=self.sign(key, canonical),
-            signature_algorithm='SHA256withECDSA',
-            platform='android',
-            app_version='test',
+        return device_auth.register_device(
+            raw_code=code, path="/api/activate", device_id=device_id,
+            device_name="Android-устройство", public_key_base64=self.public(key),
+            timestamp=ts, nonce=nonce, signature_base64=self.sign(key, canonical),
+            signature_algorithm="SHA256withECDSA", platform="android", app_version="test",
         )
 
-    def challenge(self, code: str, device_id: str, key):
-        timestamp = str(int(time.time() * 1000))
+    def challenge(self, code, device_id, key):
+        ts = str(int(time.time() * 1000))
         nonce = uuid.uuid4().hex
-        fingerprint = self.fingerprint(key)
-        canonical = '\n'.join((
-            'protocol=skryon-device-recovery-v1',
-            'stage=challenge',
-            'path=/api/device/recovery/challenge',
-            f'device_id={device_id}',
-            f'new_key_sha256={fingerprint}',
-            f'timestamp={timestamp}',
-            f'nonce={nonce}',
-            f'auth_sha256={hashlib.sha256(storage.format_code(code).encode()).hexdigest()}',
+        fp = self.fingerprint(key)
+        canonical = "\n".join((
+            "protocol=skryon-device-recovery-v1", "stage=challenge",
+            "path=/api/device/recovery/challenge", f"device_id={device_id}",
+            f"new_key_sha256={fp}", f"timestamp={ts}", f"nonce={nonce}",
+            f"auth_sha256={hashlib.sha256(storage.format_code(code).encode()).hexdigest()}",
         ))
-        request = device_recovery_routes.RecoveryChallengeRequest(
-            code=code,
-            device_id=device_id,
-            client_public_key=self.public(key),
-            timestamp=timestamp,
-            nonce=nonce,
-            signature=self.sign(key, canonical),
-            signature_algorithm='SHA256withECDSA',
+        req = device_recovery_routes.RecoveryChallengeRequest(
+            code=code, device_id=device_id, client_public_key=self.public(key),
+            timestamp=ts, nonce=nonce, signature=self.sign(key, canonical),
+            signature_algorithm="SHA256withECDSA",
         )
-        return self.response(device_recovery_routes.recovery_challenge(request))
+        return self.response(device_recovery_routes.recovery_challenge(req))
 
-    def confirm(self, code: str, device_id: str, key, challenge: dict):
-        token = 'integrity-' + uuid.uuid4().hex
-        timestamp = str(int(time.time() * 1000))
+    def confirm(self, code, device_id, key, challenge):
+        token = "integrity-" + uuid.uuid4().hex
+        ts = str(int(time.time() * 1000))
         nonce = uuid.uuid4().hex
-        fingerprint = self.fingerprint(key)
-        canonical = '\n'.join((
-            'protocol=skryon-device-recovery-v1',
-            'stage=confirm',
-            'path=/api/device/recovery/confirm',
-            f'challenge_id={challenge["challenge_id"]}',
-            'server_challenge_sha256=' + hashlib.sha256(challenge['server_challenge'].encode()).hexdigest(),
-            f'device_id={device_id}',
-            f'new_key_sha256={fingerprint}',
-            f'timestamp={timestamp}',
-            f'nonce={nonce}',
-            f'auth_sha256={hashlib.sha256(storage.format_code(code).encode()).hexdigest()}',
-            f'integrity_token_sha256={hashlib.sha256(token.encode()).hexdigest()}',
+        fp = self.fingerprint(key)
+        canonical = "\n".join((
+            "protocol=skryon-device-recovery-v1", "stage=confirm",
+            "path=/api/device/recovery/confirm", f"challenge_id={challenge['challenge_id']}",
+            "server_challenge_sha256=" + hashlib.sha256(challenge["server_challenge"].encode()).hexdigest(),
+            f"device_id={device_id}", f"new_key_sha256={fp}", f"timestamp={ts}",
+            f"nonce={nonce}", f"auth_sha256={hashlib.sha256(storage.format_code(code).encode()).hexdigest()}",
+            f"integrity_token_sha256={hashlib.sha256(token.encode()).hexdigest()}",
         ))
-        request = device_recovery_routes.RecoveryConfirmRequest(
-            code=code,
-            device_id=device_id,
-            client_public_key=self.public(key),
-            timestamp=timestamp,
-            nonce=nonce,
-            signature=self.sign(key, canonical),
-            signature_algorithm='SHA256withECDSA',
-            challenge_id=challenge['challenge_id'],
-            server_challenge=challenge['server_challenge'],
-            integrity_token=token,
+        req = device_recovery_routes.RecoveryConfirmRequest(
+            code=code, device_id=device_id, client_public_key=self.public(key),
+            timestamp=ts, nonce=nonce, signature=self.sign(key, canonical),
+            signature_algorithm="SHA256withECDSA", challenge_id=challenge["challenge_id"],
+            server_challenge=challenge["server_challenge"], integrity_token=token,
         )
-        play_integrity.verify_standard_token = lambda supplied, expected: {'verified': True}
-        return self.response(device_recovery_routes.recovery_confirm(request))
+        return self.response(device_recovery_routes.recovery_confirm(req))
 
-    def trusted_return(self, code: str, device_id: str, key):
-        timestamp = str(int(time.time() * 1000))
-        nonce = uuid.uuid4().hex
-        fingerprint = self.fingerprint(key)
-        canonical = '\n'.join((
-            'protocol=skryon-device-recovery-v1',
-            'stage=trusted-return',
-            'path=/api/device/recovery/trusted-return',
-            f'device_id={device_id}',
-            f'trusted_key_sha256={fingerprint}',
-            f'timestamp={timestamp}',
-            f'nonce={nonce}',
-            f'auth_sha256={hashlib.sha256(storage.format_code(code).encode()).hexdigest()}',
-        ))
-        request = device_recovery_routes.TrustedReturnRequest(
-            code=code,
-            device_id=device_id,
-            client_public_key=self.public(key),
-            timestamp=timestamp,
-            nonce=nonce,
-            signature=self.sign(key, canonical),
-            signature_algorithm='SHA256withECDSA',
-        )
-        return self.response(device_recovery_routes.trusted_return(request))
-
-    def authenticate(self, code: str, device_id: str, key):
-        timestamp = str(int(time.time() * 1000))
-        nonce = uuid.uuid4().hex
-        canonical = '\n'.join((
-            'method=GET',
-            'path=/api/device/profile',
-            f'device_id={device_id}',
-            f'timestamp={timestamp}',
-            f'nonce={nonce}',
-            f'auth_sha256={hashlib.sha256(code.strip().encode()).hexdigest()}',
+    def sync(self, code, device_id, key, nonce=None):
+        ts = str(int(time.time() * 1000))
+        nonce = nonce or uuid.uuid4().hex
+        path = "/api/config/sync"
+        canonical = "\n".join((
+            "method=POST", f"path={path}", f"device_id={device_id}",
+            f"timestamp={ts}", f"nonce={nonce}",
+            f"auth_sha256={hashlib.sha256(code.strip().encode()).hexdigest()}",
         ))
         return device_auth.authenticate_registered_device(
-            raw_code=code,
-            method='GET',
-            path='/api/device/profile',
-            device_id=device_id,
-            timestamp=timestamp,
-            nonce=nonce,
-            signature_base64=self.sign(key, canonical),
-            signature_algorithm='SHA256withECDSA',
+            raw_code=code, method="POST", path=path, device_id=device_id,
+            timestamp=ts, nonce=nonce, signature_base64=self.sign(key, canonical),
+            signature_algorithm="SHA256withECDSA",
         )
 
-    def test_original_key_return_restores_key_and_permanently_security_locks_recovery(self) -> None:
-        code = self.create_code()
-        device_id = self.probe('0123456789abcdef')
-        key1 = self.key()
-        key2 = self.key()
+    def recover(self, code, device_id, key):
+        status, challenge = self.challenge(code, device_id, key)
+        self.assertEqual(200, status)
+        self.assertTrue(challenge["integrity_required"])
+        status, result = self.confirm(code, device_id, key, challenge)
+        self.assertEqual(200, status)
+        self.assertTrue(result["recovered"])
+
+    def test_old_trusted_key_silently_wins_and_only_replacement_is_revoked(self):
+        code = self.code()
+        device_id = self.probe("0123456789abcdef")
+        key1, key2, key3 = self.key(), self.key(), self.key()
         self.register(code, device_id, key1)
+        self.recover(code, device_id, key2)
+        self.assertEqual(device_id, self.sync(code, device_id, key2)["device_id"])
 
-        status, challenge = self.challenge(code, device_id, key2)
-        self.assertEqual(200, status)
-        self.assertTrue(challenge['integrity_required'])
+        self.assertEqual(device_id, self.sync(code, device_id, key1)["device_id"])
+        with self.assertRaises(device_auth.DeviceAuthError) as blocked:
+            self.sync(code, device_id, key2)
+        self.assertEqual("not_bound", blocked.exception.reason)
 
-        status, confirmed = self.confirm(code, device_id, key2, challenge)
-        self.assertEqual(200, status)
-        self.assertTrue(confirmed['trusted_key_watch'])
-        self.assertEqual(device_id, self.authenticate(code, device_id, key2)['device_id'])
+        status, denied = self.challenge(code, device_id, key2)
+        self.assertEqual(403, status)
+        self.assertEqual("device_recovery_key_revoked", denied["reason"])
 
-        with self.assertRaises(device_auth.DeviceAuthError):
-            self.authenticate(code, device_id, key1)
-
-        status, returned = self.trusted_return(code, device_id, key1)
-        self.assertEqual(200, status)
-        self.assertTrue(returned['security_conflict'])
-        self.assertTrue(returned['recovery_locked'])
-        self.assertEqual(device_id, self.authenticate(code, device_id, key1)['device_id'])
-
-        with self.assertRaises(device_auth.DeviceAuthError):
-            self.authenticate(code, device_id, key2)
-
-        status, locked = self.challenge(code, device_id, key2)
-        self.assertEqual(423, status)
-        self.assertEqual('device_recovery_security_lock', locked['reason'])
-
-        with sqlite3.connect(self.db_path) as con:
-            state = con.execute(
-                'SELECT state FROM device_recovery_watch WHERE code = ? AND device_id = ?',
-                (storage.format_code(code), device_id),
+        self.recover(code, device_id, key3)
+        self.assertEqual(device_id, self.sync(code, device_id, key3)["device_id"])
+        with sqlite3.connect(self.db) as con:
+            count = con.execute(
+                "SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1",
+                (storage.format_code(code),),
             ).fetchone()[0]
-        self.assertEqual('conflict', state)
+        self.assertEqual(1, count)
+
+    def test_candidate_rate_limit_does_not_block_current_owner(self):
+        code = self.code()
+        device_id = self.probe("1111111111111111")
+        owner, candidate = self.key(), self.key()
+        self.register(code, device_id, owner)
+        seen_429 = False
+        for _ in range(8):
+            status, _ = self.challenge(code, device_id, candidate)
+            seen_429 = seen_429 or status == 429
+        self.assertTrue(seen_429)
+        self.assertEqual(device_id, self.sync(code, device_id, owner)["device_id"])
+
+    def test_conflict_is_scoped_to_one_family_slot(self):
+        code = self.code(plan="personal_plus", limit=2)
+        dev1, dev2 = self.probe("2222222222222222"), self.probe("3333333333333333")
+        key1, key2, replacement = self.key(), self.key(), self.key()
+        self.register(code, dev1, key1)
+        self.register(code, dev2, key2)
+        self.recover(code, dev1, replacement)
+        self.assertEqual(dev1, self.sync(code, dev1, key1)["device_id"])
+        self.assertEqual(dev2, self.sync(code, dev2, key2)["device_id"])
+        with sqlite3.connect(self.db) as con:
+            active = con.execute(
+                "SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1",
+                (storage.format_code(code),),
+            ).fetchone()[0]
+        self.assertEqual(2, active)
+
+    def test_security_events_do_not_store_plain_activation_code(self):
+        code = self.code()
+        device_id = self.probe("4444444444444444")
+        key1, key2 = self.key(), self.key()
+        self.register(code, device_id, key1)
+        self.recover(code, device_id, key2)
+        self.sync(code, device_id, key1)
+        with sqlite3.connect(self.db) as con:
+            columns = [row[1] for row in con.execute("PRAGMA table_info(device_security_events)")]
+            hashes = [row[0] for row in con.execute("SELECT code_hash FROM device_security_events")]
+        self.assertNotIn("code", columns)
+        self.assertTrue(hashes)
+        self.assertNotIn(storage.format_code(code), hashes)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
