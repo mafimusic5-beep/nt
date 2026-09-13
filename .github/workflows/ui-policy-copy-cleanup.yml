@@ -1,0 +1,100 @@
+name: Apply regional policy copy cleanup
+
+on:
+  push:
+    branches:
+      - ui-policy-copy-cleanup-20260914
+    paths:
+      - '.github/workflows/ui-policy-copy-cleanup.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: ui-policy-copy-cleanup-20260914
+
+      - name: Clean onboarding copy
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          premium = Path('app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt')
+          text = premium.read_text(encoding='utf-8')
+
+          old_conditional = '''                if (selectedMode == RegionalPolicyMode.International) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "Я подтверждаю, что текущее VPN-подключение используется за пределами Российской Федерации.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF111319),
+                        fontWeight = FontWeight.Medium,
+                    )
+                } else if (selectedMode == RegionalPolicyMode.Russia) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF111319),
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+
+'''
+          if text.count(old_conditional) != 1:
+              raise SystemExit(f'Onboarding conditional block count: {text.count(old_conditional)}')
+          text = text.replace(old_conditional, '')
+
+          old_hint = 'text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные»."'
+          new_hint = 'text = "Режим можно изменить позже в разделе «Расширенные»."'
+          if text.count(old_hint) != 1:
+              raise SystemExit(f'Onboarding hint count: {text.count(old_hint)}')
+          text = text.replace(old_hint, new_hint)
+
+          old_location = 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."'
+          new_location = 'text = "Местоположение не определяется автоматически."'
+          if text.count(old_location) != 1:
+              raise SystemExit(f'Onboarding location copy count: {text.count(old_location)}')
+          text = text.replace(old_location, new_location)
+          premium.write_text(text, encoding='utf-8')
+
+          vpn = Path('app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt')
+          text = vpn.read_text(encoding='utf-8')
+          old_server = '''        if (selectedMode == RegionalPolicyMode.Russia) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextPrimary,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+'''
+          if text.count(old_server) != 1:
+              raise SystemExit(f'Advanced server block count: {text.count(old_server)}')
+          text = text.replace(old_server, '')
+
+          old_location = 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."'
+          new_location = 'text = "Местоположение не определяется автоматически."'
+          if text.count(old_location) != 1:
+              raise SystemExit(f'Advanced location copy count: {text.count(old_location)}')
+          text = text.replace(old_location, new_location)
+          vpn.write_text(text, encoding='utf-8')
+          PY
+
+          git diff --check
+          git diff -- app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt
+
+      - name: Commit copy cleanup and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/ui-policy-copy-cleanup.yml
+          git add app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt app/src/main/java/com/v2ray/ang/ui/premium/vpn/VpnMainScreen.kt
+          git commit -m "UI: simplify regional policy helper copy"
+          git push origin HEAD:ui-policy-copy-cleanup-20260914
