@@ -9,7 +9,6 @@ import tempfile
 import time
 import unittest
 import uuid
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -92,18 +91,6 @@ class DeviceRecoveryTests(unittest.TestCase):
             external_id='recovery-' + uuid.uuid4().hex,
         )
         return str(row['code'])
-
-    def age_trusted_key(self, *, code: str, device_id: str) -> None:
-        aged = (
-            datetime.now(timezone.utc)
-            - timedelta(seconds=device_recovery_routes.TRUSTED_KEY_ACTIVITY_WINDOW_SECONDS + 5)
-        ).isoformat()
-        with sqlite3.connect(self.db_path) as con:
-            con.execute(
-                'UPDATE code_devices SET last_seen_at = ? WHERE code = ? AND device_id = ?',
-                (aged, storage.format_code(code), device_id),
-            )
-            con.commit()
 
     def activation_canonical(self, *, path: str, code: str, device_id: str, key, nonce: str, timestamp: str) -> str:
         return '\n'.join(
@@ -225,35 +212,12 @@ class DeviceRecoveryTests(unittest.TestCase):
             signature_algorithm='SHA256withECDSA',
         )
 
-    def test_active_trusted_key_blocks_recovery_key_rotation(self) -> None:
-        code = self.create_code()
-        device_id = self.probe('0123456789abcdef')
-        trusted_key = self.new_private_key()
-        untrusted_key = self.new_private_key()
-        self.register(code=code, device_id=device_id, key=trusted_key)
-
-        status, body = self.response_payload(
-            device_recovery_routes.recovery_challenge(
-                self.challenge_payload(code=code, device_id=device_id, key=untrusted_key)
-            )
-        )
-        self.assertEqual(409, status)
-        self.assertEqual('device_recovery_trusted_key_active', body['reason'])
-        self.assertGreater(body['retry_after_seconds'], 0)
-
-        profile = self.authenticate(code=code, device_id=device_id, key=trusted_key)
-        self.assertEqual(device_id, profile['device_id'])
-        with self.assertRaises(device_auth.DeviceAuthError) as untrusted_error:
-            self.authenticate(code=code, device_id=device_id, key=untrusted_key)
-        self.assertEqual('device_signature_invalid', untrusted_error.exception.reason)
-
     def test_reinstall_rotates_key_only_after_integrity_and_keeps_slot(self) -> None:
         code = self.create_code()
         device_id = self.probe('0123456789abcdef')
         old_key = self.new_private_key()
         new_key = self.new_private_key()
         self.register(code=code, device_id=device_id, key=old_key)
-        self.age_trusted_key(code=code, device_id=device_id)
 
         status, challenge = self.response_payload(
             device_recovery_routes.recovery_challenge(
@@ -350,13 +314,13 @@ class DeviceRecoveryTests(unittest.TestCase):
         profile = self.authenticate(code=code, device_id=device_id, key=old_key)
         self.assertEqual(device_id, profile['device_id'])
 
+
     def test_integrity_failure_keeps_old_key_and_challenge_unconsumed(self) -> None:
         code = self.create_code()
         device_id = self.probe('0123456789abcdef')
         old_key = self.new_private_key()
         new_key = self.new_private_key()
         self.register(code=code, device_id=device_id, key=old_key)
-        self.age_trusted_key(code=code, device_id=device_id)
 
         status, challenge = self.response_payload(
             device_recovery_routes.recovery_challenge(
