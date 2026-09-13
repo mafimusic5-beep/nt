@@ -53,6 +53,101 @@ def _canonical_for_request(
     )
 
 
+def _watch_for_device(code: str, device_id: str):
+    con = _connect()
+    try:
+        return con.execute(
+            '''
+            SELECT
+                w.device_row_id,
+                w.trusted_public_key,
+                w.trusted_key_fingerprint,
+                w.replacement_public_key,
+                w.replacement_key_fingerprint,
+                w.state,
+                d.public_key_fingerprint AS current_key_fingerprint,
+                d.device_name,
+                d.active
+            FROM device_recovery_watch AS w
+            JOIN code_devices AS d ON d.id = w.device_row_id
+            WHERE w.code = ? AND w.device_id = ?
+            ''',
+            (format_code(code), device_id.strip()[:128]),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        con.close()
+
+
+def _signature_matches_watch_key(
+    *,
+    public_key: str,
+    expected_fingerprint: str,
+    raw_code: str,
+    method: str,
+    path: str,
+    device_id: str,
+    timestamp: str,
+    nonce: str,
+    signature_base64: str,
+    signature_algorithm: str,
+    device_name: str | None,
+    stored_device_name: str,
+) -> bool:
+    canonical = _canonical_for_request(
+        method=method,
+        path=path,
+        raw_code=raw_code,
+        device_id=device_id,
+        timestamp=timestamp,
+        nonce=nonce,
+        device_name=device_name,
+        stored_device_name=stored_device_name,
+    )
+    try:
+        verified = device_auth._verify_signature(
+            public_key,
+            signature_base64,
+            canonical,
+            signature_algorithm,
+        )
+    except device_auth.DeviceAuthError:
+        return False
+    return bool(expected_fingerprint) and hmac.compare_digest(verified, expected_fingerprint)
+
+
+def _replacement_key_returned_after_conflict(
+    *,
+    raw_code: str,
+    method: str,
+    path: str,
+    device_id: str,
+    timestamp: str,
+    nonce: str,
+    signature_base64: str,
+    signature_algorithm: str,
+    device_name: str | None,
+) -> bool:
+    watch = _watch_for_device(raw_code, device_id)
+    if not watch or str(watch['state']) != 'conflict':
+        return False
+    return _signature_matches_watch_key(
+        public_key=str(watch['replacement_public_key'] or ''),
+        expected_fingerprint=str(watch['replacement_key_fingerprint'] or ''),
+        raw_code=raw_code,
+        method=method,
+        path=path,
+        device_id=device_id,
+        timestamp=timestamp,
+        nonce=nonce,
+        signature_base64=signature_base64,
+        signature_algorithm=signature_algorithm,
+        device_name=device_name,
+        stored_device_name=str(watch['device_name'] or ''),
+    )
+
+
 def _restore_if_original_key_returned(
     *,
     raw_code: str,
@@ -202,6 +297,23 @@ def authenticate_registered_device_guarded(
     # last_seen timeout, grace period, or seconds-based heuristic.
     if path != '/api/config/sync':
         raise device_auth.DeviceAuthError('device_signature_invalid', 401)
+
+    # Once KEY_1 has returned and won the conflict, KEY_2 is deliberately mapped
+    # to the existing client's fatal `not_bound` state. Current Android clients
+    # then stop the tunnel and erase the synced VPN configuration on their next
+    # config-sync response, while the server keeps the slot security-locked.
+    if _replacement_key_returned_after_conflict(
+        raw_code=raw_code,
+        method=method,
+        path=path,
+        device_id=device_id,
+        timestamp=timestamp,
+        nonce=nonce,
+        signature_base64=signature_base64,
+        signature_algorithm=signature_algorithm,
+        device_name=device_name,
+    ):
+        raise device_auth.DeviceAuthError('not_bound', 200)
 
     restored = _restore_if_original_key_returned(
         raw_code=raw_code,
