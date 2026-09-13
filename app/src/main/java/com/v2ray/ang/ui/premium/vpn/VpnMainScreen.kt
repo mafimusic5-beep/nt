@@ -1237,104 +1237,15 @@ fun PrimaryConnectButton(
     checkingConnection: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val label = when {
-        checkingConnection -> "Проверяем связь…"
-        state == VpnConnectionState.Disconnected -> "Включить VPN"
-        state == VpnConnectionState.Connecting -> "Включаем..."
-        else -> "Отключить VPN"
-    }
-    val shape = RoundedCornerShape(if (compact) 22.dp else 26.dp)
-    val buttonHeight = if (tight) 54.dp else if (compact) 60.dp else 66.dp
-    val showRipples = enabled && state != VpnConnectionState.Connected && !checkingConnection
-    val ripplePhase = remember { androidx.compose.animation.core.Animatable(0f) }
-
-    LaunchedEffect(showRipples) {
-        if (!showRipples) {
-            ripplePhase.snapTo(0f)
-            return@LaunchedEffect
-        }
-        while (true) {
-            ripplePhase.snapTo(0f)
-            ripplePhase.animateTo(
-                targetValue = 1f,
-                animationSpec = androidx.compose.animation.core.tween(
-                    durationMillis = 2200,
-                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
-                ),
-            )
-        }
-    }
-
-    val phase = ripplePhase.value
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(buttonHeight + 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (showRipples) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val maxInsetX = 6.dp.toPx()
-                val maxInsetY = 6.dp.toPx()
-                listOf(
-                    phase,
-                    (phase + 0.34f) % 1f,
-                    (phase + 0.67f) % 1f,
-                ).forEachIndexed { index, wavePhase ->
-                    val fade = (1f - wavePhase).coerceIn(0f, 1f)
-                    val wobble = kotlin.math.sin((wavePhase * Math.PI * 2.0)).toFloat() * 1.15.dp.toPx()
-                    val insetX = (maxInsetX * (1f - wavePhase) + wobble).coerceAtLeast(0f)
-                    val insetY = (maxInsetY * (1f - wavePhase)).coerceAtLeast(0f)
-                    val waveWidth = (size.width - insetX * 2f).coerceAtLeast(0f)
-                    val waveHeight = (size.height - insetY * 2f).coerceAtLeast(0f)
-                    val alpha = (0.36f * fade).coerceIn(0f, 0.36f)
-
-                    drawRoundRect(
-                        color = AppUiColors.Positive.copy(alpha = alpha),
-                        topLeft = Offset(insetX, insetY),
-                        size = androidx.compose.ui.geometry.Size(waveWidth, waveHeight),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(
-                            x = waveHeight / 2f,
-                            y = waveHeight / 2f,
-                        ),
-                        style = Stroke(width = (if (index == 0) 1.4.dp else 1.dp).toPx()),
-                    )
-                }
-            }
-        }
-
-        Button(
-            onClick = onClick,
-            enabled = enabled && state != VpnConnectionState.Connecting && !checkingConnection,
-            modifier = Modifier
-                .fillMaxWidth(0.97f)
-                .height(buttonHeight),
-            shape = shape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Transparent,
-                contentColor = AppUiColors.TextPrimary,
-                disabledContainerColor = Color.Transparent,
-                disabledContentColor = AppUiColors.TextSecondary.copy(alpha = 0.60f),
-            ),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                if (checkingConnection) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(if (compact) 18.dp else 20.dp),
-                        strokeWidth = 2.dp,
-                        color = AppUiColors.TextSecondary,
-                    )
-                    Spacer(Modifier.width(12.dp))
-                }
-                Text(
-                    text = label,
-                    style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
+    CalmConnectAction(
+        state = state,
+        enabled = enabled,
+        checkingConnection = checkingConnection,
+        compact = compact,
+        tight = tight,
+        onClick = onClick,
+        modifier = modifier,
+    )
 }
 
 @Composable
