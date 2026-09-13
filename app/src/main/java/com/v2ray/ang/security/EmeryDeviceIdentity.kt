@@ -183,6 +183,32 @@ object EmeryDeviceIdentity {
         )
     }
 
+    fun buildTrustedReturnProof(accessKey: String): RecoveryProof {
+        val resolvedDeviceId = deviceId()
+        val publicKey = publicKeyBase64()
+        val fingerprint = currentPublicKeyFingerprintSha256()
+        val timestamp = System.currentTimeMillis().toString()
+        val nonce = randomNonce()
+        val canonical = listOf(
+            "protocol=$RECOVERY_PROTOCOL",
+            "stage=trusted-return",
+            "path=/api/device/recovery/trusted-return",
+            "device_id=$resolvedDeviceId",
+            "trusted_key_sha256=$fingerprint",
+            "timestamp=$timestamp",
+            "nonce=$nonce",
+            "auth_sha256=${sha256Hex(accessKey.trim())}",
+        ).joinToString(separator = "\n")
+        return RecoveryProof(
+            deviceId = resolvedDeviceId,
+            publicKeyBase64 = publicKey,
+            publicKeyFingerprintSha256 = fingerprint,
+            timestampMillis = timestamp,
+            nonce = nonce,
+            signatureBase64 = signCanonical(canonical),
+        )
+    }
+
     fun buildRecoveryConfirmProof(
         accessKey: String,
         challengeId: String,
