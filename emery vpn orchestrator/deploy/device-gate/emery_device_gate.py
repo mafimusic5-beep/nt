@@ -5,6 +5,11 @@ The public listener never forwards bytes based on a VLESS UUID alone. For
 every TCP connection it issues a fresh challenge, asks the control plane to
 verify the Android Keystore signature, and only then connects to the
 assignment's loopback-only Xray inbound.
+
+An authorized connection also carries a server-issued credential epoch. While
+the tunnel is alive the gate revalidates that epoch against the control plane.
+An explicit epoch mismatch closes only that replaced credential's tunnel. A
+transient control-plane outage does not disconnect an already authorized user.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ PROTOCOL_VERSION = 1
 MAX_CONTROL_LINE_BYTES = 8192
 LOGGER = logging.getLogger("emery-device-gate")
 SAFE_SERVER_NAME = re.compile(r"^[A-Za-z0-9.-]{1,255}$")
+SAFE_CREDENTIAL_EPOCH = re.compile(r"^[a-f0-9]{64}$")
 
 
 class GateError(Exception):
@@ -65,6 +71,7 @@ class Config:
     control_timeout_seconds: int
     connect_timeout_seconds: int
     max_connections: int
+    session_check_interval_seconds: int = 1
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -112,6 +119,9 @@ class Config:
             ),
             max_connections=_env_int(
                 "EMERY_GATE_MAX_CONNECTIONS", 2048, 1, 100_000
+            ),
+            session_check_interval_seconds=_env_int(
+                "EMERY_GATE_SESSION_CHECK_INTERVAL_SECONDS", 1, 1, 30
             ),
         )
 
@@ -181,6 +191,60 @@ def _authorize_sync(config: Config, proof: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _session_check_url(config: Config) -> str:
+    parsed = urllib.parse.urlparse(config.authorize_url)
+    return urllib.parse.urlunparse(
+        parsed._replace(path="/internal/device-gate/session-check")
+    )
+
+
+def _session_check_sync(
+    config: Config,
+    proof: dict[str, Any],
+    credential_epoch: str,
+) -> bool | None:
+    payload = {
+        "assignment_id": proof.get("assignment_id"),
+        "node_id": config.node_id,
+        "gate_server_name": config.server_name,
+        "gate_spki_sha256": config.spki_sha256,
+        "device_id": proof.get("device_id"),
+        "credential_epoch": credential_epoch,
+    }
+    request = urllib.request.Request(
+        _session_check_url(config),
+        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-Device-Gate-Key": config.authorize_key,
+        },
+        method="POST",
+    )
+    try:
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(request, timeout=config.control_timeout_seconds) as response:
+            if response.status != 200:
+                return None
+            raw = response.read(MAX_CONTROL_LINE_BYTES + 1)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        # Existing, already-authorized users are fail-open during a transient
+        # control-plane outage. New connections still fail closed in _authorize_sync.
+        return None
+    if len(raw) > MAX_CONTROL_LINE_BYTES:
+        return None
+    try:
+        result = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(result, dict):
+        return None
+    if result.get("allowed") is True:
+        return True
+    if result.get("allowed") is False:
+        return False
+    return None
+
+
 def _validated_proof(
     config: Config,
     payload: dict[str, Any],
@@ -233,6 +297,13 @@ def _validated_target(config: Config, result: dict[str, Any], proof: dict[str, A
     return target_port
 
 
+def _validated_credential_epoch(result: dict[str, Any]) -> str:
+    value = str(result.get("credential_epoch") or "").strip().lower()
+    if not SAFE_CREDENTIAL_EPOCH.fullmatch(value):
+        raise GateError("credential epoch missing")
+    return value
+
+
 async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     while True:
         chunk = await reader.read(64 * 1024)
@@ -242,16 +313,36 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
         await writer.drain()
 
 
+async def _watch_session(
+    config: Config,
+    proof: dict[str, Any],
+    credential_epoch: str,
+) -> None:
+    while True:
+        await asyncio.sleep(config.session_check_interval_seconds)
+        decision = await asyncio.to_thread(
+            _session_check_sync,
+            config,
+            proof,
+            credential_epoch,
+        )
+        if decision is False:
+            return
+
+
 async def _proxy_bidirectional(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
     target_reader: asyncio.StreamReader,
     target_writer: asyncio.StreamWriter,
+    session_watch: asyncio.Future | asyncio.Task | None = None,
 ) -> None:
-    tasks = {
+    tasks: set[asyncio.Task] = {
         asyncio.create_task(_pipe(client_reader, target_writer)),
         asyncio.create_task(_pipe(target_reader, client_writer)),
     }
+    if session_watch is not None:
+        tasks.add(session_watch)
     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
@@ -303,6 +394,7 @@ class DeviceGate:
                 self.config.control_timeout_seconds + 1,
             )
             target_port = _validated_target(self.config, result, proof)
+            credential_epoch = _validated_credential_epoch(result)
             target_reader, target_writer = await asyncio.wait_for(
                 asyncio.open_connection("127.0.0.1", target_port),
                 self.config.connect_timeout_seconds,
@@ -310,8 +402,15 @@ class DeviceGate:
             client_writer.write(_json_line({"ok": True}))
             await client_writer.drain()
             control_complete = True
+            session_watch = asyncio.create_task(
+                _watch_session(self.config, proof, credential_epoch)
+            )
             await _proxy_bidirectional(
-                client_reader, client_writer, target_reader, target_writer
+                client_reader,
+                client_writer,
+                target_reader,
+                target_writer,
+                session_watch,
             )
         except (GateError, asyncio.TimeoutError, OSError) as exc:
             if control_complete:
