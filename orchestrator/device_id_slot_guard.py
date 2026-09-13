@@ -173,10 +173,14 @@ def validate_device_registration(**kwargs):
     try:
         return _ORIGINAL_VALIDATE(**kwargs)
     except device_auth.DeviceAuthError as exc:
-        if exc.reason != "device_key_rotation_requires_reset":
+        if (
+            exc.reason != "device_key_rotation_requires_reset"
+            or not DEVICE_PROBE_RE.fullmatch(device_id)
+        ):
             raise
-        # The identifier already owns this paid slot. A reinstall can validate
-        # with a fresh Keystore key without consuming an additional slot.
+        # Only the current valid pseudonymous Android identifier may reuse an
+        # existing paid slot with a fresh installation key. Legacy/random IDs
+        # retain the stricter old-key behavior.
         return _validation_payload_for_existing(
             raw_code=str(kwargs.get("raw_code") or ""),
             device_id=device_id,
@@ -266,7 +270,10 @@ def register_device(**kwargs):
     try:
         return _ORIGINAL_REGISTER(**kwargs)
     except device_auth.DeviceAuthError as exc:
-        if exc.reason != "device_key_rotation_requires_reset":
+        if (
+            exc.reason != "device_key_rotation_requires_reset"
+            or not DEVICE_PROBE_RE.fullmatch(device_id)
+        ):
             raise
         _rotate_key_for_existing_identifier(**kwargs)
         return _ORIGINAL_REGISTER(**kwargs)
