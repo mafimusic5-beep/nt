@@ -1,11 +1,9 @@
 package com.v2ray.ang.security
 
 import android.os.Build
-import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import com.v2ray.ang.AngApplication
 import com.v2ray.ang.handler.MmkvManager
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -17,15 +15,12 @@ import java.util.UUID
 
 private const val PREF_EMERY_DEVICE_ID = "pref_emery_device_id"
 private const val PREF_EMERY_DEVICE_NAME = "pref_emery_device_name"
-private const val BROKEN_LEGACY_ANDROID_ID = "9774d56d682e549c"
 private const val DEFAULT_DEVICE_NAME = "Android-устройство"
 private const val DEVICE_PROBE_PREFIX = "dp1:"
-private const val DEVICE_PROBE_DOMAIN = "skryon-device-v1:"
 
 object EmeryDeviceIdentity {
 
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
-    private const val LEGACY_KEY_ALIAS_PREFIX = "emery_device_key_"
     private const val KEY_ALIAS_PREFIX = "skryon_device_key_v2_"
     private const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
     private const val RECOVERY_PROTOCOL = "skryon-device-recovery-v1"
@@ -78,39 +73,23 @@ object EmeryDeviceIdentity {
     )
 
     /**
-     * The raw ANDROID_ID never leaves this process and is never persisted by Skryon.
-     * Android 8+ keeps it stable for the same Android user and Skryon signing key
-     * across an ordinary uninstall/reinstall. We expose only a domain-separated
-     * one-way probe so the backend can recognize the same installation target
-     * without receiving the platform identifier itself.
+     * Random identifier of this Skryon installation. It contains no hardware
+     * identifier or user data. Existing installations keep their already saved
+     * dp1 value so an app update does not consume a new subscription slot.
+     * After uninstall/factory reset a new value is created and the access code
+     * can rebind an existing tariff slot on the server.
      */
     fun deviceId(): String {
-        val androidId = rawAndroidId()
-        val resolved = if (androidId.isNotBlank()) {
-            DEVICE_PROBE_PREFIX + sha256Hex(DEVICE_PROBE_DOMAIN + androidId.lowercase(Locale.ROOT))
-        } else {
-            val saved = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_ID)?.trim().orEmpty()
-            if (saved.startsWith(DEVICE_PROBE_PREFIX) && saved.length == 68) {
-                saved
-            } else {
-                DEVICE_PROBE_PREFIX + sha256Hex("skryon-fallback-v1:" + UUID.randomUUID())
-            }
+        val saved = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_ID)?.trim().orEmpty()
+        if (saved.startsWith(DEVICE_PROBE_PREFIX) && saved.length == 68) {
+            return saved
         }
+
+        val resolved = DEVICE_PROBE_PREFIX + sha256Hex(
+            "skryon-installation-v1:" + UUID.randomUUID().toString(),
+        )
         MmkvManager.encodeSettings(PREF_EMERY_DEVICE_ID, resolved)
         return resolved
-    }
-
-    /** The raw platform identifier is used only locally to derive the v2 probe. */
-    private fun rawAndroidId(): String {
-        return runCatching {
-            Settings.Secure.getString(
-                AngApplication.application.contentResolver,
-                Settings.Secure.ANDROID_ID,
-            )
-        }.getOrNull()
-            ?.trim()
-            ?.takeIf { value -> value.isNotBlank() && value != BROKEN_LEGACY_ANDROID_ID }
-            .orEmpty()
     }
 
     /**
@@ -303,14 +282,6 @@ object EmeryDeviceIdentity {
 
     private fun getOrCreatePrivateKeyEntry(): KeyStore.PrivateKeyEntry {
         val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
-
-        legacyKeyAlias()?.let { legacyAlias ->
-            val legacy = keyStore.getEntry(legacyAlias, null) as? KeyStore.PrivateKeyEntry
-            if (legacy != null) {
-                return legacy
-            }
-        }
-
         val alias = KEY_ALIAS_PREFIX + deviceId().removePrefix(DEVICE_PROBE_PREFIX)
         val existing = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
         if (existing != null) {
@@ -331,11 +302,6 @@ object EmeryDeviceIdentity {
         generateKey(alias, strongBox = false)
         return keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
             ?: error("Unable to create Skryon device key")
-    }
-
-    private fun legacyKeyAlias(): String? {
-        val rawId = rawAndroidId()
-        return rawId.takeIf { it.isNotBlank() }?.let { LEGACY_KEY_ALIAS_PREFIX + it }
     }
 
     private fun generateKey(alias: String, strongBox: Boolean) {
