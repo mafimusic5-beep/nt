@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 import config
+from device_security_guard import install_guard
 from device_recovery_actions import recovery_challenge, recovery_confirm, trusted_return
 from device_recovery_common import (
     DEVICE_PROBE_RE,
@@ -33,6 +34,11 @@ from device_recovery_common import (
     _verify_new_key_challenge_proof,
     _verify_trusted_return_proof,
 )
+
+# checkout_routes imports this module before api.py binds the device-auth functions.
+# Installing here makes every normal signed API request capable of proving that the
+# original trusted key has returned. There is deliberately no time-window heuristic.
+install_guard()
 
 # Kept as a compatibility alias for tests and tooling that patch this module.
 DATABASE_PATH = config.DATABASE_PATH
