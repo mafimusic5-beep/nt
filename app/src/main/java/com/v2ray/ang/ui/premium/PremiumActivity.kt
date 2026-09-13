@@ -410,7 +410,7 @@ private fun RegionalPolicyOnboardingScreen(
                     selected = selectedMode == RegionalPolicyMode.International,
                     enabled = !saving,
                     title = "Международный",
-                    description = "Для использования за пределами Российской Федерации",
+                    description = "VPN используется за пределами Российской Федерации",
                     onClick = { selectedMode = RegionalPolicyMode.International },
                 )
                 Spacer(Modifier.height(10.dp))
@@ -418,20 +418,28 @@ private fun RegionalPolicyOnboardingScreen(
                     selected = selectedMode == RegionalPolicyMode.Russia,
                     enabled = !saving,
                     title = "Российская Федерация",
-                    description = "Для использования в Российской Федерации",
+                    description = "Для использования в РФ; ограниченные ресурсы блокируются",
                     onClick = { selectedMode = RegionalPolicyMode.Russia },
+                )
+
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Выбранный режим определяет правила работы VPN для текущей территории использования.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF111319),
+                    fontWeight = FontWeight.Medium,
                 )
 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "Режим можно изменить позже в разделе «Расширенные».",
+                    text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные».",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF067A6F),
                     fontWeight = FontWeight.Medium,
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    text = "Местоположение не определяется автоматически.",
+                    text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF6F7580),
                 )
