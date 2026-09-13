@@ -1,0 +1,1 @@
+ripple pause 5200 ms
