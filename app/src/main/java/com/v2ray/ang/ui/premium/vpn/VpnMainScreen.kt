@@ -33,6 +33,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -370,11 +373,14 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 
 @Composable
 private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
-    Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = if (compact) 48.dp else 54.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.heightIn(min = if (compact) 48.dp else 54.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
                 text = "Skryon",
                 style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
@@ -385,15 +391,29 @@ private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
             Spacer(Modifier.width(7.dp))
             Text(text = "VPN", style = MaterialTheme.typography.titleSmall, color = AppUiColors.TextSecondary, maxLines = 1)
         }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = selectedLocation.cityLabel(),
-            modifier = Modifier.weight(1f),
-            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-            color = AppUiColors.TextPrimary,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center,
-        )
+        Spacer(Modifier.height(if (compact) 4.dp else 6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.LocationOn,
+                contentDescription = null,
+                tint = AppUiColors.TextPrimary,
+                modifier = Modifier.size(if (compact) 20.dp else 24.dp),
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = selectedLocation.cityLabel(),
+                modifier = Modifier.weight(1f),
+                style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                color = AppUiColors.TextPrimary,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Start,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
