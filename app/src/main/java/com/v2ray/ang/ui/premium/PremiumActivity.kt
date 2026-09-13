@@ -410,7 +410,7 @@ private fun RegionalPolicyOnboardingScreen(
                     selected = selectedMode == RegionalPolicyMode.International,
                     enabled = !saving,
                     title = "Международный",
-                    description = "VPN используется за пределами Российской Федерации",
+                    description = "Для использования за пределами Российской Федерации",
                     onClick = { selectedMode = RegionalPolicyMode.International },
                 )
                 Spacer(Modifier.height(10.dp))
@@ -418,7 +418,7 @@ private fun RegionalPolicyOnboardingScreen(
                     selected = selectedMode == RegionalPolicyMode.Russia,
                     enabled = !saving,
                     title = "Российская Федерация",
-                    description = "Для использования в РФ; ограниченные ресурсы блокируются",
+                    description = "Для использования в Российской Федерации",
                     onClick = { selectedMode = RegionalPolicyMode.Russia },
                 )
 

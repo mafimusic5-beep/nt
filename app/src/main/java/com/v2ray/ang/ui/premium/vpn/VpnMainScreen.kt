@@ -1114,7 +1114,7 @@ private fun RegionalPolicyCard(
             selected = selectedMode == RegionalPolicyMode.International,
             enabled = !updateInProgress,
             title = "Международный",
-            description = "VPN используется за пределами Российской Федерации",
+            description = "Для использования за пределами Российской Федерации",
             onClick = { requestMode(RegionalPolicyMode.International) },
         )
         Spacer(Modifier.height(8.dp))
@@ -1122,7 +1122,7 @@ private fun RegionalPolicyCard(
             selected = selectedMode == RegionalPolicyMode.Russia,
             enabled = !updateInProgress,
             title = "Российская Федерация",
-            description = "Для использования в РФ; ограниченные ресурсы блокируются",
+            description = "Для использования в Российской Федерации",
             onClick = { requestMode(RegionalPolicyMode.Russia) },
         )
         if (selectedMode == RegionalPolicyMode.Russia) {
