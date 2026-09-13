@@ -422,34 +422,16 @@ private fun RegionalPolicyOnboardingScreen(
                     onClick = { selectedMode = RegionalPolicyMode.Russia },
                 )
 
-                if (selectedMode == RegionalPolicyMode.International) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        text = "Я подтверждаю, что текущее VPN-подключение используется за пределами Российской Федерации.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF111319),
-                        fontWeight = FontWeight.Medium,
-                    )
-                } else if (selectedMode == RegionalPolicyMode.Russia) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF111319),
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные».",
+                    text = "Режим можно изменить позже в разделе «Расширенные».",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF067A6F),
                     fontWeight = FontWeight.Medium,
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение.",
+                    text = "Местоположение не определяется автоматически.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF6F7580),
                 )

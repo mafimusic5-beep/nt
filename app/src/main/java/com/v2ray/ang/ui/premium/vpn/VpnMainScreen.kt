@@ -1125,18 +1125,9 @@ private fun RegionalPolicyCard(
             description = "Для использования в Российской Федерации",
             onClick = { requestMode(RegionalPolicyMode.Russia) },
         )
-        if (selectedMode == RegionalPolicyMode.Russia) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Ограничения применяются на сервере. Списки не скачиваются на устройство.",
-                style = MaterialTheme.typography.bodySmall,
-                color = AppUiColors.TextPrimary,
-                fontWeight = FontWeight.Medium,
-            )
-        }
         Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
         Text(
-            text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение.",
+            text = "Местоположение не определяется автоматически.",
             style = MaterialTheme.typography.bodySmall,
             color = AppUiColors.TextSecondary,
         )
