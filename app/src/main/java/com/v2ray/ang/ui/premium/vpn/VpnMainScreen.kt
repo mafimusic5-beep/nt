@@ -72,6 +72,7 @@ import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
+import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.launch
 
 @Composable
@@ -318,6 +319,13 @@ fun VpnMainScreen(
                 onHomeClick = { selectedTab = MainTab.Home },
                 onAdvancedClick = { selectedTab = MainTab.Advanced },
             )
+            if (selectedTab == MainTab.Home) {
+                Spacer(Modifier.height(if (tight) 4.dp else 6.dp))
+                PrivacyNoticeRow(
+                    compact = compact,
+                    onClick = { Utils.openUri(context, "https://skryon.ru/privacy.html") },
+                )
+            }
         }
     }
 
@@ -616,6 +624,45 @@ private fun BottomNavigationBar(selectedTab: MainTab, compact: Boolean, onHomeCl
             compact = compact,
             modifier = Modifier.weight(1f),
             onClick = onAdvancedClick,
+        )
+    }
+}
+
+@Composable
+private fun PrivacyNoticeRow(
+    compact: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (compact) 30.dp else 34.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "ⓘ",
+            style = MaterialTheme.typography.labelMedium,
+            color = AppUiColors.TextSecondary,
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = "Подключаясь, вы соглашаетесь с политикой конфиденциальности.",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.labelSmall,
+            color = AppUiColors.TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = "›",
+            style = MaterialTheme.typography.titleMedium,
+            color = AppUiColors.TextSecondary,
+            maxLines = 1,
         )
     }
 }
@@ -1190,23 +1237,30 @@ fun PrimaryConnectButton(
     checkingConnection: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val containerColor by animateColorAsState(targetValue = if (enabled) Color(0xFF101319) else Color(0xFFB9BEC6), label = "primary-button-color")
+    val borderColor by animateColorAsState(
+        targetValue = if (enabled) AppUiColors.TextSecondary.copy(alpha = 0.68f) else AppUiColors.Border,
+        label = "primary-button-border",
+    )
     val label = when {
         checkingConnection -> "Проверяем связь…"
         state == VpnConnectionState.Disconnected -> "Включить VPN"
         state == VpnConnectionState.Connecting -> "Включаем..."
         else -> "Отключить VPN"
     }
+    val shape = RoundedCornerShape(if (compact) 22.dp else 26.dp)
     Button(
         onClick = onClick,
         enabled = enabled && state != VpnConnectionState.Connecting && !checkingConnection,
-        modifier = modifier.fillMaxWidth().height(if (tight) 54.dp else if (compact) 60.dp else 66.dp),
-        shape = RoundedCornerShape(if (compact) 22.dp else 26.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(if (tight) 54.dp else if (compact) 60.dp else 66.dp)
+            .border(1.dp, borderColor, shape),
+        shape = shape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = containerColor,
-            contentColor = Color.White,
-            disabledContainerColor = containerColor.copy(alpha = 0.80f),
-            disabledContentColor = Color.White.copy(alpha = 0.72f),
+            containerColor = Color.Transparent,
+            contentColor = AppUiColors.TextPrimary,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = AppUiColors.TextSecondary.copy(alpha = 0.60f),
         ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
@@ -1214,14 +1268,16 @@ fun PrimaryConnectButton(
                 CircularProgressIndicator(
                     modifier = Modifier.size(if (compact) 18.dp else 20.dp),
                     strokeWidth = 2.dp,
-                    color = Color.White.copy(alpha = 0.88f),
+                    color = AppUiColors.TextSecondary,
                 )
-                Spacer(Modifier.width(14.dp))
-            } else if (state == VpnConnectionState.Connected || state == VpnConnectionState.Connecting) {
-                PauseGlyph(tint = Color.White.copy(alpha = 0.86f), compact = compact)
-                Spacer(Modifier.width(18.dp))
+                Spacer(Modifier.width(12.dp))
             }
-            Text(text = label, style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(
+                text = label,
+                style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
         }
     }
 }
