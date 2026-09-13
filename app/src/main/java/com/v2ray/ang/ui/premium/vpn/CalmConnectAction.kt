@@ -33,7 +33,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 @Composable
 internal fun CalmConnectAction(
@@ -51,7 +53,6 @@ internal fun CalmConnectAction(
         state == VpnConnectionState.Connecting -> "Включаем..."
         else -> "Отключить VPN"
     }
-
     val shape = RoundedCornerShape(if (compact) 22.dp else 26.dp)
     val buttonHeight = if (tight) 54.dp else if (compact) 60.dp else 66.dp
     val buttonEnabled = enabled && state != VpnConnectionState.Connecting && !checkingConnection
@@ -64,48 +65,39 @@ internal fun CalmConnectAction(
             phase.snapTo(0f)
             return@LaunchedEffect
         }
-
-        while (true) {
+        while (currentCoroutineContext().isActive) {
             phase.snapTo(0f)
             phase.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(
-                    durationMillis = 1050,
-                    easing = FastOutSlowInEasing,
-                ),
+                animationSpec = tween(durationMillis = 1050, easing = FastOutSlowInEasing),
             )
             phase.snapTo(0f)
-            delay(3800L)
+            delay(5200L)
         }
     }
 
     Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(buttonHeight + 10.dp),
+        modifier = modifier.fillMaxWidth().height(buttonHeight + 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         val progress = phase.value
         if (showRipples && progress > 0f) {
             Canvas(Modifier.fillMaxSize()) {
-                val phases = listOf(
+                val waves = listOf(
                     progress,
                     ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f),
                 )
-                val baseInsetX = 7.dp.toPx()
-                val baseInsetY = 5.dp.toPx()
-
-                phases.forEachIndexed { index, wave ->
+                val insetXBase = 7.dp.toPx()
+                val insetYBase = 5.dp.toPx()
+                waves.forEachIndexed { index, wave ->
                     if (wave <= 0f) return@forEachIndexed
-                    val fade = (1f - wave).coerceIn(0f, 1f)
-                    val insetX = baseInsetX * (1f - wave)
-                    val insetY = baseInsetY * (1f - wave)
+                    val fade = 1f - wave
+                    val insetX = insetXBase * fade
+                    val insetY = insetYBase * fade
                     val width = (size.width - insetX * 2f).coerceAtLeast(0f)
                     val height = (size.height - insetY * 2f).coerceAtLeast(0f)
-                    val alpha = (if (index == 0) 0.17f else 0.10f) * fade
-
                     drawRoundRect(
-                        color = Color.Black.copy(alpha = alpha),
+                        color = Color.Black.copy(alpha = (if (index == 0) 0.17f else 0.10f) * fade),
                         topLeft = Offset(insetX, insetY),
                         size = Size(width, height),
                         cornerRadius = CornerRadius(height / 2f, height / 2f),
