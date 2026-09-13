@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
-import sqlite3
+import re
 from typing import Any, Dict
 
 import device_auth
-import device_recovery_actions
-from device_recovery_common import (
-    DEVICE_PROBE_RE,
-    _connect,
-    _migrate_device_id_if_needed,
-    _resolve_device_row,
+from device_identity_aliases import (
+    derive_legacy_pool_subject_key,
+    ensure_alias_storage,
+    save_pool_subject_alias,
 )
 from storage import now_iso
+
+DEVICE_PROBE_RE = re.compile(r"^dp1:[0-9a-f]{64}$")
+LEGACY_ANDROID_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
 _ORIGINAL_VALIDATE = device_auth.validate_device_registration
 _ORIGINAL_REGISTER = device_auth.register_device
@@ -24,30 +26,98 @@ def _normalize_device_id(value: str) -> str:
 
 
 def _validate_identifier_shape(value: str) -> None:
-    # Current Android builds use dp1:<sha256>. Keep legacy identifiers working
-    # during migration, but reject malformed values that pretend to be dp1.
+    # Current Android builds use dp1:<sha256>. Keep already-supported legacy
+    # identifiers working during migration, but reject malformed dp1 values.
     if value.startswith("dp1:") and not DEVICE_PROBE_RE.fullmatch(value):
         raise device_auth.DeviceAuthError("device_identifier_invalid", 400)
     if len(value) < 4 or "\n" in value or "\r" in value:
         raise device_auth.DeviceAuthError("device_identifier_invalid", 400)
 
 
+def _probe_from_legacy_android_id(value: str) -> str:
+    normalized = value.strip().lower()
+    digest = hashlib.sha256(
+        ("skryon-device-v1:" + normalized).encode("utf-8")
+    ).hexdigest()
+    return "dp1:" + digest
+
+
 def _migrate_legacy_identifier_if_needed(raw_code: str, requested_device_id: str) -> None:
     if not DEVICE_PROBE_RE.fullmatch(requested_device_id):
         return
-    con = _connect()
+
+    con = device_auth._connect()
     try:
         con.execute("BEGIN IMMEDIATE")
+        ensure_alias_storage(con)
         activation = device_auth._activation_row(con, raw_code)
         code = str(activation["code"])
-        row, legacy_migration = _resolve_device_row(con, code, requested_device_id)
-        if row is not None and legacy_migration:
-            _migrate_device_id_if_needed(
-                con,
-                code=code,
-                row=row,
-                requested_device_id=requested_device_id,
+
+        exact = con.execute(
+            "SELECT id FROM code_devices WHERE code = ? AND device_id = ?",
+            (code, requested_device_id),
+        ).fetchone()
+        if exact:
+            con.commit()
+            return
+
+        rows = con.execute(
+            """
+            SELECT id, device_id, pool_assignment_id
+            FROM code_devices
+            WHERE code = ?
+            """,
+            (code,),
+        ).fetchall()
+        target = None
+        for row in rows:
+            legacy_id = str(row["device_id"] or "").strip().lower()
+            if LEGACY_ANDROID_ID_RE.fullmatch(legacy_id) and hmac.compare_digest(
+                _probe_from_legacy_android_id(legacy_id),
+                requested_device_id,
+            ):
+                target = row
+                break
+
+        if target is None:
+            con.commit()
+            return
+
+        old_device_id = str(target["device_id"] or "").strip()
+        if target["pool_assignment_id"] is not None:
+            preserved_subject_key = derive_legacy_pool_subject_key(code, old_device_id)
+            if preserved_subject_key:
+                save_pool_subject_alias(
+                    con,
+                    code=code,
+                    device_id=requested_device_id,
+                    subject_key=preserved_subject_key,
+                    created_at_epoch=int(__import__("time").time()),
+                )
+
+        con.execute(
+            "UPDATE code_devices SET device_id = ? WHERE id = ?",
+            (requested_device_id, int(target["id"])),
+        )
+        con.execute(
+            """
+            UPDATE activation_codes
+            SET device_id = ?
+            WHERE code = ? AND device_id = ?
+            """,
+            (requested_device_id, code, old_device_id),
+        )
+        try:
+            con.execute(
+                """
+                UPDATE device_request_nonces
+                SET device_id = ?
+                WHERE code = ? AND device_id = ?
+                """,
+                (requested_device_id, code, old_device_id),
             )
+        except Exception:
+            pass
         con.commit()
     except Exception:
         con.rollback()
@@ -105,9 +175,8 @@ def validate_device_registration(**kwargs):
     except device_auth.DeviceAuthError as exc:
         if exc.reason != "device_key_rotation_requires_reset":
             raise
-        # Same activation code + same registered device identifier means the
-        # same paid slot. A reinstall may present a fresh Keystore key without
-        # consuming another slot or requiring Play Integrity recovery.
+        # The identifier already owns this paid slot. A reinstall can validate
+        # with a fresh Keystore key without consuming an additional slot.
         return _validation_payload_for_existing(
             raw_code=str(kwargs.get("raw_code") or ""),
             device_id=device_id,
@@ -203,23 +272,10 @@ def register_device(**kwargs):
         return _ORIGINAL_REGISTER(**kwargs)
 
 
-def _identifier_recovery_challenge(_payload):
-    # Recovery is intentionally unnecessary in the identifier-slot model.
-    # The normal activation endpoint decides whether this identifier already
-    # owns a slot or whether a new tariff slot must be consumed.
-    return {
-        "ok": True,
-        "status": "not_needed",
-        "recovered": False,
-        "integrity_required": False,
-    }
-
-
 def install_device_id_slot_guard() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
     device_auth.validate_device_registration = validate_device_registration
     device_auth.register_device = register_device
-    device_recovery_actions.recovery_challenge = _identifier_recovery_challenge
     _INSTALLED = True
