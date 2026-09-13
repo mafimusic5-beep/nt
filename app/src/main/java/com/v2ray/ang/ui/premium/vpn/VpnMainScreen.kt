@@ -210,6 +210,7 @@ fun VpnMainScreen(
 
             if (selectedTab == MainTab.Home) {
                 Spacer(Modifier.height(if (tight) 18.dp else if (compact) 30.dp else 42.dp))
+                Spacer(Modifier.weight(0.25f))
                 StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
                 Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
                 Text(
@@ -220,14 +221,16 @@ fun VpnMainScreen(
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                 )
-                Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
-                Text(
-                    text = screenSubtitle(uiState.connectionState),
-                    style = if (tight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
-                    color = AppUiColors.TextSecondary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                )
+                if (uiState.connectionState != VpnConnectionState.Disconnected) {
+                    Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
+                    Text(
+                        text = screenSubtitle(uiState.connectionState),
+                        style = if (tight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
+                        color = AppUiColors.TextSecondary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                }
                 if (uiState.locationsError.isNotBlank()) {
                     Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
                     Text(
@@ -239,7 +242,7 @@ fun VpnMainScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.weight(0.75f))
                 RegionSelectorCard(
                     selectedLocation = uiState.selectedLocation,
                     locations = locations,
