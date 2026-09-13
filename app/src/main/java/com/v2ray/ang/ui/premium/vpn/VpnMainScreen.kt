@@ -1,6 +1,13 @@
 package com.v2ray.ang.ui.premium.vpn
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -50,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -392,13 +400,146 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
         targetValue = if (connectionState == VpnConnectionState.Connected) AppUiColors.PositiveStrong else AppUiColors.Positive,
         label = "beacon-core",
     )
+    val motion = rememberInfiniteTransition(label = "beacon-motion")
+    val cycleDuration = when (connectionState) {
+        VpnConnectionState.Disconnected -> 2400
+        VpnConnectionState.Connecting -> 1050
+        VpnConnectionState.Connected -> 1700
+    }
+    val phase by motion.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = cycleDuration, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "beacon-phase",
+    )
+    val breath by motion.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = when (connectionState) {
+                    VpnConnectionState.Disconnected -> 1500
+                    VpnConnectionState.Connecting -> 620
+                    VpnConnectionState.Connected -> 1050
+                },
+                easing = FastOutSlowInEasing,
+            ),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "beacon-breath",
+    )
+    val shimmer by motion.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "beacon-shimmer",
+    )
+
     val beaconSize = when { tight -> 72.dp; compact -> 88.dp; else -> 104.dp }
     val midSize = when { tight -> 52.dp; compact -> 64.dp; else -> 74.dp }
     val coreSize = when { tight -> 25.dp; compact -> 30.dp; else -> 34.dp }
-    Box(Modifier.size(beaconSize), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(beaconSize).clip(CircleShape).background(coreColor.copy(alpha = 0.05f)))
-        Box(Modifier.size(midSize).clip(CircleShape).background(coreColor.copy(alpha = 0.11f)))
-        Box(Modifier.size(coreSize).clip(CircleShape).background(coreColor))
+
+    Canvas(Modifier.size(beaconSize)) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val outerRadius = size.minDimension / 2f
+        val midRadius = midSize.toPx() / 2f
+        val coreRadius = coreSize.toPx() / 2f
+        val intensity = when (connectionState) {
+            VpnConnectionState.Disconnected -> 0.72f
+            VpnConnectionState.Connecting -> 1f
+            VpnConnectionState.Connected -> 0.9f
+        }
+
+        drawCircle(
+            color = coreColor.copy(alpha = (0.035f + shimmer * 0.025f) * intensity),
+            radius = outerRadius * (0.97f + (breath - 0.94f) * 0.16f),
+            center = center,
+        )
+        drawCircle(
+            color = coreColor.copy(alpha = (0.09f + shimmer * 0.035f) * intensity),
+            radius = midRadius * (0.98f + (breath - 0.94f) * 0.2f),
+            center = center,
+        )
+
+        val rippleCount = if (connectionState == VpnConnectionState.Connecting) 4 else 3
+        repeat(rippleCount) { index ->
+            val ripplePhase = (phase + index.toFloat() / rippleCount) % 1f
+            val easedPhase = FastOutSlowInEasing.transform(ripplePhase)
+            val radius = coreRadius * 1.08f + (outerRadius - coreRadius * 1.08f) * easedPhase
+            val alpha = (1f - ripplePhase) * (1f - ripplePhase) * 0.24f * intensity
+            drawCircle(
+                color = coreColor.copy(alpha = alpha),
+                radius = radius,
+                center = center,
+                style = Stroke(width = (1.1f + (1f - ripplePhase) * 1.8f).dp.toPx()),
+            )
+        }
+
+        if (connectionState != VpnConnectionState.Disconnected) {
+            val orbitRadius = (coreRadius + midRadius) / 2f
+            val orbitStroke = if (connectionState == VpnConnectionState.Connecting) 2.4.dp.toPx() else 1.8.dp.toPx()
+            val startAngle = phase * 360f - 90f
+            drawArc(
+                color = coreColor.copy(alpha = 0.50f + shimmer * 0.20f),
+                startAngle = startAngle,
+                sweepAngle = if (connectionState == VpnConnectionState.Connecting) 112f else 74f,
+                useCenter = false,
+                topLeft = Offset(center.x - orbitRadius, center.y - orbitRadius),
+                size = Size(orbitRadius * 2f, orbitRadius * 2f),
+                style = Stroke(width = orbitStroke, cap = StrokeCap.Round),
+            )
+            if (connectionState == VpnConnectionState.Connecting) {
+                drawArc(
+                    color = coreColor.copy(alpha = 0.30f + shimmer * 0.14f),
+                    startAngle = startAngle + 180f,
+                    sweepAngle = 58f,
+                    useCenter = false,
+                    topLeft = Offset(center.x - orbitRadius, center.y - orbitRadius),
+                    size = Size(orbitRadius * 2f, orbitRadius * 2f),
+                    style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
+
+            val particleCount = if (connectionState == VpnConnectionState.Connecting) 3 else 2
+            repeat(particleCount) { index ->
+                val angle = Math.toRadians((phase * 360f + index * (360f / particleCount) - 90f).toDouble())
+                val particleRadius = orbitRadius + if (index % 2 == 0) 0f else 2.dp.toPx()
+                drawCircle(
+                    color = coreColor.copy(alpha = 0.72f - index * 0.14f),
+                    radius = (1.8f - index * 0.25f).dp.toPx(),
+                    center = Offset(
+                        x = center.x + kotlin.math.cos(angle).toFloat() * particleRadius,
+                        y = center.y + kotlin.math.sin(angle).toFloat() * particleRadius,
+                    ),
+                )
+            }
+        }
+
+        val animatedCoreRadius = coreRadius * breath
+        drawCircle(
+            color = coreColor.copy(alpha = 0.16f + shimmer * 0.06f),
+            radius = animatedCoreRadius * 1.24f,
+            center = center,
+        )
+        drawCircle(
+            color = coreColor,
+            radius = animatedCoreRadius,
+            center = center,
+        )
+        drawCircle(
+            color = Color.White.copy(alpha = 0.22f + shimmer * 0.18f),
+            radius = animatedCoreRadius * 0.20f,
+            center = Offset(
+                x = center.x - animatedCoreRadius * 0.24f,
+                y = center.y - animatedCoreRadius * 0.24f,
+            ),
+        )
     }
 }
 
