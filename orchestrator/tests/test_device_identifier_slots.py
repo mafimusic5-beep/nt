@@ -12,8 +12,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 import config
+import checkout_routes
 import device_auth
-import device_recovery_routes
 import storage
 
 
@@ -175,20 +175,7 @@ def test_new_identifiers_consume_tariff_slots(database):
 
 
 def test_identifier_recovery_path_is_noop(database):
-    code = _create_code("personal", 1)
-    device_id = _probe("4444444444444444")
-    key = _key()
-    args = _activation_args(code, device_id, key)
-    payload = device_recovery_routes.RecoveryChallengeRequest(
-        code=code,
-        device_id=device_id,
-        client_public_key=args["public_key_base64"],
-        timestamp=args["timestamp"],
-        nonce=args["nonce"],
-        signature=args["signature_base64"],
-        signature_algorithm=args["signature_algorithm"],
-    )
-    result = device_recovery_routes.recovery_challenge(payload)
+    result = checkout_routes.identifier_slot_recovery_challenge({})
     assert result["ok"] is True
     assert result["status"] == "not_needed"
     assert result["integrity_required"] is False
