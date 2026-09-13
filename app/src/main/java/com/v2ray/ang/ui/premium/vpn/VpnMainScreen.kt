@@ -373,14 +373,17 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 
 @Composable
 private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.Start,
+    val locationLabel = selectedLocation.cityLabel().let { city ->
+        if (city == "Франкфурт") "Франкфурт-на-Майне" else city
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = if (compact) 48.dp else 54.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.heightIn(min = if (compact) 48.dp else 54.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Skryon",
                 style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
@@ -389,27 +392,35 @@ private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
                 maxLines = 1,
             )
             Spacer(Modifier.width(7.dp))
-            Text(text = "VPN", style = MaterialTheme.typography.titleSmall, color = AppUiColors.TextSecondary, maxLines = 1)
+            Text(
+                text = "VPN",
+                style = MaterialTheme.typography.titleSmall,
+                color = AppUiColors.TextSecondary,
+                maxLines = 1,
+            )
         }
-        Spacer(Modifier.height(if (compact) 4.dp else 6.dp))
+
+        Spacer(Modifier.width(if (compact) 12.dp else 16.dp))
+
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
         ) {
             Icon(
                 imageVector = Icons.Filled.LocationOn,
                 contentDescription = null,
                 tint = AppUiColors.TextPrimary,
-                modifier = Modifier.size(if (compact) 20.dp else 24.dp),
+                modifier = Modifier.size(if (compact) 18.dp else 20.dp),
             )
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(6.dp))
             Text(
-                text = selectedLocation.cityLabel(),
-                modifier = Modifier.weight(1f),
-                style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                text = locationLabel,
+                modifier = Modifier.weight(1f, fill = false),
+                style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
                 color = AppUiColors.TextPrimary,
                 fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Start,
+                textAlign = TextAlign.End,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
