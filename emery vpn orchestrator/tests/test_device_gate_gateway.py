@@ -105,6 +105,17 @@ def test_gateway_never_accepts_non_loopback_authorization_target():
         gate._validated_target(config(), result, validated)
 
 
+def test_gateway_requires_valid_credential_epoch_from_control_plane():
+    epoch = "b" * 64
+    assert gate._validated_credential_epoch({"credential_epoch": epoch}) == epoch
+
+    with pytest.raises(gate.GateError):
+        gate._validated_credential_epoch({})
+
+    with pytest.raises(gate.GateError):
+        gate._validated_credential_epoch({"credential_epoch": "not-valid"})
+
+
 def test_remote_plain_http_authorization_is_rejected(monkeypatch):
     values = {
         "EMERY_GATE_NODE_ID": "4",
