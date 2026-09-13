@@ -27,32 +27,24 @@ jobs:
           path = Path('app/src/main/java/com/v2ray/ang/ui/premium/PremiumActivity.kt')
           text = path.read_text(encoding='utf-8')
 
-          replacements = {
-              'description = "Для использования за пределами Российской Федерации"': 'description = "VPN используется за пределами Российской Федерации"',
-              'description = "Для использования в Российской Федерации"': 'description = "Для использования в РФ; ограниченные ресурсы блокируются"',
-              'text = "Режим можно изменить позже в разделе «Расширенные»."': 'text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные»."',
-              'text = "Местоположение не определяется автоматически."': 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."',
-          }
-          for old, new in replacements.items():
-              if text.count(old) != 1:
-                  raise SystemExit(f'Expected exactly one occurrence: {old!r}, found {text.count(old)}')
-              text = text.replace(old, new)
+          replacements = [
+              ('description = "Для использования за пределами Российской Федерации"', 'description = "VPN используется за пределами Российской Федерации"'),
+              ('description = "Для использования в Российской Федерации"', 'description = "Для использования в РФ; ограниченные ресурсы блокируются"'),
+              ('text = "Режим можно изменить позже в разделе «Расширенные»."', 'text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные»."'),
+              ('text = "Местоположение не определяется автоматически."', 'text = "Сервис не определяет, не проверяет и не сохраняет ваше местоположение."'),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'Missing expected text: {old}')
+              text = text.replace(old, new, 1)
 
-          anchor = '''                OnboardingPolicyChoice(
-                    selected = selectedMode == RegionalPolicyMode.Russia,
-                    enabled = !saving,
-                    title = "Российская Федерация",
-                    description = "Для использования в РФ; ограниченные ресурсы блокируются",
-                    onClick = { selectedMode = RegionalPolicyMode.Russia },
+          marker = '''                    onClick = { selectedMode = RegionalPolicyMode.Russia },
                 )
 
-                Spacer(Modifier.height(16.dp))'''
-          replacement = '''                OnboardingPolicyChoice(
-                    selected = selectedMode == RegionalPolicyMode.Russia,
-                    enabled = !saving,
-                    title = "Российская Федерация",
-                    description = "Для использования в РФ; ограниченные ресурсы блокируются",
-                    onClick = { selectedMode = RegionalPolicyMode.Russia },
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные»."'''
+          inserted = '''                    onClick = { selectedMode = RegionalPolicyMode.Russia },
                 )
 
                 Spacer(Modifier.height(14.dp))
@@ -63,10 +55,13 @@ jobs:
                     fontWeight = FontWeight.Medium,
                 )
 
-                Spacer(Modifier.height(16.dp))'''
-          if text.count(anchor) != 1:
-              raise SystemExit(f'Bottom insertion anchor count: {text.count(anchor)}')
-          text = text.replace(anchor, replacement)
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "Если вы находитесь не в РФ, выберите «Международный». Позже политику можно переключить в разделе «Расширенные»."'''
+          if text.count(marker) != 1:
+              raise SystemExit(f'Bottom marker count: {text.count(marker)}')
+          text = text.replace(marker, inserted, 1)
+
           path.write_text(text, encoding='utf-8')
           PY
 
