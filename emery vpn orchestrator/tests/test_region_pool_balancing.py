@@ -7,7 +7,7 @@ def _node(
     node_id: int,
     region: str,
     current: int,
-    capacity: int,
+    capacity: int = 15,
     *,
     health: str = "healthy",
     load_score: int = 100,
@@ -70,20 +70,20 @@ def _service(subscription, nodes):
 
 
 def test_node_sort_prefers_lowest_fill_percentage():
-    twenty_percent = _node(1, "de", current=20, capacity=100)
-    fifty_percent = _node(2, "de", current=5, capacity=10)
+    one_third = _node(1, "de", current=5)
+    two_thirds = _node(2, "de", current=10)
 
     selected = sorted(
-        [fifty_percent, twenty_percent],
+        [two_thirds, one_third],
         key=NodeOrchestrationService._node_sort_key,
     )[0]
 
-    assert selected.id == twenty_percent.id
+    assert selected.id == one_third.id
 
 
 def test_fill_percentage_is_primary_over_health_tiebreaker():
-    degraded_but_empty = _node(3, "de", current=0, capacity=100, health="degraded")
-    healthy_but_busy = _node(4, "de", current=80, capacity=100, health="healthy")
+    degraded_but_empty = _node(3, "de", current=0, health="degraded")
+    healthy_but_busy = _node(4, "de", current=12, health="healthy")
 
     selected = sorted(
         [healthy_but_busy, degraded_but_empty],
@@ -94,31 +94,53 @@ def test_fill_percentage_is_primary_over_health_tiebreaker():
 
 
 def test_connect_reselects_freest_server_inside_requested_region():
-    requested = _node(10, "de", current=90, capacity=100)
-    freest_de = _node(11, "de", current=3, capacity=20)
-    busier_de = _node(12, "de", current=40, capacity=100)
-    free_other_region = _node(20, "nl", current=0, capacity=100)
+    requested_full = _node(10, "de", current=15)
+    freest_de = _node(11, "de", current=3)
+    busier_de = _node(12, "de", current=9)
+    free_other_region = _node(20, "nl", current=0)
     subscription = SimpleNamespace(id=7, region_code="moscow")
     device = SimpleNamespace(node_id=None)
     service = _service(
         subscription,
-        [requested, freest_de, busier_de, free_other_region],
+        [requested_full, freest_de, busier_de, free_other_region],
     )
 
     result = service.build_user_config_for_node(
         subscription_id=subscription.id,
-        node_id=requested.id,
+        node_id=requested_full.id,
         device=device,
     )
 
     assert result["node"].id == freest_de.id
+    assert result["node"].region_code == "de"
     assert result["import_text"] == f"vless://selected-{freest_de.id}"
     assert service.repo.assigned_node_id == freest_de.id
 
 
+def test_regional_pool_never_spills_into_another_region():
+    full_de = _node(30, "de", current=15)
+    also_full_de = _node(31, "de", current=15)
+    free_nl = _node(40, "nl", current=0)
+    subscription = SimpleNamespace(id=8, region_code="moscow")
+    device = SimpleNamespace(node_id=None)
+    service = _service(subscription, [full_de, also_full_de, free_nl])
+
+    try:
+        service.build_user_config_for_node(
+            subscription_id=subscription.id,
+            node_id=full_de.id,
+            device=device,
+        )
+    except Exception as error:
+        assert getattr(error, "status_code", None) == 409
+        assert getattr(error, "detail", None) == "server_unavailable"
+    else:
+        raise AssertionError("regional pool must not spill into another region")
+
+
 def test_reconnect_does_not_penalize_device_already_on_node():
-    current_node = _node(1, "de", current=5, capacity=10)
-    other_node = _node(2, "de", current=4, capacity=10)
+    current_node = _node(1, "de", current=5)
+    other_node = _node(2, "de", current=4)
     device = SimpleNamespace(node_id=current_node.id)
 
     selected = sorted(
@@ -129,7 +151,9 @@ def test_reconnect_does_not_penalize_device_already_on_node():
     assert selected.id == current_node.id
 
 
-def test_full_node_is_not_connectable():
-    full = _node(30, "de", current=20, capacity=20)
+def test_fifteenth_client_fills_node_and_sixteenth_is_not_connectable():
+    almost_full = _node(50, "de", current=14)
+    full = _node(51, "de", current=15)
 
+    assert NodeOrchestrationService._is_connectable(almost_full) is True
     assert NodeOrchestrationService._is_connectable(full) is False
