@@ -7,6 +7,7 @@ from src.backend.api.admin_node_assignment_cleanup_routes import (
 from src.backend.api.admin_node_delete_routes import router as admin_node_delete_router
 from src.backend.api.compat_routes import compat_router
 from src.backend.api.error_diagnostics import http_exception_with_diagnostics
+from src.backend.api.privacy_routes import router as privacy_router
 from src.backend.api.routes import router as api_router
 from src.backend.core.assignment_port_lifecycle import install_assignment_port_lifecycle
 from src.backend.core.bootstrap import seed_plans
@@ -23,6 +24,7 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(DeviceProofMiddleware)
 app.include_router(compat_router)
 app.include_router(api_router)
+app.include_router(privacy_router)
 app.include_router(admin_codes_router)
 app.include_router(admin_node_assignment_cleanup_router)
 app.include_router(admin_node_delete_router)
