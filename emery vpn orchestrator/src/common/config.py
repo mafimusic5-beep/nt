@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from functools import cached_property
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -163,6 +164,15 @@ class Settings(BaseSettings):
     firstvds_node_ssh_key_autogenerate: bool = True
     firstvds_node_ssh_key_bits: int = 4096
     firstvds_node_ssh_key_comment_prefix: str = "emery-node"
+
+    @field_validator("pool_node_capacity_devices", mode="before")
+    @classmethod
+    def cap_pool_node_capacity(cls, value):
+        try:
+            requested = int(value)
+        except (TypeError, ValueError):
+            return 15
+        return min(max(requested, 1), 15)
 
     @cached_property
     def admin_id_list(self) -> list[int]:
