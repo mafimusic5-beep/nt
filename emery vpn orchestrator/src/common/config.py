@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     default_region_code: str = "moscow"
     default_region_name: str = "Moscow"
     max_devices_per_subscription: int = 5
-    pool_node_capacity_devices: int = 20
+    pool_node_capacity_devices: int = 15
     pool_family_headroom_devices: int = 5
     pool_node_bandwidth_mbps: int = 600
     pool_per_device_speed_limit_mbps: int = 30
