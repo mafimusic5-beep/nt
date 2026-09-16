@@ -14,6 +14,7 @@ on:
       - 'app/src/main/res/xml/network_security_config.xml'
       - 'app/src/main/java/com/v2ray/ang/security/**'
       - 'app/src/main/java/com/v2ray/ang/service/V2RayVpnService.kt'
+      - 'app/src/main/java/com/v2ray/ang/service/TProxyService.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/MmkvManager.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryAccessManager.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryVpnSync.kt'
@@ -36,6 +37,7 @@ on:
       - 'app/src/main/res/xml/network_security_config.xml'
       - 'app/src/main/java/com/v2ray/ang/security/**'
       - 'app/src/main/java/com/v2ray/ang/service/V2RayVpnService.kt'
+      - 'app/src/main/java/com/v2ray/ang/service/TProxyService.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/MmkvManager.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryAccessManager.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryVpnSync.kt'
@@ -133,6 +135,20 @@ jobs:
         run: |
           grep -F 'val appVersionCode = 718' app/build.gradle.kts
           grep -F 'versionName = "2.0.18"' app/build.gradle.kts
+      - name: Verify IPv6 leak protection
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          vpn = Path('app/src/main/java/com/v2ray/ang/service/V2RayVpnService.kt').read_text()
+          hev = Path('app/src/main/java/com/v2ray/ang/service/TProxyService.kt').read_text()
+
+          assert 'builder.addAddress(vpnConfig.ipv6Client, 126)' in vpn
+          assert 'builder.addRoute("::", 0)' in vpn
+          assert 'val captureIpv6' not in vpn
+          assert 'appendLine("  ipv6: \'${vpnConfig.ipv6Client}\'")' in hev
+          assert 'PREF_PREFER_IPV6' not in hev
+          PY
       - name: Assemble Playstore debug
         run: ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
       - name: Assemble hardened Playstore release
