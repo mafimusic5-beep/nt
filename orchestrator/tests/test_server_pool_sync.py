@@ -35,7 +35,7 @@ class ServerPoolSyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(create_call.kwargs['payload']['provider'], 'skryon-legacy')
         self.assertEqual(create_call.kwargs['payload']['region_code'], 'de')
         self.assertEqual(create_call.kwargs['payload']['endpoint'], '203.0.113.10')
-        self.assertEqual(create_call.kwargs['payload']['capacity_clients'], 20)
+        self.assertEqual(create_call.kwargs['payload']['capacity_clients'], 15)
         self.assertEqual(create_call.kwargs['payload']['bandwidth_limit_mbps'], 600)
         self.assertEqual(create_call.kwargs['payload']['per_device_speed_limit_mbps'], 50)
 
