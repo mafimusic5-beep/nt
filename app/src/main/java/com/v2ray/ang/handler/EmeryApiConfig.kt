@@ -17,17 +17,25 @@ object EmeryApiConfig {
             else -> saved
         }
         val normalized = normalize(raw)
-        return if (normalized in setOf(LEGACY_BASE_URL, LEGACY_DOMAIN_BASE_URL)) DEFAULT_BASE_URL else normalized
+        if (normalized in setOf(LEGACY_BASE_URL, LEGACY_DOMAIN_BASE_URL)) return DEFAULT_BASE_URL
+        if (!BuildConfig.DEBUG && !normalized.startsWith("https://")) return DEFAULT_BASE_URL
+        return normalized
     }
 
     fun saveBaseUrl(raw: String) {
-        MmkvManager.encodeSettings(AppConfig.PREF_EMERY_API_BASE_URL, normalize(raw))
+        val normalized = normalize(raw)
+        val safe = if (!BuildConfig.DEBUG && !normalized.startsWith("https://")) {
+            DEFAULT_BASE_URL
+        } else {
+            normalized
+        }
+        MmkvManager.encodeSettings(AppConfig.PREF_EMERY_API_BASE_URL, safe)
     }
 
     fun normalize(raw: String): String {
         var url = raw.trim()
         if (url.isNotEmpty() && !url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "http://$url"
+            url = if (BuildConfig.DEBUG) "http://$url" else "https://$url"
         }
         return url.trimEnd('/')
     }
