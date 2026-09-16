@@ -7,8 +7,14 @@ on:
       - 'emery vpn orchestrator/**'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/**'
       - 'app/build.gradle.kts'
+      - 'app/proguard-rules.pro'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'app/src/release/**'
+      - 'app/src/debug/**'
+      - 'app/src/main/res/xml/network_security_config.xml'
       - 'app/src/main/java/com/v2ray/ang/security/**'
       - 'app/src/main/java/com/v2ray/ang/service/V2RayVpnService.kt'
+      - 'app/src/main/java/com/v2ray/ang/handler/EmeryAccessManager.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryVpnSync.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryApiConfig.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/RegionalPolicyManager.kt'
@@ -22,8 +28,14 @@ on:
       - 'emery vpn orchestrator/**'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/**'
       - 'app/build.gradle.kts'
+      - 'app/proguard-rules.pro'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'app/src/release/**'
+      - 'app/src/debug/**'
+      - 'app/src/main/res/xml/network_security_config.xml'
       - 'app/src/main/java/com/v2ray/ang/security/**'
       - 'app/src/main/java/com/v2ray/ang/service/V2RayVpnService.kt'
+      - 'app/src/main/java/com/v2ray/ang/handler/EmeryAccessManager.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryVpnSync.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/EmeryApiConfig.kt'
       - 'app/src/main/java/com/v2ray/ang/handler/RegionalPolicyManager.kt'
@@ -121,3 +133,5 @@ jobs:
           grep -F 'versionName = "2.0.18"' app/build.gradle.kts
       - name: Assemble Playstore debug
         run: ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
+      - name: Assemble hardened Playstore release
+        run: ./gradlew :app:assemblePlaystoreRelease --no-daemon --stacktrace
