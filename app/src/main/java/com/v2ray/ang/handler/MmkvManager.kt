@@ -12,7 +12,6 @@ import com.v2ray.ang.dto.ServerAffiliationInfo
 import com.v2ray.ang.dto.SubscriptionCache
 import com.v2ray.ang.dto.SubscriptionItem
 import com.v2ray.ang.dto.WebDavConfig
-import com.v2ray.ang.security.SkryonSecretStore
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.Utils
 
@@ -32,8 +31,6 @@ object MmkvManager {
     private const val KEY_SUB_SERVER_PREFIX = "SUB_SERVERS_"
     private const val KEY_SUB_IDS = "SUB_IDS"
     private const val KEY_WEBDAV_CONFIG = "WEBDAV_CONFIG"
-    private const val KEY_SKRYON_ACTIVATION_CODE = "SKRYON_ACTIVATION_CODE"
-    private const val KEY_SKRYON_ACTIVATION_CODE_CIPHER = "SKRYON_ACTIVATION_CODE_CIPHER_V1"
 
     private val mainStorage by lazy { MMKV.mmkvWithID(ID_MAIN, MMKV.MULTI_PROCESS_MODE) }
     private val profileFullStorage by lazy { MMKV.mmkvWithID(ID_PROFILE_FULL_CONFIG, MMKV.MULTI_PROCESS_MODE) }
@@ -96,7 +93,7 @@ object MmkvManager {
      * Otherwise, returns servers from the specified subscription's serverList.
      *
      * @param subscriptionId The subscription ID.
-     * @return The list of all server GUIDs.
+     * @return The list of server GUIDs.
      */
     fun decodeServerList(subscriptionId: String): MutableList<String> {
         val subId = getSubscriptionId(subscriptionId)
@@ -464,7 +461,7 @@ object MmkvManager {
             val json = assetStorage.decodeString(key)
             if (!json.isNullOrBlank()) {
                 val item = JsonUtil.fromJson(json, AssetUrlItem::class.java)?: AssetUrlItem()
-                subscriptions.add(SubscriptionCache(key, item))
+                assetUrlItems.add(AssetUrlCache(key, item))
             }
         }
         return assetUrlItems.sortedBy { it.assetUrl.addedTime }
@@ -531,42 +528,6 @@ object MmkvManager {
     //endregion
 
     //region settings
-
-    private fun encodeProtectedSetting(key: String, value: String?): Boolean {
-        val normalized = value.orEmpty()
-        if (normalized.isEmpty()) {
-            settingsStorage.remove(KEY_SKRYON_ACTIVATION_CODE_CIPHER)
-            settingsStorage.remove(key)
-            return true
-        }
-        val encrypted = runCatching { SkryonSecretStore.encrypt(normalized) }.getOrNull().orEmpty()
-        return if (encrypted.isNotBlank()) {
-            val stored = settingsStorage.encode(KEY_SKRYON_ACTIVATION_CODE_CIPHER, encrypted)
-            if (stored) settingsStorage.remove(key)
-            stored
-        } else {
-            // Availability-safe fallback. A later read retries migration.
-            settingsStorage.encode(key, normalized)
-        }
-    }
-
-    private fun decodeProtectedSetting(key: String, defaultValue: String? = null): String? {
-        val encrypted = settingsStorage.decodeString(KEY_SKRYON_ACTIVATION_CODE_CIPHER).orEmpty()
-        if (encrypted.isNotBlank()) {
-            SkryonSecretStore.decrypt(encrypted)?.let { return it }
-        }
-
-        val legacy = settingsStorage.decodeString(key)
-        if (!legacy.isNullOrEmpty()) {
-            val migrated = runCatching { SkryonSecretStore.encrypt(legacy) }.getOrNull().orEmpty()
-            if (migrated.isNotBlank() && settingsStorage.encode(KEY_SKRYON_ACTIVATION_CODE_CIPHER, migrated)) {
-                settingsStorage.remove(key)
-            }
-            return legacy
-        }
-        return legacy ?: defaultValue
-    }
-
     /**
      * Encodes the settings.
      *
@@ -575,9 +536,6 @@ object MmkvManager {
      * @return Whether the encoding was successful.
      */
     fun encodeSettings(key: String, value: String?): Boolean {
-        if (key == KEY_SKRYON_ACTIVATION_CODE) {
-            return encodeProtectedSetting(key, value)
-        }
         return settingsStorage.encode(key, value)
     }
 
@@ -643,9 +601,6 @@ object MmkvManager {
      * @return The settings value.
      */
     fun decodeSettingsString(key: String): String? {
-        if (key == KEY_SKRYON_ACTIVATION_CODE) {
-            return decodeProtectedSetting(key)
-        }
         return settingsStorage.decodeString(key)
     }
 
@@ -657,9 +612,6 @@ object MmkvManager {
      * @return The settings value.
      */
     fun decodeSettingsString(key: String, defaultValue: String?): String? {
-        if (key == KEY_SKRYON_ACTIVATION_CODE) {
-            return decodeProtectedSetting(key, defaultValue)
-        }
         return settingsStorage.decodeString(key, defaultValue)
     }
 
