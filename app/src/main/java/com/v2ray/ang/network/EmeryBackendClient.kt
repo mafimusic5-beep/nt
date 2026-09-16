@@ -163,7 +163,7 @@ object EmeryBackendClient {
                     if (ids.distinct().size != ids.size) {
                         return@withContext Result.failure(IllegalStateException("device_inventory_mismatch"))
                     }
-                    if (devices.count { it.active } != devicesUsed) {
+                    if (parsed.limitMode != "concurrent" && devices.count { it.active } != devicesUsed) {
                         return@withContext Result.failure(IllegalStateException("device_counter_mismatch"))
                     }
                     val currentRow = devices.firstOrNull { it.deviceId == currentDeviceId }
@@ -183,6 +183,7 @@ object EmeryBackendClient {
                         deviceName = parsed.deviceName?.trim().orEmpty().ifBlank {
                             local?.deviceName.orEmpty().ifBlank { EmeryDeviceIdentity.deviceName() }
                         },
+                        concurrentLimit = parsed.limitMode == "concurrent",
                         devicesUsed = devicesUsed,
                         devicesLimit = devicesLimit,
                         devices = devices,
@@ -203,7 +204,7 @@ object EmeryBackendClient {
             if (profile.deviceId != activationProfile.deviceId) {
                 throw IllegalStateException("device_mismatch")
             }
-            if (profile.devicesUsed != activationProfile.devicesUsed ||
+            if ((!profile.concurrentLimit && profile.devicesUsed != activationProfile.devicesUsed) ||
                 profile.devicesLimit != activationProfile.devicesLimit
             ) {
                 throw IllegalStateException("device_counter_mismatch")

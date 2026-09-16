@@ -180,6 +180,7 @@ object EmeryAuthClient {
 
                 Result.success(
                     EmeryAccessProfile(
+                        concurrentLimit = parsed.optString("limit_mode") == "concurrent",
                         accessKey = key,
                         vpnEnabled = true,
                         routerEnabled = false,
@@ -281,6 +282,7 @@ object EmeryAuthClient {
 
                 Result.success(
                     EmeryAccessProfile(
+                        concurrentLimit = parsed.optString("limit_mode") == "concurrent",
                         accessKey = accessKey,
                         vpnEnabled = parsed.optBoolean("vpn_enabled", parsed.optBoolean("vpnEnabled", true)),
                         routerEnabled = parsed.optBoolean("router_enabled", parsed.optBoolean("routerEnabled", false)),

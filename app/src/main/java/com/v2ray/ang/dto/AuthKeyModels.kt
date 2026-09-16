@@ -34,6 +34,7 @@ data class AuthKeyResponseBody(
 
 /** GET /profile (Bearer access key + signed device headers). */
 data class ProfileApiResponseBody(
+    @SerializedName("limit_mode") val limitMode: String? = null,
     @SerializedName("user_id") val userId: Long? = null,
     @SerializedName("vpn_enabled") val vpnEnabled: Boolean? = null,
     @SerializedName("router_enabled") val routerEnabled: Boolean? = null,

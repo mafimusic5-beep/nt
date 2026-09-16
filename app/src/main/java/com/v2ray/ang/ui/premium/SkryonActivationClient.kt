@@ -392,7 +392,7 @@ internal suspend fun activateSkryonCode(
                 devicesUsed = devicesUsed,
             )
         }
-        if (devices.count { it.active } != devicesUsed ||
+        if ((json.optString("limit_mode") != "concurrent" && devices.count { it.active } != devicesUsed) ||
             devices.none { it.deviceId == proof.deviceId && it.active }
         ) {
             return@withContext activationFailure(
@@ -403,6 +403,7 @@ internal suspend fun activateSkryonCode(
         }
 
         val confirmedProfile = EmeryAccessProfile(
+            concurrentLimit = json.optString("limit_mode") == "concurrent",
             accessKey = confirmedCode,
             vpnEnabled = true,
             routerEnabled = false,

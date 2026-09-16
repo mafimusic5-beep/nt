@@ -6,6 +6,7 @@ import sqlite3
 from fastapi import APIRouter
 
 import device_auth
+import concurrent_sessions
 import device_recovery_routes as legacy
 from storage import now_iso
 
@@ -175,6 +176,11 @@ def recovery_challenge(payload: legacy.RecoveryChallengeRequest):
                 str(activation["plan"] or ""),
                 int(activation["max_devices"] or 1),
             )
+            if concurrent_sessions.enabled():
+                # Registrations do not occupy online places and never evict
+                # another installation just because the code was entered.
+                con.commit()
+                return _success("not_needed", False)
             active_rows = _active_rows(con, code)
 
             if len(active_rows) < limit:

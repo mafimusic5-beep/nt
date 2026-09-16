@@ -23,6 +23,7 @@ data class EmeryDeviceRecord(
 )
 
 data class EmeryAccessProfile(
+    val concurrentLimit: Boolean = false,
     val accessKey: String,
     val vpnEnabled: Boolean,
     val routerEnabled: Boolean,
@@ -56,7 +57,7 @@ internal fun expectedDeviceLimitForPlan(planName: String): Int? {
 internal fun validateDeviceLimit(planName: String, devicesUsed: Int, devicesLimit: Int): Boolean {
     val expected = expectedDeviceLimitForPlan(planName) ?: return false
     if (devicesLimit != expected) return false
-    return devicesUsed in 1..devicesLimit
+    return devicesUsed in 0..devicesLimit
 }
 
 object EmeryAccessManager {
@@ -96,6 +97,7 @@ object EmeryAccessManager {
             planName = plan,
             deviceId = deviceId,
             deviceName = deviceName,
+            concurrentLimit = MmkvManager.decodeSettingsString("pref_concurrent_limit") == "true",
             devicesUsed = MmkvManager.decodeSettingsInt(AppConfig.PREF_EMERY_DEVICES_USED, devices.count { it.active }),
             devicesLimit = MmkvManager.decodeSettingsInt(
                 PREF_EMERY_DEVICES_LIMIT_LOCAL,
@@ -117,6 +119,7 @@ object EmeryAccessManager {
         if (profile.deviceName.isNotBlank()) {
             MmkvManager.encodeSettings(PREF_EMERY_DEVICE_NAME_LOCAL, profile.deviceName)
         }
+        MmkvManager.encodeSettings("pref_concurrent_limit", profile.concurrentLimit.toString())
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_DEVICES_USED, profile.devicesUsed)
         MmkvManager.encodeSettings(PREF_EMERY_DEVICES_LIMIT_LOCAL, profile.devicesLimit)
 
@@ -143,6 +146,7 @@ object EmeryAccessManager {
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ROUTER_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_EXPIRES_AT, "")
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_PLAN_NAME, "")
+        MmkvManager.encodeSettings("pref_concurrent_limit", "false")
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_DEVICES_USED, 0)
         MmkvManager.encodeSettings(PREF_EMERY_DEVICES_LIMIT_LOCAL, 0)
         MmkvManager.encodeSettings(PREF_EMERY_DEVICES_JSON_LOCAL, "[]")

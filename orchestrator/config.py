@@ -106,3 +106,6 @@ APP_UPDATE_MESSAGE = os.getenv(
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
+# Enable only after every public ingress uses lease-aware gates.
+CONCURRENT_SESSIONS_ENABLED = _env_bool('CONCURRENT_SESSIONS_ENABLED', False)
