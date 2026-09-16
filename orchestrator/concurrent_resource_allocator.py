@@ -1,14 +1,17 @@
-"""Plan paid VPN resource ownership without touching live assignments.
+"""Plan and transfer paid VPN resources without evicting live sessions.
 
-The authority keeps registrations durable, but only 1/2/5 installations may
-own Xray resources for a subscription at once.  This module makes the decision
-explicit and never selects a resource protected by an unexpired live lease.
+Registrations stay durable, while only 1/2/5 installation rows may own Xray
+resources for a subscription at once.  All decisions are made inside the same
+SQLite write transaction as the caller, so a gateway lease acquisition cannot
+race a resource transfer.
 """
 from __future__ import annotations
 
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,27 @@ class ResourceOwner:
 class ResourcePlan:
     action: str
     recyclable: ResourceOwner | None = None
+
+
+_POOL_SELECT = '''
+    pool_assignment_id,
+    pool_status,
+    pool_confirmation_token,
+    pool_node_id,
+    pool_node_name,
+    pool_region,
+    pool_config,
+    pool_config_revision,
+    pool_speed_limit_mbps,
+    pool_client_port,
+    pool_gate_host,
+    pool_gate_port,
+    pool_gate_server_name,
+    pool_gate_spki_sha256,
+    pool_entitlement_hash,
+    pool_entitlement_expires_at,
+    pool_updated_at
+'''
 
 
 def _owners(con: sqlite3.Connection, code: str, now: float) -> list[ResourceOwner]:
@@ -45,14 +69,26 @@ def _owners(con: sqlite3.Connection, code: str, now: float) -> list[ResourceOwne
         ''',
         (now, code),
     ).fetchall()
-    return [ResourceOwner(int(r['device_row_id']), str(r['device_id']),
-                          int(r['pool_assignment_id']), str(r['last_seen_at'] or ''),
-                          bool(r['online'])) for r in rows]
+    return [
+        ResourceOwner(
+            int(r['device_row_id']),
+            str(r['device_id']),
+            int(r['pool_assignment_id']),
+            str(r['last_seen_at'] or ''),
+            bool(r['online']),
+        )
+        for r in rows
+    ]
 
 
-def plan_resource(con: sqlite3.Connection, *, code: str,
-                  requesting_device_row_id: int, limit: int,
-                  now: float | None = None) -> ResourcePlan:
+def plan_resource(
+    con: sqlite3.Connection,
+    *,
+    code: str,
+    requesting_device_row_id: int,
+    limit: int,
+    now: float | None = None,
+) -> ResourcePlan:
     if limit not in (1, 2, 5):
         raise ValueError('unsupported_concurrent_limit')
     now = time.time() if now is None else float(now)
@@ -68,16 +104,164 @@ def plan_resource(con: sqlite3.Connection, *, code: str,
     return ResourcePlan('recycle', victim)
 
 
-def choose_recyclable_assignment(con: sqlite3.Connection, *, code: str,
-                                  requesting_device_row_id: int, limit: int,
-                                  now: float | None = None) -> ResourceOwner | None:
-    return plan_resource(con, code=code, requesting_device_row_id=requesting_device_row_id,
-                         limit=limit, now=now).recyclable
+def choose_recyclable_assignment(
+    con: sqlite3.Connection,
+    *,
+    code: str,
+    requesting_device_row_id: int,
+    limit: int,
+    now: float | None = None,
+) -> ResourceOwner | None:
+    return plan_resource(
+        con,
+        code=code,
+        requesting_device_row_id=requesting_device_row_id,
+        limit=limit,
+        now=now,
+    ).recyclable
 
 
-def resource_state(con: sqlite3.Connection, *, code: str,
-                   requesting_device_row_id: int, limit: int,
-                   now: float | None = None) -> str:
-    action = plan_resource(con, code=code, requesting_device_row_id=requesting_device_row_id,
-                           limit=limit, now=now).action
+def resource_state(
+    con: sqlite3.Connection,
+    *,
+    code: str,
+    requesting_device_row_id: int,
+    limit: int,
+    now: float | None = None,
+) -> str:
+    action = plan_resource(
+        con,
+        code=code,
+        requesting_device_row_id=requesting_device_row_id,
+        limit=limit,
+        now=now,
+    ).action
     return {'allocate': 'free', 'recycle': 'recyclable'}.get(action, action)
+
+
+def assignment_for_device(
+    con: sqlite3.Connection,
+    *,
+    device_row_id: int,
+) -> dict[str, Any] | None:
+    row = con.execute(
+        f'''SELECT {_POOL_SELECT} FROM code_devices WHERE id = ? AND active = 1''',
+        (int(device_row_id),),
+    ).fetchone()
+    if not row or not row['pool_assignment_id'] or not str(row['pool_config'] or '').strip():
+        return None
+    return dict(row)
+
+
+def transfer_assignment(
+    con: sqlite3.Connection,
+    *,
+    from_device_row_id: int,
+    to_device_row_id: int,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Move one existing assignment between device rows inside caller transaction.
+
+    The source must have no unexpired live lease.  Clearing the source happens
+    before writing the target so the unique assignment index is never violated.
+    """
+    if from_device_row_id == to_device_row_id:
+        current = assignment_for_device(con, device_row_id=to_device_row_id)
+        if current is None:
+            raise RuntimeError('resource_assignment_missing')
+        return current
+
+    now_epoch = time.time() if now is None else float(now)
+    live = con.execute(
+        '''SELECT 1 FROM vpn_live_leases
+           WHERE device_row_id = ? AND expires_at > ? LIMIT 1''',
+        (int(from_device_row_id), now_epoch),
+    ).fetchone()
+    if live:
+        raise RuntimeError('resource_owner_online')
+
+    target = assignment_for_device(con, device_row_id=to_device_row_id)
+    if target is not None:
+        raise RuntimeError('resource_target_already_owned')
+
+    source = con.execute(
+        f'''SELECT {_POOL_SELECT} FROM code_devices WHERE id = ? AND active = 1''',
+        (int(from_device_row_id),),
+    ).fetchone()
+    if not source or not source['pool_assignment_id'] or not str(source['pool_config'] or '').strip():
+        raise RuntimeError('resource_assignment_missing')
+    assignment = dict(source)
+
+    con.execute(
+        '''
+        UPDATE code_devices
+        SET pool_assignment_id = NULL,
+            pool_status = '',
+            pool_confirmation_token = '',
+            pool_node_id = NULL,
+            pool_node_name = '',
+            pool_region = '',
+            pool_config = '',
+            pool_config_revision = 0,
+            pool_speed_limit_mbps = 0,
+            pool_client_port = NULL,
+            pool_gate_host = '',
+            pool_gate_port = NULL,
+            pool_gate_server_name = '',
+            pool_gate_spki_sha256 = '',
+            pool_entitlement_hash = '',
+            pool_entitlement_expires_at = '',
+            pool_updated_at = ?
+        WHERE id = ?
+        ''',
+        (datetime.now(timezone.utc).replace(microsecond=0).isoformat(), int(from_device_row_id)),
+    )
+
+    updated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    cursor = con.execute(
+        '''
+        UPDATE code_devices
+        SET pool_assignment_id = ?,
+            pool_status = ?,
+            pool_confirmation_token = ?,
+            pool_node_id = ?,
+            pool_node_name = ?,
+            pool_region = ?,
+            pool_config = ?,
+            pool_config_revision = ?,
+            pool_speed_limit_mbps = ?,
+            pool_client_port = ?,
+            pool_gate_host = ?,
+            pool_gate_port = ?,
+            pool_gate_server_name = ?,
+            pool_gate_spki_sha256 = ?,
+            pool_entitlement_hash = ?,
+            pool_entitlement_expires_at = ?,
+            pool_updated_at = ?
+        WHERE id = ? AND active = 1
+        ''',
+        (
+            assignment['pool_assignment_id'],
+            assignment['pool_status'],
+            assignment['pool_confirmation_token'],
+            assignment['pool_node_id'],
+            assignment['pool_node_name'],
+            assignment['pool_region'],
+            assignment['pool_config'],
+            assignment['pool_config_revision'],
+            assignment['pool_speed_limit_mbps'],
+            assignment['pool_client_port'],
+            assignment['pool_gate_host'],
+            assignment['pool_gate_port'],
+            assignment['pool_gate_server_name'],
+            assignment['pool_gate_spki_sha256'],
+            assignment['pool_entitlement_hash'],
+            assignment['pool_entitlement_expires_at'],
+            updated_at,
+            int(to_device_row_id),
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError('resource_target_missing')
+    assignment['pool_updated_at'] = updated_at
+    return assignment
