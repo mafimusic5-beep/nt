@@ -14,7 +14,10 @@ from starlette.responses import JSONResponse, Response
 from src.common.config import settings
 
 
-VPN_CONNECT_PATH = "/api/v1/vpn/connect"
+VPN_CONNECT_PATHS = {
+    "/api/v1/vpn/connect",
+    "/api/v1/vpn/connect-region",
+}
 DEVICE_AUTH_VERIFY_PATH = "/internal/device-auth/verify"
 DEVICE_AUTH_AUTHORITY_URL = os.getenv(
     "DEVICE_AUTH_AUTHORITY_URL",
@@ -145,7 +148,8 @@ class DeviceProofMiddleware(BaseHTTPMiddleware):
     """Fail closed on VPN-connect requests that are not signed by the bound device key."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if request.method.upper() != "POST" or request.url.path != VPN_CONNECT_PATH:
+        path = request.url.path
+        if request.method.upper() != "POST" or path not in VPN_CONNECT_PATHS:
             return await call_next(request)
 
         try:
@@ -168,7 +172,7 @@ class DeviceProofMiddleware(BaseHTTPMiddleware):
             await verify_registered_device_proof(
                 access_key=body_access_key,
                 method="POST",
-                path=VPN_CONNECT_PATH,
+                path=path,
                 device_id=device_id,
                 timestamp=timestamp,
                 nonce=nonce,
