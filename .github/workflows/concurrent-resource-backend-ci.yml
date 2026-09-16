@@ -56,10 +56,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Compile Android concurrent-session draft
+      - name: Assemble Android concurrent-session draft
         run: |
           chmod +x gradlew
-          ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+          ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
 
       - name: Commit integrated backend changes
         if: success()
