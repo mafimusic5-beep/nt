@@ -1,0 +1,75 @@
+name: Concurrent resource backend checks
+
+on:
+  push:
+    branches:
+      - feature/concurrent-vpn-resource-allocation
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature/concurrent-vpn-resource-allocation
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply backend integration patch
+        run: python tools/apply_concurrent_resource_backend.py
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile \
+            orchestrator/concurrent_resource_allocator.py \
+            orchestrator/pool_reservation_bridge.py \
+            orchestrator/device_auth.py \
+            orchestrator/api.py \
+            "emery vpn orchestrator/src/backend/schemas/pool_bridge.py" \
+            "emery vpn orchestrator/src/backend/api/routes.py" \
+            "emery vpn orchestrator/src/backend/services/pool_assignment_service.py"
+
+      - name: Test authority allocator and leases
+        run: |
+          python -m venv /tmp/skryon-orchestrator
+          /tmp/skryon-orchestrator/bin/pip install -q -r orchestrator/requirements.txt pytest
+          PYTHONPATH=orchestrator /tmp/skryon-orchestrator/bin/pytest -q \
+            orchestrator/tests/test_concurrent_resource_allocator.py \
+            orchestrator/tests/test_concurrent_sessions.py \
+            orchestrator/tests/test_concurrent_gateway.py
+
+      - name: Test pool allocation and rebind
+        run: |
+          python -m venv /tmp/skryon-pool
+          /tmp/skryon-pool/bin/pip install -q -r "emery vpn orchestrator/requirements.txt" pytest
+          cd "emery vpn orchestrator"
+          PYTHONPATH=. /tmp/skryon-pool/bin/pytest -q tests/test_pool_assignments.py
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Compile Android concurrent-session draft
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+
+      - name: Commit integrated backend changes
+        if: success()
+        run: |
+          git config user.name "Skryon CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add orchestrator "emery vpn orchestrator" docs/concurrent-vpn-sessions.md
+          if git diff --cached --quiet; then
+            echo "No integration changes to commit"
+          else
+            git commit -m "Finish concurrent VPN resource allocation backend"
+            git push origin HEAD:feature/concurrent-vpn-resource-allocation
+          fi
