@@ -1,0 +1,130 @@
+name: Finish concurrent client check
+
+on:
+  push:
+    branches:
+      - feature/concurrent-vpn-resource-allocation
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature/concurrent-vpn-resource-allocation
+
+      - name: Preserve concurrent-limit reason in Android sync
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''            val text = response.body?.string().orEmpty()
+                      if (!response.isSuccessful || text.isBlank()) {
+                          return@withContext SkryonConfigSyncResult(
+                              ok = false,
+                              error = "Синхронизация сервера недоступна",
+                          )
+                      }
+
+                      val json = JSONObject(text)
+                      if (!json.optBoolean("ok", false)) {
+                          val reason = json.serverReason()
+                          return@withContext SkryonConfigSyncResult(
+                              ok = false,
+                              reason = reason,
+                              error = json.optString("message").ifBlank { activationReasonText(reason) },
+                          )
+                      }
+          '''
+          new = '''            val text = response.body?.string().orEmpty()
+                      if (text.isBlank()) {
+                          return@withContext SkryonConfigSyncResult(
+                              ok = false,
+                              error = "Синхронизация сервера недоступна",
+                          )
+                      }
+
+                      val json = runCatching { JSONObject(text) }.getOrNull()
+                          ?: return@withContext SkryonConfigSyncResult(
+                              ok = false,
+                              error = "Синхронизация сервера недоступна",
+                          )
+                      if (!json.optBoolean("ok", false)) {
+                          val reason = json.serverReason()
+                          return@withContext SkryonConfigSyncResult(
+                              ok = false,
+                              reason = reason,
+                              error = json.optString("message").ifBlank { activationReasonText(reason) },
+                          )
+                      }
+                      if (!response.isSuccessful) {
+                          return@withContext SkryonConfigSyncResult(
+                              ok = false,
+                              error = "Синхронизация сервера недоступна",
+                          )
+                      }
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'config sync fragment mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old_reason = '''        "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
+          '''
+          new_reason = '''        "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
+                  "concurrent_limit_reached" ->
+                      "Все одновременные подключения заняты. Отключите VPN на другом устройстве и повторите"
+          '''
+          if text.count(old_reason) != 1:
+              raise SystemExit(f'reason fragment mismatch: {text.count(old_reason)}')
+          text = text.replace(old_reason, new_reason, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test orchestrator
+        run: |
+          python -m venv /tmp/skryon-orchestrator
+          /tmp/skryon-orchestrator/bin/pip install -q -r orchestrator/requirements.txt pytest==8.4.2
+          PYTHONPATH=orchestrator /tmp/skryon-orchestrator/bin/pytest -q orchestrator/tests
+
+      - name: Test pool backend
+        run: |
+          python -m venv /tmp/skryon-pool
+          /tmp/skryon-pool/bin/pip install -q -r "emery vpn orchestrator/requirements.txt"
+          cd "emery vpn orchestrator"
+          PYTHONPATH=. /tmp/skryon-pool/bin/python -m pytest -q
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Assemble Playstore debug
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
+
+      - name: Commit Android fix
+        if: success()
+        run: |
+          git config user.name "Skryon CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt
+          if git diff --cached --quiet; then
+            echo "No Android changes to commit"
+          else
+            git commit -m "Show concurrent VPN limit errors in Android"
+            git push origin HEAD:feature/concurrent-vpn-resource-allocation
+          fi
