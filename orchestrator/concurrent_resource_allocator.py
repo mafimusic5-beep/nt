@@ -104,6 +104,71 @@ def plan_resource(
     return ResourcePlan('recycle', victim)
 
 
+def release_candidate(
+    con: sqlite3.Connection,
+    *,
+    code: str,
+    limit: int,
+    now: float | None = None,
+) -> ResourceOwner | None:
+    if limit not in (1, 2, 5):
+        raise ValueError('unsupported_concurrent_limit')
+    now_epoch = time.time() if now is None else float(now)
+    owners = _owners(con, code, now_epoch)
+    if len(owners) <= limit:
+        return None
+    online_count = sum(1 for owner in owners if owner.online)
+    offline = [owner for owner in owners if not owner.online]
+    keep_offline = max(limit - online_count, 0)
+    protected = {
+        owner.device_row_id
+        for owner in sorted(
+            offline,
+            key=lambda owner: (owner.last_seen_at, owner.device_row_id),
+            reverse=True,
+        )[:keep_offline]
+    }
+    releasable = [owner for owner in offline if owner.device_row_id not in protected]
+    if not releasable:
+        return None
+    return min(releasable, key=lambda owner: (owner.last_seen_at, owner.device_row_id))
+
+
+def clear_assignment(
+    con: sqlite3.Connection,
+    *,
+    device_row_id: int,
+    assignment_id: int,
+    now: float | None = None,
+) -> bool:
+    now_epoch = time.time() if now is None else float(now)
+    live = con.execute(
+        'SELECT 1 FROM vpn_live_leases WHERE device_row_id = ? AND expires_at > ? LIMIT 1',
+        (int(device_row_id), now_epoch),
+    ).fetchone()
+    if live:
+        return False
+    cursor = con.execute(
+        '''
+        UPDATE code_devices
+        SET pool_assignment_id = NULL,
+            pool_status = '', pool_confirmation_token = '', pool_node_id = NULL,
+            pool_node_name = '', pool_region = '', pool_config = '',
+            pool_config_revision = 0, pool_speed_limit_mbps = 0,
+            pool_client_port = NULL, pool_gate_host = '', pool_gate_port = NULL,
+            pool_gate_server_name = '', pool_gate_spki_sha256 = '',
+            pool_entitlement_hash = '', pool_entitlement_expires_at = '',
+            pool_updated_at = ?
+        WHERE id = ? AND active = 1 AND pool_assignment_id = ?
+        ''',
+        (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            int(device_row_id), int(assignment_id),
+        ),
+    )
+    return cursor.rowcount == 1
+
+
 def choose_recyclable_assignment(
     con: sqlite3.Connection,
     *,

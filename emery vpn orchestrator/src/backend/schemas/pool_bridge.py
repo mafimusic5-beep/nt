@@ -39,6 +39,18 @@ class PoolReservationRebindRequest(BaseModel):
     entitlement_expires_at: datetime
 
 
+class PoolReservationReleaseRequest(BaseModel):
+    assignment_id: int = Field(gt=0)
+    subject_type: str = Field(default='legacy_device', pattern=r'^(legacy_device|native_device)$')
+    subject_key: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
+class PoolReservationReleaseResponse(BaseModel):
+    ok: bool = True
+    assignment_id: int
+    status: str
+
+
 class PoolReservationConfirmRequest(BaseModel):
     assignment_id: int = Field(gt=0)
     confirmation_token: str = Field(min_length=32, max_length=128)

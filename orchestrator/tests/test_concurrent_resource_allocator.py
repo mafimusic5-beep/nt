@@ -6,6 +6,8 @@ from concurrent_resource_allocator import (
     assignment_for_device,
     choose_recyclable_assignment,
     resource_state,
+    release_candidate,
+    clear_assignment,
     transfer_assignment,
 )
 
@@ -188,3 +190,37 @@ def test_transfer_refuses_live_owner(db):
 def test_rejects_unknown_tariff_capacity(db, limit):
     with pytest.raises(ValueError, match='unsupported_concurrent_limit'):
         resource_state(db, code='CODE', requesting_device_row_id=1, limit=limit, now=1000)
+
+def test_downgrade_release_keeps_live_owner(db):
+    add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z', online=True)
+    add_owner(db, 2, 102, seen='2026-02-01T00:00:00Z')
+    add_owner(db, 3, 103, seen='2026-03-01T00:00:00Z')
+    victim = release_candidate(db, code='CODE', limit=1, now=1000)
+    assert victim is not None
+    assert victim.device_row_id in {2, 3}
+    assert victim.device_row_id != 1
+
+
+def test_clear_assignment_refuses_live_owner(db):
+    add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z', online=True)
+    assert clear_assignment(db, device_row_id=1, assignment_id=101, now=1000) is False
+    assert assignment_for_device(db, device_row_id=1) is not None
+
+
+def test_downgrade_five_to_two_has_three_release_candidates(db):
+    for row_id in range(1, 6):
+        add_owner(db, row_id, 100 + row_id, seen=f'2026-01-0{row_id}T00:00:00Z')
+    released = []
+    while True:
+        victim = release_candidate(db, code='CODE', limit=2, now=1000)
+        if victim is None:
+            break
+        assert clear_assignment(
+            db,
+            device_row_id=victim.device_row_id,
+            assignment_id=victim.assignment_id,
+            now=1000,
+        )
+        db.commit()
+        released.append(victim.assignment_id)
+    assert len(released) == 3

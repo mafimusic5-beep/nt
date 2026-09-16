@@ -32,6 +32,7 @@ from pool_reservation_bridge import (
     apply_stored_assignment_policy,
     is_enabled as pool_bridge_enabled,
     refresh_stored_assignment,
+    reconcile_concurrent_resources,
 )
 from storage import get_server_snapshot, init_storage, save_server
 
@@ -531,6 +532,7 @@ async def start_lease_cleanup():
             if concurrent_sessions.enabled():
                 try:
                     await asyncio.to_thread(concurrent_sessions.purge)
+                    await asyncio.to_thread(reconcile_concurrent_resources)
                 except sqlite3.Error:
                     # Retry cleanup without writing identifiers or SQL to logs.
                     pass

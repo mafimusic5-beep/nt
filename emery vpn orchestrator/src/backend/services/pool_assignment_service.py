@@ -19,6 +19,8 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationConfirmResponse,
     PoolReservationPrepareRequest,
     PoolReservationRebindRequest,
+    PoolReservationReleaseRequest,
+    PoolReservationReleaseResponse,
     PoolReservationResponse,
 )
 from src.backend.services.xray_credential_service import (
@@ -402,18 +404,17 @@ class PoolAssignmentService:
         return self._response(assignment, confirmation_token=confirmation_token)
 
     def rebind(self, req: PoolReservationRebindRequest) -> PoolReservationResponse:
-        """Change the current resource owner without allocating or reinstalling Xray."""
         self._require_enabled()
         now = self._now()
         requested_expiry = self._as_utc(req.entitlement_expires_at)
         if requested_expiry <= now:
-            raise HTTPException(status_code=403, detail="entitlement_expired")
+            raise HTTPException(status_code=403, detail='entitlement_expired')
 
         assignment = self.db.get(VpnAssignment, req.assignment_id)
         if assignment is None:
-            raise HTTPException(status_code=404, detail="assignment_not_found")
-        if assignment.status != "active" or not assignment.device_gate_enforced:
-            raise HTTPException(status_code=409, detail="assignment_not_active")
+            raise HTTPException(status_code=404, detail='assignment_not_found')
+        if assignment.status != 'active' or not assignment.device_gate_enforced:
+            raise HTTPException(status_code=409, detail='assignment_not_active')
 
         conflict = self.db.scalar(
             select(VpnAssignment).where(
@@ -423,25 +424,114 @@ class PoolAssignmentService:
             )
         )
         if conflict is not None:
-            raise HTTPException(status_code=409, detail="assignment_subject_conflict")
+            raise HTTPException(status_code=409, detail='assignment_subject_conflict')
 
-        assignment.subject_type = req.subject_type
-        assignment.subject_key = req.subject_key
         stored_expiry = self._as_utc(assignment.entitlement_expires_at)
+        values = {'subject_type': req.subject_type, 'subject_key': req.subject_key}
         if requested_expiry >= stored_expiry:
-            assignment.entitlement_hash = req.entitlement_hash
-            assignment.entitlement_expires_at = req.entitlement_expires_at
-        self.audit.write(
-            "system",
-            "pool_bridge",
-            "vpn_assignment_rebound",
-            "vpn_assignment",
-            str(assignment.id),
-            {"node_id": assignment.node_id},
+            values['entitlement_hash'] = req.entitlement_hash
+            values['entitlement_expires_at'] = req.entitlement_expires_at
+        try:
+            changed = self.db.execute(
+                update(VpnAssignment)
+                .where(
+                    VpnAssignment.id == assignment.id,
+                    VpnAssignment.status == 'active',
+                    VpnAssignment.device_gate_enforced.is_(True),
+                )
+                .values(**values)
+            )
+            if changed.rowcount != 1:
+                self.db.rollback()
+                raise HTTPException(status_code=409, detail='assignment_state_changed_retry')
+            self.audit.write(
+                'system', 'pool_bridge', 'vpn_assignment_rebound',
+                'vpn_assignment', str(assignment.id), {'node_id': assignment.node_id},
+            )
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise HTTPException(status_code=409, detail='assignment_subject_conflict') from exc
+        assignment = self.db.get(VpnAssignment, req.assignment_id)
+        return self._response(assignment)
+
+    def release(self, req: PoolReservationReleaseRequest) -> PoolReservationReleaseResponse:
+        self._require_enabled()
+        assignment = self.db.get(VpnAssignment, req.assignment_id)
+        if assignment is None:
+            raise HTTPException(status_code=404, detail='assignment_not_found')
+        if assignment.subject_type != req.subject_type or assignment.subject_key != req.subject_key:
+            raise HTTPException(status_code=409, detail='assignment_owner_changed')
+        if assignment.status == 'revoked':
+            return PoolReservationReleaseResponse(
+                assignment_id=assignment.id, status='revoked'
+            )
+
+        now = self._now()
+        previous_status = assignment.status
+        if previous_status == 'revoking':
+            if assignment.prepare_expires_at is not None and self._as_utc(assignment.prepare_expires_at) > now:
+                raise HTTPException(status_code=409, detail='assignment_release_in_progress')
+        elif previous_status not in {'active', 'pending', 'revocation_pending'}:
+            raise HTTPException(status_code=409, detail='assignment_not_releasable')
+
+        claim = update(VpnAssignment).where(
+            VpnAssignment.id == assignment.id,
+            VpnAssignment.status == previous_status,
+            VpnAssignment.subject_type == req.subject_type,
+            VpnAssignment.subject_key == req.subject_key,
+        )
+        if previous_status == 'revoking':
+            claim = claim.where(
+                or_(VpnAssignment.prepare_expires_at.is_(None), VpnAssignment.prepare_expires_at <= now)
+            )
+        claimed = self.db.execute(
+            claim.values(
+                status='revoking',
+                last_error='',
+                prepare_expires_at=now + timedelta(
+                    seconds=max(int(settings.pool_assignment_prepare_ttl_seconds), 60)
+                ),
+            )
         )
         self.db.commit()
+        if claimed.rowcount != 1:
+            raise HTTPException(status_code=409, detail='assignment_owner_or_state_changed')
         self.db.refresh(assignment)
-        return self._response(assignment)
+
+        node = self.db.get(VpnNode, assignment.node_id)
+        if node is None:
+            assignment.status = 'revocation_pending'
+            assignment.last_error = 'assigned_node_missing'
+            self.db.commit()
+            raise HTTPException(status_code=503, detail='assignment_release_failed')
+        try:
+            result = self.transport.remove(node, assignment)
+        except Exception as exc:  # noqa: BLE001
+            result = CredentialMutationResult(False, f'release_failed:{type(exc).__name__}')
+        if not result.ok:
+            assignment.status = 'revocation_pending'
+            assignment.last_error = result.detail[:500]
+            self.db.commit()
+            raise HTTPException(status_code=503, detail='assignment_release_failed')
+
+        assignment.status = 'revoked'
+        assignment.last_error = ''
+        assignment.prepare_expires_at = None
+        self.db.execute(
+            update(VpnNode)
+            .where(VpnNode.id == node.id, VpnNode.current_clients > 0)
+            .values(current_clients=VpnNode.current_clients - 1)
+        )
+        self.audit.write(
+            'system', 'pool_bridge', 'vpn_assignment_revoked',
+            'vpn_assignment', str(assignment.id),
+            {'node_id': node.id, 'reason': 'capacity_reduced'},
+        )
+        self.db.commit()
+        return PoolReservationReleaseResponse(
+            assignment_id=assignment.id, status=assignment.status
+        )
 
     def confirm(self, req: PoolReservationConfirmRequest) -> PoolReservationConfirmResponse:
         self._require_enabled()

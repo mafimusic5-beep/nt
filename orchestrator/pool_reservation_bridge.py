@@ -12,7 +12,10 @@ from urllib.parse import parse_qsl, urlsplit
 import httpx
 
 import concurrent_sessions
-from concurrent_resource_allocator import assignment_for_device, plan_resource, transfer_assignment
+from concurrent_resource_allocator import (
+    assignment_for_device, clear_assignment, plan_resource,
+    release_candidate, transfer_assignment,
+)
 
 from config import (
     DATABASE_PATH,
@@ -244,6 +247,95 @@ def rebind_assignment(
         raise PoolBridgeError('pool_assignment_identity_changed', 503)
     result['pool_entitlement_hash'] = entitlement
     return result
+
+
+def release_assignment(*, assignment_id: int, formatted_code: str, device_id: str) -> dict[str, Any]:
+    if assignment_id <= 0:
+        raise PoolBridgeError('invalid_pool_assignment', 409)
+    response = _request(
+        '/api/v1/internal/pool/assignments/release',
+        {
+            'assignment_id': assignment_id,
+            'subject_type': 'legacy_device',
+            'subject_key': _subject_key(formatted_code, device_id),
+        },
+    )
+    if (
+        response.get('ok') is not True
+        or int(response.get('assignment_id') or 0) != assignment_id
+        or str(response.get('status') or '') != 'revoked'
+    ):
+        raise PoolBridgeError('pool_release_failed', 503)
+    return response
+
+
+def reconcile_concurrent_resources() -> int:
+    if not concurrent_sessions.enabled() or not is_enabled():
+        return 0
+    released = 0
+    while True:
+        con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
+        con.row_factory = sqlite3.Row
+        con.execute('PRAGMA foreign_keys = ON')
+        candidate = None
+        code = ''
+        limit = 0
+        try:
+            con.execute('BEGIN IMMEDIATE')
+            concurrent_sessions.ensure_storage(con)
+            rows = con.execute(
+                '''
+                SELECT code, max_devices
+                FROM activation_codes
+                WHERE status = 'active' AND max_devices IN (1, 2, 5)
+                ORDER BY id ASC
+                '''
+            ).fetchall()
+            for row in rows:
+                maybe = release_candidate(
+                    con, code=str(row['code']), limit=int(row['max_devices'])
+                )
+                if maybe is not None:
+                    candidate = maybe
+                    code = str(row['code'])
+                    limit = int(row['max_devices'])
+                    break
+            con.commit()
+        finally:
+            con.close()
+        if candidate is None:
+            return released
+
+        try:
+            release_assignment(
+                assignment_id=candidate.assignment_id,
+                formatted_code=code,
+                device_id=candidate.device_id,
+            )
+        except PoolBridgeError:
+            return released
+
+        con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
+        con.row_factory = sqlite3.Row
+        con.execute('PRAGMA foreign_keys = ON')
+        try:
+            con.execute('BEGIN IMMEDIATE')
+            concurrent_sessions.ensure_storage(con)
+            current = release_candidate(con, code=code, limit=limit)
+            if (
+                current is not None
+                and current.device_row_id == candidate.device_row_id
+                and current.assignment_id == candidate.assignment_id
+                and clear_assignment(
+                    con,
+                    device_row_id=candidate.device_row_id,
+                    assignment_id=candidate.assignment_id,
+                )
+            ):
+                released += 1
+            con.commit()
+        finally:
+            con.close()
 
 
 def confirm_assignment(assignment_id: int, confirmation_token: str) -> dict[str, Any]:

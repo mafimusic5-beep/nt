@@ -9,6 +9,7 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationConfirmRequest,
     PoolReservationPrepareRequest,
     PoolReservationRebindRequest,
+    PoolReservationReleaseRequest,
 )
 from src.backend.services.pool_assignment_service import PoolAssignmentService
 from src.backend.services.xray_credential_service import CredentialMutationResult
@@ -297,3 +298,44 @@ def test_rebind_refuses_inactive_assignment(db_session):
 
     assert error.value.status_code == 409
     assert error.value.detail == "assignment_not_active"
+
+def test_release_is_idempotent_and_frees_capacity(db_session):
+    node = add_node(db_session)
+    transport = FakeCredentialTransport()
+    service = PoolAssignmentService(db_session, transport)
+    prepared = service.prepare(request('a'))
+    service.confirm(PoolReservationConfirmRequest(
+        assignment_id=prepared.assignment_id,
+        confirmation_token=prepared.confirmation_token,
+    ))
+    req = PoolReservationReleaseRequest(
+        assignment_id=prepared.assignment_id,
+        subject_key='a' * 64,
+    )
+    first = service.release(req)
+    second = service.release(req)
+    assert first.status == second.status == 'revoked'
+    assert db_session.get(VpnNode, node.id).current_clients == 0
+    assert transport.removed.count(prepared.assignment_id) == 1
+
+
+def test_release_refuses_stale_owner_after_rebind(db_session):
+    add_node(db_session)
+    service = PoolAssignmentService(db_session, FakeCredentialTransport())
+    prepared = service.prepare(request('a'))
+    service.confirm(PoolReservationConfirmRequest(
+        assignment_id=prepared.assignment_id,
+        confirmation_token=prepared.confirmation_token,
+    ))
+    service.rebind(PoolReservationRebindRequest(
+        assignment_id=prepared.assignment_id,
+        subject_key='b' * 64,
+        entitlement_hash='c' * 64,
+        entitlement_expires_at=datetime.now(timezone.utc) + timedelta(days=60),
+    ))
+    with pytest.raises(HTTPException) as error:
+        service.release(PoolReservationReleaseRequest(
+            assignment_id=prepared.assignment_id,
+            subject_key='a' * 64,
+        ))
+    assert error.value.detail == 'assignment_owner_changed'

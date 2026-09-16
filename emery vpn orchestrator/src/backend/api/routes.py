@@ -32,6 +32,8 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationConfirmResponse,
     PoolReservationPrepareRequest,
     PoolReservationRebindRequest,
+    PoolReservationReleaseRequest,
+    PoolReservationReleaseResponse,
     PoolReservationResponse,
 )
 from src.backend.utils.debug_log import agent_log
@@ -208,6 +210,18 @@ def internal_rebind_pool_assignment(
     db: Session = Depends(get_db),
 ):
     return PoolAssignmentService(db).rebind(payload)
+
+
+@router.post(
+    '/internal/pool/assignments/release',
+    response_model=PoolReservationReleaseResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_release_pool_assignment(
+    payload: PoolReservationReleaseRequest,
+    db: Session = Depends(get_db),
+):
+    return PoolAssignmentService(db).release(payload)
 
 
 @router.post(
