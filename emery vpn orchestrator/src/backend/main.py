@@ -23,8 +23,11 @@ app.add_exception_handler(HTTPException, http_exception_with_diagnostics)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(DeviceProofMiddleware)
 app.include_router(compat_router)
-app.include_router(api_router)
+# Register privacy routes before the legacy /api/v1 routes. Starlette resolves
+# duplicate paths in registration order, so installed clients keep the same URLs
+# while receiving logical region identifiers instead of physical VpnNode IDs.
 app.include_router(privacy_router)
+app.include_router(api_router)
 app.include_router(admin_codes_router)
 app.include_router(admin_node_assignment_cleanup_router)
 app.include_router(admin_node_delete_router)
