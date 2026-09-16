@@ -153,6 +153,8 @@ def test_tariff_downgrade_blocks_new_stream_from_extra_live_session(online_mode)
     assert sessions.update(first_token)['ok']
     with pytest.raises(device_auth.DeviceAuthError, match='concurrent_limit_reached'):
         acquire(second)
+    with pytest.raises(device_auth.DeviceAuthError, match='concurrent_limit_reached'):
+        sessions.update(second_token)
     with pytest.raises(device_auth.DeviceAuthError, match='session_expired'):
         sessions.update(second_token)
 
