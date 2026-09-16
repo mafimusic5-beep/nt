@@ -68,7 +68,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -230,7 +231,7 @@ dependencies {
 }
 
 /**
- * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, вЂ¦) ship inside libv2ray.aar.
+ * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, …) ship inside libv2ray.aar.
  * Upstream CI downloads it from 2dust/AndroidLibXrayLite; local clones often omit the binary.
  * Override tag: ./gradlew assembleDebug -Plibv2ray.version=v26.3.9
  */
@@ -248,7 +249,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
             URI(
                 "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
             ).toURL()
-        logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
+        logger.lifecycle("Downloading libv2ray.aar ({}) …", libv2rayVersionProperty)
         url.openStream().use { input: InputStream ->
             libv2rayAar.outputStream().use { output: OutputStream ->
                 input.copyTo(output)
