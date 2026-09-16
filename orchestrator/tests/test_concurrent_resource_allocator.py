@@ -2,7 +2,12 @@ import sqlite3
 
 import pytest
 
-from concurrent_resource_allocator import choose_recyclable_assignment, resource_state
+from concurrent_resource_allocator import (
+    assignment_for_device,
+    choose_recyclable_assignment,
+    resource_state,
+    transfer_assignment,
+)
 
 
 @pytest.fixture()
@@ -18,8 +23,25 @@ def db():
             last_seen_at TEXT,
             active INTEGER NOT NULL DEFAULT 1,
             pool_assignment_id INTEGER,
-            pool_status TEXT NOT NULL DEFAULT ''
+            pool_status TEXT NOT NULL DEFAULT '',
+            pool_confirmation_token TEXT NOT NULL DEFAULT '',
+            pool_node_id INTEGER,
+            pool_node_name TEXT NOT NULL DEFAULT '',
+            pool_region TEXT NOT NULL DEFAULT '',
+            pool_config TEXT NOT NULL DEFAULT '',
+            pool_config_revision INTEGER NOT NULL DEFAULT 0,
+            pool_speed_limit_mbps INTEGER NOT NULL DEFAULT 0,
+            pool_client_port INTEGER,
+            pool_gate_host TEXT NOT NULL DEFAULT '',
+            pool_gate_port INTEGER,
+            pool_gate_server_name TEXT NOT NULL DEFAULT '',
+            pool_gate_spki_sha256 TEXT NOT NULL DEFAULT '',
+            pool_entitlement_hash TEXT NOT NULL DEFAULT '',
+            pool_entitlement_expires_at TEXT NOT NULL DEFAULT '',
+            pool_updated_at TEXT
         );
+        CREATE UNIQUE INDEX idx_assignment ON code_devices(pool_assignment_id)
+        WHERE pool_assignment_id IS NOT NULL;
         CREATE TABLE vpn_live_leases (
             token_hash TEXT PRIMARY KEY,
             device_row_id INTEGER NOT NULL,
@@ -37,9 +59,23 @@ def add_owner(con, row_id, assignment, *, seen, online=False, now=1000.0):
     con.execute(
         '''INSERT INTO code_devices
            (id, code, device_id, activated_at, last_seen_at, active,
-            pool_assignment_id, pool_status)
-           VALUES (?, 'CODE', ?, ?, ?, 1, ?, 'active')''',
-        (row_id, f'device-{row_id}', seen, seen, assignment),
+            pool_assignment_id, pool_status, pool_node_id, pool_node_name,
+            pool_region, pool_config, pool_config_revision,
+            pool_speed_limit_mbps, pool_client_port, pool_gate_host,
+            pool_gate_port, pool_gate_server_name, pool_gate_spki_sha256,
+            pool_entitlement_hash, pool_entitlement_expires_at)
+           VALUES (?, 'CODE', ?, ?, ?, 1, ?, 'active', 1, 'Node', 'de', ?, 7,
+                   50, 20000, 'gate.example', 443, 'gate.example', ?, 'entitlement',
+                   '2026-12-31T00:00:00+00:00')''',
+        (
+            row_id,
+            f'device-{row_id}',
+            seen,
+            seen,
+            assignment,
+            f'vless://uuid@127.0.0.1:20000?eg_assignment={assignment}',
+            'a' * 64,
+        ),
     )
     if online:
         con.execute(
@@ -50,8 +86,19 @@ def add_owner(con, row_id, assignment, *, seen, online=False, now=1000.0):
     con.commit()
 
 
+def add_registration(con, row_id, *, seen='2026-03-01T00:00:00Z'):
+    con.execute(
+        '''INSERT INTO code_devices
+           (id, code, device_id, activated_at, last_seen_at, active)
+           VALUES (?, 'CODE', ?, ?, ?, 1)''',
+        (row_id, f'device-{row_id}', seen, seen),
+    )
+    con.commit()
+
+
 def test_free_capacity_does_not_recycle(db):
     add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z')
+    add_registration(db, 2)
     assert resource_state(db, code='CODE', requesting_device_row_id=2, limit=2, now=1000) == 'free'
     assert choose_recyclable_assignment(
         db, code='CODE', requesting_device_row_id=2, limit=2, now=1000
@@ -68,6 +115,7 @@ def test_existing_owner_is_stable(db):
 
 def test_live_assignment_is_never_recycled(db):
     add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z', online=True)
+    add_registration(db, 2)
     assert resource_state(db, code='CODE', requesting_device_row_id=2, limit=1, now=1000) == 'busy'
     assert choose_recyclable_assignment(
         db, code='CODE', requesting_device_row_id=2, limit=1, now=1000
@@ -76,6 +124,7 @@ def test_live_assignment_is_never_recycled(db):
 
 def test_expired_lease_makes_assignment_recyclable(db):
     add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z')
+    add_registration(db, 2)
     db.execute(
         "INSERT INTO vpn_live_leases VALUES ('expired', 1, 'key', 101, 1, 999)"
     )
@@ -91,11 +140,48 @@ def test_expired_lease_makes_assignment_recyclable(db):
 def test_oldest_offline_owner_is_recycled_first(db):
     add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z')
     add_owner(db, 2, 102, seen='2026-02-01T00:00:00Z')
+    add_registration(db, 3)
     owner = choose_recyclable_assignment(
         db, code='CODE', requesting_device_row_id=3, limit=2, now=1000
     )
     assert owner is not None
     assert owner.device_row_id == 1
+
+
+def test_transfer_moves_assignment_without_duplication(db):
+    add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z')
+    add_registration(db, 2)
+
+    moved = transfer_assignment(
+        db,
+        from_device_row_id=1,
+        to_device_row_id=2,
+        now=1000,
+    )
+    db.commit()
+
+    assert moved['pool_assignment_id'] == 101
+    assert assignment_for_device(db, device_row_id=1) is None
+    current = assignment_for_device(db, device_row_id=2)
+    assert current is not None
+    assert current['pool_assignment_id'] == 101
+    assert current['pool_client_port'] == 20000
+
+
+def test_transfer_refuses_live_owner(db):
+    add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z', online=True)
+    add_registration(db, 2)
+
+    with pytest.raises(RuntimeError, match='resource_owner_online'):
+        transfer_assignment(
+            db,
+            from_device_row_id=1,
+            to_device_row_id=2,
+            now=1000,
+        )
+
+    assert assignment_for_device(db, device_row_id=1) is not None
+    assert assignment_for_device(db, device_row_id=2) is None
 
 
 @pytest.mark.parametrize('limit', [0, 3, 4, 6])
