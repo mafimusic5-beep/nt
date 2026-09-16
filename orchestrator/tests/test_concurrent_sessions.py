@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
 import sqlite3
 import time
 import uuid
@@ -77,12 +76,14 @@ def test_limit_counts_installations_not_streams(online_mode, limit, plan):
 
 def test_simultaneous_admission_is_atomic(online_mode):
     devices = [online_mode] + [add_device(online_mode, f'device-{i}') for i in range(10)]
+
     def attempt(d):
         try:
             return acquire(d)['allowed']
         except device_auth.DeviceAuthError as exc:
             assert exc.reason == 'concurrent_limit_reached'
             return False
+
     with ThreadPoolExecutor(max_workers=11) as pool:
         assert sum(pool.map(attempt, devices)) == 1
 
@@ -112,6 +113,48 @@ def test_expired_subscription_cannot_renew(online_mode):
         con.execute("UPDATE activation_codes SET expires_at='2000-01-01T00:00:00+00:00'")
     with pytest.raises(device_auth.DeviceAuthError):
         sessions.update(lease)
+
+
+def test_tariff_downgrade_keeps_oldest_sessions_only(online_mode):
+    with sqlite3.connect(online_mode['database_path']) as con:
+        con.execute("UPDATE activation_codes SET max_devices=5, plan='family'")
+
+    second = add_device(online_mode, 'downgrade-second')
+    third = add_device(online_mode, 'downgrade-third')
+    first_token = acquire(online_mode)['lease_token']
+    second_token = acquire(second)['lease_token']
+    third_token = acquire(third)['lease_token']
+
+    with sqlite3.connect(online_mode['database_path']) as con:
+        con.execute("UPDATE activation_codes SET max_devices=1, plan='personal'")
+
+    assert sessions.update(first_token)['ok']
+    with pytest.raises(device_auth.DeviceAuthError, match='concurrent_limit_reached'):
+        sessions.update(second_token)
+    with pytest.raises(device_auth.DeviceAuthError, match='concurrent_limit_reached'):
+        sessions.update(third_token)
+
+    with sqlite3.connect(online_mode['database_path']) as con:
+        con.row_factory = sqlite3.Row
+        assert sessions.count(con, online_mode['code']) == 1
+
+
+def test_tariff_downgrade_blocks_new_stream_from_extra_live_session(online_mode):
+    with sqlite3.connect(online_mode['database_path']) as con:
+        con.execute("UPDATE activation_codes SET max_devices=2, plan='personal_plus'")
+
+    second = add_device(online_mode, 'downgrade-present')
+    first_token = acquire(online_mode)['lease_token']
+    second_token = acquire(second)['lease_token']
+
+    with sqlite3.connect(online_mode['database_path']) as con:
+        con.execute("UPDATE activation_codes SET max_devices=1, plan='personal'")
+
+    assert sessions.update(first_token)['ok']
+    with pytest.raises(device_auth.DeviceAuthError, match='concurrent_limit_reached'):
+        acquire(second)
+    with pytest.raises(device_auth.DeviceAuthError, match='session_expired'):
+        sessions.update(second_token)
 
 
 def test_lease_is_minimal_and_removed_on_release(online_mode):
