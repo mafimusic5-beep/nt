@@ -12,6 +12,7 @@ from src.backend.core.assignment_port_lifecycle import install_assignment_port_l
 from src.backend.core.bootstrap import seed_plans
 from src.backend.core.healthcheck_scheduler import start_healthcheck_scheduler, stop_healthcheck_scheduler
 from src.backend.core.logging import setup_logging
+from src.backend.middleware.device_proof import DeviceProofMiddleware
 from src.backend.middleware.rate_limit import RateLimitMiddleware
 from src.common.config import settings
 from src.common.db import SessionLocal
@@ -19,6 +20,7 @@ from src.common.db import SessionLocal
 app = FastAPI(title="Emery VPN Orchestrator Backend", version="0.1.0")
 app.add_exception_handler(HTTPException, http_exception_with_diagnostics)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(DeviceProofMiddleware)
 app.include_router(compat_router)
 app.include_router(api_router)
 app.include_router(admin_codes_router)
