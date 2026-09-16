@@ -31,6 +31,7 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationConfirmRequest,
     PoolReservationConfirmResponse,
     PoolReservationPrepareRequest,
+    PoolReservationRebindRequest,
     PoolReservationResponse,
 )
 from src.backend.utils.debug_log import agent_log
@@ -195,6 +196,18 @@ def internal_prepare_pool_assignment(
     db: Session = Depends(get_db),
 ):
     return PoolAssignmentService(db).prepare(payload)
+
+
+@router.post(
+    "/internal/pool/assignments/rebind",
+    response_model=PoolReservationResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_rebind_pool_assignment(
+    payload: PoolReservationRebindRequest,
+    db: Session = Depends(get_db),
+):
+    return PoolAssignmentService(db).rebind(payload)
 
 
 @router.post(

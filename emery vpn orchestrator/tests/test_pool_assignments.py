@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from src.backend.schemas.pool_bridge import (
     PoolReservationConfirmRequest,
     PoolReservationPrepareRequest,
+    PoolReservationRebindRequest,
 )
 from src.backend.services.pool_assignment_service import PoolAssignmentService
 from src.backend.services.xray_credential_service import CredentialMutationResult
@@ -240,3 +241,59 @@ def test_unconfirmed_assignment_is_revoked_and_can_be_renewed(db_session, monkey
     assert renewed.config_revision == 2
     assert renewed.config != prepared.config
     assert db_session.get(VpnNode, node.id).current_clients == 1
+
+
+def test_rebind_keeps_same_capacity_and_xray_resource(db_session):
+    node = add_node(db_session)
+    transport = FakeCredentialTransport()
+    service = PoolAssignmentService(db_session, transport)
+    prepared = service.prepare(request("a"))
+    service.confirm(
+        PoolReservationConfirmRequest(
+            assignment_id=prepared.assignment_id,
+            confirmation_token=prepared.confirmation_token,
+        )
+    )
+    before = db_session.get(VpnAssignment, prepared.assignment_id)
+    before_uuid = before.client_uuid
+    before_port = before.client_port
+    before_revision = before.config_revision
+    before_clients = db_session.get(VpnNode, node.id).current_clients
+
+    rebound = service.rebind(
+        PoolReservationRebindRequest(
+            assignment_id=prepared.assignment_id,
+            subject_key="b" * 64,
+            entitlement_hash="c" * 64,
+            entitlement_expires_at=datetime.now(timezone.utc) + timedelta(days=60),
+        )
+    )
+
+    current = db_session.get(VpnAssignment, prepared.assignment_id)
+    assert rebound.assignment_id == prepared.assignment_id
+    assert rebound.config == prepared.config
+    assert current.subject_key == "b" * 64
+    assert current.client_uuid == before_uuid
+    assert current.client_port == before_port
+    assert current.config_revision == before_revision
+    assert db_session.get(VpnNode, node.id).current_clients == before_clients
+    assert transport.installed.count(prepared.assignment_id) == 1
+
+
+def test_rebind_refuses_inactive_assignment(db_session):
+    add_node(db_session)
+    service = PoolAssignmentService(db_session, FakeCredentialTransport())
+    prepared = service.prepare(request("a"))
+
+    with pytest.raises(HTTPException) as error:
+        service.rebind(
+            PoolReservationRebindRequest(
+                assignment_id=prepared.assignment_id,
+                subject_key="b" * 64,
+                entitlement_hash="c" * 64,
+                entitlement_expires_at=datetime.now(timezone.utc) + timedelta(days=60),
+            )
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "assignment_not_active"

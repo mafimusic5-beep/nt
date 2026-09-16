@@ -18,6 +18,7 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationConfirmRequest,
     PoolReservationConfirmResponse,
     PoolReservationPrepareRequest,
+    PoolReservationRebindRequest,
     PoolReservationResponse,
 )
 from src.backend.services.xray_credential_service import (
@@ -399,6 +400,48 @@ class PoolAssignmentService:
         )
         self.db.commit()
         return self._response(assignment, confirmation_token=confirmation_token)
+
+    def rebind(self, req: PoolReservationRebindRequest) -> PoolReservationResponse:
+        """Change the current resource owner without allocating or reinstalling Xray."""
+        self._require_enabled()
+        now = self._now()
+        requested_expiry = self._as_utc(req.entitlement_expires_at)
+        if requested_expiry <= now:
+            raise HTTPException(status_code=403, detail="entitlement_expired")
+
+        assignment = self.db.get(VpnAssignment, req.assignment_id)
+        if assignment is None:
+            raise HTTPException(status_code=404, detail="assignment_not_found")
+        if assignment.status != "active" or not assignment.device_gate_enforced:
+            raise HTTPException(status_code=409, detail="assignment_not_active")
+
+        conflict = self.db.scalar(
+            select(VpnAssignment).where(
+                VpnAssignment.subject_type == req.subject_type,
+                VpnAssignment.subject_key == req.subject_key,
+                VpnAssignment.id != assignment.id,
+            )
+        )
+        if conflict is not None:
+            raise HTTPException(status_code=409, detail="assignment_subject_conflict")
+
+        assignment.subject_type = req.subject_type
+        assignment.subject_key = req.subject_key
+        stored_expiry = self._as_utc(assignment.entitlement_expires_at)
+        if requested_expiry >= stored_expiry:
+            assignment.entitlement_hash = req.entitlement_hash
+            assignment.entitlement_expires_at = req.entitlement_expires_at
+        self.audit.write(
+            "system",
+            "pool_bridge",
+            "vpn_assignment_rebound",
+            "vpn_assignment",
+            str(assignment.id),
+            {"node_id": assignment.node_id},
+        )
+        self.db.commit()
+        self.db.refresh(assignment)
+        return self._response(assignment)
 
     def confirm(self, req: PoolReservationConfirmRequest) -> PoolReservationConfirmResponse:
         self._require_enabled()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -10,7 +11,11 @@ from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
+import concurrent_sessions
+from concurrent_resource_allocator import assignment_for_device, plan_resource, transfer_assignment
+
 from config import (
+    DATABASE_PATH,
     POOL_BRIDGE_API_KEY,
     POOL_BRIDGE_ENABLED,
     POOL_BRIDGE_PSEUDONYM_KEY,
@@ -212,6 +217,35 @@ def prepare_assignment(
     return result
 
 
+def rebind_assignment(
+    *,
+    assignment_id: int,
+    formatted_code: str,
+    device_id: str,
+    plan: str,
+    expires_at: str,
+) -> dict[str, Any]:
+    """Move pool ownership metadata without creating a new Xray resource."""
+    if assignment_id <= 0:
+        raise PoolBridgeError('invalid_pool_assignment', 409)
+    entitlement = _entitlement_hash(formatted_code, plan, expires_at)
+    response = _request(
+        '/api/v1/internal/pool/assignments/rebind',
+        {
+            'assignment_id': assignment_id,
+            'subject_type': 'legacy_device',
+            'subject_key': _subject_key(formatted_code, device_id),
+            'entitlement_hash': entitlement,
+            'entitlement_expires_at': expires_at,
+        },
+    )
+    result = _validated_assignment(response)
+    if int(result.get('pool_assignment_id') or 0) != assignment_id:
+        raise PoolBridgeError('pool_assignment_identity_changed', 503)
+    result['pool_entitlement_hash'] = entitlement
+    return result
+
+
 def confirm_assignment(assignment_id: int, confirmation_token: str) -> dict[str, Any]:
     if assignment_id <= 0 or len(confirmation_token.strip()) < 32:
         raise PoolBridgeError('invalid_pool_confirmation', 503)
@@ -246,8 +280,117 @@ def confirm_persisted_assignment(assignment: dict[str, Any]) -> dict[str, Any]:
     return assignment
 
 
+def _concurrent_entitlement_row(con: sqlite3.Connection, raw_code: str, device_id: str):
+    from storage import format_code
+
+    return con.execute(
+        """
+        SELECT c.code, c.plan, c.expires_at, c.max_devices, d.id AS device_row_id
+        FROM activation_codes c
+        JOIN code_devices d ON d.code = c.code
+        WHERE c.code = ?
+          AND c.status = 'active'
+          AND d.device_id = ?
+          AND d.active = 1
+        """,
+        (format_code(raw_code), device_id.strip()[:128]),
+    ).fetchone()
+
+
+def _refresh_concurrent_assignment(raw_code: str, device_id: str) -> dict[str, Any]:
+    from storage import save_device_pool_assignment, save_device_pool_assignment_in_connection
+
+    con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
+    con.row_factory = sqlite3.Row
+    con.execute('PRAGMA foreign_keys = ON')
+    assignment: dict[str, Any] | None = None
+    code = ''
+    plan = ''
+    expires_at = ''
+    safe_device_id = device_id.strip()[:128]
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        concurrent_sessions.ensure_storage(con)
+        row = _concurrent_entitlement_row(con, raw_code, safe_device_id)
+        if row is None:
+            raise PoolBridgeError('device_not_registered', 403)
+        code = str(row['code'])
+        plan = str(row['plan'] or '')
+        expires_at = str(row['expires_at'] or '').strip()
+        if not expires_at:
+            raise PoolBridgeError('entitlement_expiry_missing', 503)
+        limit = int(row['max_devices'] or 0)
+        if limit not in (1, 2, 5):
+            raise PoolBridgeError('plan_limit_mismatch', 403)
+
+        decision = plan_resource(
+            con,
+            code=code,
+            requesting_device_row_id=int(row['device_row_id']),
+            limit=limit,
+        )
+        if decision.action == 'busy':
+            raise PoolBridgeError('concurrent_limit_reached', 409)
+        if decision.action == 'owned':
+            assignment = assignment_for_device(con, device_row_id=int(row['device_row_id']))
+            if assignment is None:
+                raise PoolBridgeError('pool_assignment_missing', 409)
+        elif decision.action == 'recycle':
+            if decision.recyclable is None:
+                raise PoolBridgeError('pool_assignment_race', 409)
+            assignment = transfer_assignment(
+                con,
+                from_device_row_id=decision.recyclable.device_row_id,
+                to_device_row_id=int(row['device_row_id']),
+            )
+        elif decision.action == 'allocate':
+            assignment = prepare_assignment(
+                formatted_code=code,
+                device_id=safe_device_id,
+                plan=plan,
+                expires_at=expires_at,
+            )
+            try:
+                save_device_pool_assignment_in_connection(
+                    con, code, safe_device_id, assignment
+                )
+            except sqlite3.IntegrityError as exc:
+                raise PoolBridgeError('pool_assignment_race', 409) from exc
+        else:
+            raise PoolBridgeError('pool_assignment_race', 409)
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+    if assignment is None:
+        raise PoolBridgeError('pool_assignment_missing', 409)
+    if assignment.get('pool_status') == 'pending' and assignment.get('pool_confirmation_token'):
+        assignment['confirmation_required'] = True
+        assignment = confirm_persisted_assignment(assignment)
+    if assignment.get('pool_status') != 'active':
+        raise PoolBridgeError('pool_assignment_not_active', 409)
+
+    # Rebind is capacity-neutral and idempotent. It also repairs a previous
+    # partial transfer where local ownership committed but the pool was briefly
+    # unreachable before its subject metadata could be updated.
+    assignment = rebind_assignment(
+        assignment_id=int(assignment.get('pool_assignment_id') or 0),
+        formatted_code=code,
+        device_id=safe_device_id,
+        plan=plan,
+        expires_at=expires_at,
+    )
+    save_device_pool_assignment(code, safe_device_id, assignment)
+    return assignment
+
+
 def refresh_stored_assignment(raw_code: str, device_id: str) -> dict[str, Any]:
-    """Refresh entitlement/config for an already authenticated legacy device."""
+    """Refresh or acquire the resource currently needed by this installation."""
+    if concurrent_sessions.enabled():
+        return _refresh_concurrent_assignment(raw_code, device_id)
 
     from storage import (
         get_device_pool_assignment,
@@ -265,8 +408,6 @@ def refresh_stored_assignment(raw_code: str, device_id: str) -> dict[str, Any]:
             stored['confirmation_required'] = True
             return confirm_persisted_assignment(stored)
         except PoolBridgeError:
-            # The token may have expired after an API restart.  Re-preparing is
-            # idempotent for the same pseudonymous subject and rotates the token.
             pass
 
     prepared = prepare_assignment(

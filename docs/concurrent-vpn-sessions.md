@@ -31,12 +31,11 @@ that the whole service is anonymous or log-free on the basis of this feature.
 
 ## Blockers before merge or deployment
 
-1. Pool allocation is still tied to installation registration. Removing the
-   registration limit allows repeated installs to reserve additional Xray ports
-   and node capacity. Redesign allocation to reserve at most the paid concurrent
-   capacity, with safe reassignment only after the old lease is closed/expired;
-   preserve regional policy and per-device speed limits. Do not enable this
-   patch alone: it would regress capacity use despite correct admission limits.
+1. Pool allocation is now separated from registration: at most the paid 1/2/5
+   concurrent resources are owned per code, and an assignment may move only from
+   a device with no live lease. Pool rebind keeps the same Xray UUID/port and does
+   not increment node capacity. This still requires integration/production
+   validation before the feature flags may be enabled.
 2. Compile/test Android with the real SDK and dependencies. This environment
    could not download Gradle 9.4.1 (`Network is unreachable`); no APK was built.
    Exercise startup rejection, idle VPN, screen-off/Doze, mobile/Wi-Fi handover,

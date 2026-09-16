@@ -370,6 +370,14 @@ def activate(payload: ActivationRequest, request: Request):
 
     if pool_bridge_enabled():
         assignment = access.get('vpn_assignment')
+        if concurrent_sessions.enabled():
+            try:
+                assignment = refresh_stored_assignment(payload.code, header_device_id)
+            except PoolBridgeError as error:
+                return JSONResponse(
+                    status_code=error.status_code,
+                    content={'ok': False, 'reason': error.reason},
+                )
         if not isinstance(assignment, dict) or assignment.get('pool_status') != 'active':
             return JSONResponse(status_code=503, content={'ok': False, 'reason': 'pool_assignment_unconfirmed'})
         server = _pool_assignment_server(assignment)

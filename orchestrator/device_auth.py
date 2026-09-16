@@ -711,7 +711,7 @@ def register_device(
             activation=activation,
             current_device_id=safe_device_id,
         )
-        if pool_bridge_enabled():
+        if pool_bridge_enabled() and not concurrent_sessions.enabled():
             expires_at = str(activation['expires_at'] or '').strip()
             if not expires_at:
                 raise DeviceAuthError('entitlement_expiry_missing', 503)
