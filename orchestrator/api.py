@@ -1,4 +1,6 @@
 import asyncio
+import concurrent_sessions
+import sqlite3
 import secrets
 import time
 from collections import defaultdict, deque
@@ -86,6 +88,7 @@ class RegionalPolicyRequest(BaseModel):
 
 
 class DeviceGateAuthorizeRequest(BaseModel):
+    lease_protocol: int = Field(default=0, ge=0, le=1)
     assignment_id: int = Field(gt=0)
     node_id: int = Field(gt=0)
     gate_server_name: str = Field(min_length=1, max_length=255)
@@ -212,6 +215,7 @@ def device_gate_authorize(payload: DeviceGateAuthorizeRequest, request: Request)
         return _auth_error(DeviceAuthError('device_gate_forbidden', 403))
     try:
         return authorize_gateway_connection(
+            lease_protocol=payload.lease_protocol,
             assignment_id=payload.assignment_id,
             node_id=payload.node_id,
             gate_server_name=payload.gate_server_name,
@@ -388,6 +392,7 @@ def activate(payload: ActivationRequest, request: Request):
         'plan': access.get('plan_code'),
         'planTitle': access.get('plan_name'),
         'usedDevices': access.get('devices_used'),
+        'limit_mode': access.get('limit_mode', 'registered'),
         'maxDevices': access.get('devices_limit'),
         'expiresAt': access.get('expires_at'),
         'devices': access.get('devices'),
@@ -493,3 +498,41 @@ async def sync_config(payload: ConfigSyncRequest, request: Request):
         'revision': snapshot['revision'],
         'server': snapshot['server'],
     }
+
+
+class DeviceGateLeaseRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=128)
+    release: bool = False
+
+
+@app.post('/internal/device-gate/lease')
+def device_gate_lease(payload: DeviceGateLeaseRequest, request: Request):
+    supplied = request.headers.get('x-device-gate-key', '').strip()
+    if len(DEVICE_GATE_API_KEY) < 32 or not secrets.compare_digest(supplied, DEVICE_GATE_API_KEY):
+        return _auth_error(DeviceAuthError('device_gate_forbidden', 403))
+    try:
+        return concurrent_sessions.update(payload.token, release=payload.release)
+    except DeviceAuthError as error:
+        return _auth_error(error)
+
+
+@app.on_event('startup')
+async def start_lease_cleanup():
+    async def cleanup():
+        while True:
+            if concurrent_sessions.enabled():
+                try:
+                    await asyncio.to_thread(concurrent_sessions.purge)
+                except sqlite3.Error:
+                    # Retry cleanup without writing identifiers or SQL to logs.
+                    pass
+            await asyncio.sleep(30)
+    app.state.lease_cleanup = asyncio.create_task(cleanup())
+
+
+@app.on_event('shutdown')
+async def stop_lease_cleanup():
+    task = getattr(app.state, 'lease_cleanup', None)
+    if task:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

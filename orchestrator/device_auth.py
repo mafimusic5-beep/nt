@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import concurrent_sessions
 import hashlib
 import sqlite3
 import time
@@ -75,6 +76,8 @@ def _connect() -> sqlite3.Connection:
     con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
     con.row_factory = sqlite3.Row
     con.execute('PRAGMA foreign_keys = ON')
+    if concurrent_sessions.enabled():
+        concurrent_sessions.ensure_storage(con)
     return con
 
 
@@ -441,8 +444,9 @@ def _profile_payload(
         'device_name': _public_device_name(str(current['device_name'] or '')),
         'plan_name': plan_title,
         'plan_code': activation['plan'] or '',
-        'devices_used': len(active_rows),
+        'devices_used': concurrent_sessions.count(con, str(activation['code'])) if concurrent_sessions.enabled() else len(active_rows),
         'devices_limit': limit,
+        'limit_mode': 'concurrent' if concurrent_sessions.enabled() else 'registered',
         'vpn_enabled': True,
         'router_enabled': False,
         'expires_at': activation['expires_at'],
@@ -521,7 +525,7 @@ def validate_device_registration(
             'SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1',
             (code,),
         ).fetchone()[0])
-        if not already_registered and active_count >= limit:
+        if not concurrent_sessions.enabled() and not already_registered and active_count >= limit:
             raise DeviceAuthError('device_limit_reached', 409)
 
         return {
@@ -530,8 +534,9 @@ def validate_device_registration(
             'already_registered': already_registered,
             'plan_name': plan_title,
             'plan_code': activation['plan'] or '',
-            'devices_used': active_count,
+            'devices_used': concurrent_sessions.count(con, code) if concurrent_sessions.enabled() else active_count,
             'devices_limit': limit,
+        'limit_mode': 'concurrent' if concurrent_sessions.enabled() else 'registered',
             'expires_at': activation['expires_at'],
         }
     finally:
@@ -657,7 +662,7 @@ def register_device(
                 ''',
                 (code,),
             ).fetchall()
-            if len(active_rows) >= limit:
+            if not concurrent_sessions.enabled() and len(active_rows) >= limit:
                 # Paid slots are immutable: neither a user action nor a new
                 # installation silently replaces an already registered device.
                 raise DeviceAuthError('device_limit_reached', 409)
@@ -847,6 +852,7 @@ def authorize_gateway_connection(
     client_nonce: str,
     signature_base64: str,
     signature_algorithm: str,
+    lease_protocol: int = 0,
 ) -> Dict[str, Any]:
     """Authorize one TCP connection using the registered device key.
 
@@ -966,8 +972,16 @@ def authorize_gateway_connection(
             'UPDATE code_devices SET last_seen_at = ? WHERE id = ?',
             (now_iso(), int(row['device_row_id'])),
         )
+        lease = {}
+        if concurrent_sessions.enabled():
+            if lease_protocol != 1:
+                raise DeviceAuthError('gateway_upgrade_required', 503)
+            limit, _ = _plan_limit_and_title(str(row['plan'] or ''), int(row['max_devices'] or 1))
+            lease = concurrent_sessions.acquire(con, row, limit=limit,
+                assignment_id=assignment_id, node_id=node_id)
         con.commit()
         return {
+            **lease,
             'allowed': True,
             'target_host': '127.0.0.1',
             'target_port': target_port,

@@ -10,7 +10,6 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
 import java.util.Collections
@@ -64,6 +63,26 @@ class DeviceBoundVlessProxy(
             val listener = bindListener(descriptor.localPort)
             serverSocket = listener
             running = true
+            // Authenticate before reporting successful startup. Keep one
+            // control connection alive even when the user has no traffic.
+            val session = openGateway(resolved.gatewayAddress, descriptor, sessionOnly = true)
+            if (session != null) {
+                executor.execute {
+                    try {
+                        while (running) {
+                            session.outputStream.write("{\"ping\":true}\n".toByteArray(Charsets.UTF_8))
+                            session.outputStream.flush()
+                            check(JSONObject(readControlLine(session.inputStream)).optBoolean("ok"))
+                            Thread.sleep(15_000)
+                        }
+                    } catch (_: Exception) {
+                        if (running) stop()
+                    } finally {
+                        session.closeQuietly()
+                        openSockets -= session
+                    }
+                }
+            }
             executor.execute { acceptLoop(listener, resolved.gatewayAddress, descriptor) }
             true
         }.getOrElse { error ->
@@ -136,11 +155,11 @@ class DeviceBoundVlessProxy(
         }
     }
 
-    private fun handleConnection(
-        localSocket: Socket,
+    private fun openGateway(
         gatewayAddress: InetAddress,
         descriptor: EmeryDeviceGateConfig.Descriptor,
-    ) {
+        sessionOnly: Boolean,
+    ): SSLSocket? {
         var gatewaySocket: SSLSocket? = null
         var rawGatewaySocket: Socket? = null
         var stage = "socket_create"
@@ -182,7 +201,13 @@ class DeviceBoundVlessProxy(
             stage = "challenge"
             val challenge = JSONObject(readControlLine(tlsSocket.inputStream))
             check(challenge.length() == 3)
-            check(challenge.getInt("version") == PROTOCOL_VERSION)
+            val protocolVersion = challenge.getInt("version")
+            check(protocolVersion == PROTOCOL_VERSION || protocolVersion == 2)
+            if (sessionOnly && protocolVersion == PROTOCOL_VERSION) {
+                tlsSocket.closeQuietly()
+                openSockets -= tlsSocket
+                return null
+            }
             val serverIssuedAt = challenge.getString("server_issued_at")
             val serverNonce = challenge.getString("server_nonce")
             check(serverNonce.length in 16..128)
@@ -198,7 +223,7 @@ class DeviceBoundVlessProxy(
                 serverNonce = serverNonce,
             )
             val proofJson = JSONObject()
-                .put("version", PROTOCOL_VERSION)
+                .put("version", protocolVersion)
                 .put("assignment_id", descriptor.assignmentId)
                 .put("node_id", descriptor.nodeId)
                 .put("gate_server_name", descriptor.serverName)
@@ -210,35 +235,48 @@ class DeviceBoundVlessProxy(
                 .put("client_nonce", proof.clientNonce)
                 .put("signature", proof.signatureBase64)
                 .put("signature_algorithm", proof.signatureAlgorithm)
+            if (protocolVersion == 2) proofJson.put("session_only", sessionOnly)
             tlsSocket.outputStream.write((proofJson.toString() + "\n").toByteArray(Charsets.UTF_8))
             tlsSocket.outputStream.flush()
 
             stage = "authorization"
             val authorization = JSONObject(readControlLine(tlsSocket.inputStream))
             check(authorization.length() == 1 && authorization.optBoolean("ok", false))
-            tlsSocket.soTimeout = 0
-            localSocket.soTimeout = 0
+            tlsSocket.soTimeout = if (sessionOnly) CONTROL_TIMEOUT_MILLIS else 0
+            return tlsSocket
+        } catch (error: Exception) {
+            gatewaySocket?.closeQuietly()
+            rawGatewaySocket?.closeQuietly()
+            gatewaySocket?.let { openSockets -= it }
+            rawGatewaySocket?.let { openSockets -= it }
+            Log.w(AppConfig.TAG, "Device gate connection rejected: stage=$stage error=${error.javaClass.simpleName}")
+            throw error
+        }
+    }
 
+    private fun handleConnection(
+        localSocket: Socket,
+        gatewayAddress: InetAddress,
+        descriptor: EmeryDeviceGateConfig.Descriptor,
+    ) {
+        var gatewaySocket: SSLSocket? = null
+        try {
+            val tlsSocket = checkNotNull(openGateway(gatewayAddress, descriptor, sessionOnly = false))
+            gatewaySocket = tlsSocket
+            localSocket.soTimeout = 0
             val upstream = executor.submit {
                 runCatching { copy(localSocket.inputStream, tlsSocket.outputStream) }
                 tlsSocket.closeQuietly()
             }
             runCatching { copy(tlsSocket.inputStream, localSocket.outputStream) }
             upstream.cancel(true)
-        } catch (_: SocketTimeoutException) {
-            Log.w(AppConfig.TAG, "Device gate connection timed out: stage=$stage")
-        } catch (error: Exception) {
-            Log.w(
-                AppConfig.TAG,
-                "Device gate connection rejected: stage=$stage error=${error.javaClass.simpleName}",
-            )
+        } catch (_: Exception) {
+            // Failed authorization never forwards user traffic.
         } finally {
             localSocket.closeQuietly()
             gatewaySocket?.closeQuietly()
-            rawGatewaySocket?.closeQuietly()
             openSockets -= localSocket
-            gatewaySocket?.let { socket -> openSockets -= socket }
-            rawGatewaySocket?.let { socket -> openSockets -= socket }
+            gatewaySocket?.let { openSockets -= it }
         }
     }
 

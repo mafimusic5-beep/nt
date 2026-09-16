@@ -65,6 +65,7 @@ class Config:
     control_timeout_seconds: int
     connect_timeout_seconds: int
     max_connections: int
+    concurrent_sessions: bool = False
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -95,6 +96,7 @@ class Config:
         if not re.fullmatch(r"[a-f0-9]{64}", spki_sha256):
             raise GateError("EMERY_GATE_SPKI_SHA256 must be a lowercase SHA-256 hex digest")
         return cls(
+            concurrent_sessions=os.getenv("EMERY_GATE_CONCURRENT_SESSIONS", "false").lower() == "true",
             bind_host=os.getenv("EMERY_GATE_BIND_HOST", "0.0.0.0").strip(),
             bind_port=_env_int("EMERY_GATE_BIND_PORT", 24443, 1, 65535),
             node_id=_env_int("EMERY_GATE_NODE_ID", 0, 1, 2_147_483_647),
@@ -152,9 +154,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _authorize_sync(config: Config, proof: dict[str, Any]) -> dict[str, Any]:
+def _authorize_sync(config: Config, proof: dict[str, Any], *, lease: bool = False) -> dict[str, Any]:
     request = urllib.request.Request(
-        config.authorize_url,
+        config.authorize_url.removesuffix("/authorize") + "/lease" if lease else config.authorize_url,
         data=json.dumps(proof, separators=(",", ":")).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -201,9 +203,13 @@ def _validated_proof(
         "signature",
         "signature_algorithm",
     }
+    if config.concurrent_sessions:
+        expected_keys.add("session_only")
+        if not isinstance(payload.get("session_only"), bool):
+            raise GateError("invalid session mode")
     if set(payload) != expected_keys:
         raise GateError("invalid proof fields")
-    if payload.get("version") != PROTOCOL_VERSION:
+    if payload.get("version") != (2 if config.concurrent_sessions else PROTOCOL_VERSION):
         raise GateError("unsupported protocol version")
     if payload.get("node_id") != config.node_id:
         raise GateError("wrong node")
@@ -215,7 +221,7 @@ def _validated_proof(
         raise GateError("challenge mismatch")
     if not secrets.compare_digest(str(payload.get("server_nonce", "")), server_nonce):
         raise GateError("challenge mismatch")
-    return {key: value for key, value in payload.items() if key != "version"}
+    return {key: value for key, value in payload.items() if key not in {"version", "session_only"}}
 
 
 def _validated_target(config: Config, result: dict[str, Any], proof: dict[str, Any]) -> int:
@@ -252,17 +258,48 @@ async def _proxy_bidirectional(
         asyncio.create_task(_pipe(client_reader, target_writer)),
         asyncio.create_task(_pipe(target_reader, client_writer)),
     }
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*done, return_exceptions=True)
-    await asyncio.gather(*pending, return_exceptions=True)
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class DeviceGate:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.slots = asyncio.Semaphore(config.max_connections)
+
+    async def _until_done(self, tasks):
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+
+    async def _keepalive(self, reader, writer):
+        while True:
+            payload = await _read_json_line(reader, 35)
+            if payload != {"ping": True}:
+                raise GateError("invalid keepalive")
+            writer.write(_json_line({"ok": True}))
+            await writer.drain()
+
+    async def _renew(self, token, started):
+        # Conservative deadline is measured from BEFORE the control request.
+        # No forwarding may outlive the authority's 60-second lease.
+        deadline = started + 50
+        while True:
+            await asyncio.sleep(15)
+            started = time.monotonic()
+            remaining = deadline - started
+            if remaining <= 0:
+                raise GateError("lease expired")
+            result = await asyncio.wait_for(asyncio.to_thread(_authorize_sync,
+                self.config, {"token": token}, lease=True),
+                min(remaining, self.config.control_timeout_seconds + 1))
+            if result.get("ok") is not True or result.get("lease_seconds") != 60:
+                raise GateError("lease renewal denied")
+            deadline = started + 50
 
     async def handle(
         self,
@@ -279,13 +316,15 @@ class DeviceGate:
         await self.slots.acquire()
         target_writer: asyncio.StreamWriter | None = None
         control_complete = False
+        lease_token = None
+        tasks = set()
         try:
             server_issued_at = str(int(time.time() * 1000))
             server_nonce = secrets.token_urlsafe(32)
             client_writer.write(
                 _json_line(
                     {
-                        "version": PROTOCOL_VERSION,
+                        "version": 2 if self.config.concurrent_sessions else PROTOCOL_VERSION,
                         "server_issued_at": server_issued_at,
                         "server_nonce": server_nonce,
                     }
@@ -298,11 +337,25 @@ class DeviceGate:
             proof = _validated_proof(
                 self.config, payload, server_issued_at, server_nonce
             )
+            if self.config.concurrent_sessions:
+                proof["lease_protocol"] = 1
+            lease_started = time.monotonic()
             result = await asyncio.wait_for(
                 asyncio.to_thread(_authorize_sync, self.config, proof),
                 self.config.control_timeout_seconds + 1,
             )
+            lease_token = result.get("lease_token")
+            if self.config.concurrent_sessions and (not isinstance(lease_token, str) or len(lease_token) < 32):
+                raise GateError("lease-aware backend required")
             target_port = _validated_target(self.config, result, proof)
+            if self.config.concurrent_sessions and payload["session_only"]:
+                client_writer.write(_json_line({"ok": True}))
+                await client_writer.drain()
+                control_complete = True
+                tasks = {asyncio.create_task(self._keepalive(client_reader, client_writer)),
+                         asyncio.create_task(self._renew(lease_token, lease_started))}
+                await self._until_done(tasks)
+                return
             target_reader, target_writer = await asyncio.wait_for(
                 asyncio.open_connection("127.0.0.1", target_port),
                 self.config.connect_timeout_seconds,
@@ -310,9 +363,11 @@ class DeviceGate:
             client_writer.write(_json_line({"ok": True}))
             await client_writer.drain()
             control_complete = True
-            await _proxy_bidirectional(
-                client_reader, client_writer, target_reader, target_writer
-            )
+            tasks = {asyncio.create_task(_proxy_bidirectional(
+                client_reader, client_writer, target_reader, target_writer))}
+            if lease_token:
+                tasks.add(asyncio.create_task(self._renew(lease_token, lease_started)))
+            await self._until_done(tasks)
         except (GateError, asyncio.TimeoutError, OSError) as exc:
             if control_complete:
                 LOGGER.info("authorized connection closed: %s", type(exc).__name__)
@@ -325,6 +380,9 @@ class DeviceGate:
                 except (ConnectionError, OSError):
                     pass
         finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             if target_writer is not None:
                 target_writer.close()
                 try:
@@ -338,6 +396,15 @@ class DeviceGate:
                 pass
             finally:
                 self.slots.release()
+            # Close the sockets BEFORE releasing admission; expiry handles
+            # lost release messages without trusting a client disconnect API.
+            if lease_token:
+                try:
+                    await asyncio.wait_for(asyncio.to_thread(_authorize_sync,
+                        self.config, {"token": lease_token, "release": True}, lease=True),
+                        self.config.control_timeout_seconds + 1)
+                except (GateError, asyncio.TimeoutError, OSError):
+                    pass
 
 
 async def _main() -> None:
