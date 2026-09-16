@@ -7,7 +7,8 @@ import time
 from collections import defaultdict, deque
 from typing import Deque, Dict, Optional
 
-from config import CHECKOUT_SECRET
+from config import CHECKOUT_SECRET, POOL_BRIDGE_API_KEY
+from device_auth import DeviceAuthError, authenticate_registered_device
 from device_recovery_routes_v2 import router as device_recovery_router
 from storage import create_checkout_code, get_activation_code, get_checkout_order, renew_activation_code
 
@@ -48,6 +49,17 @@ class CheckoutCallbackRequest(BaseModel):
     months: int = Field(default=1, ge=MIN_MONTHS, le=MAX_MONTHS)
     mode: str = Field(default='new', max_length=16)
     code: str = Field(default='', max_length=64)
+
+
+class DeviceAuthVerifyRequest(BaseModel):
+    access_key: str = Field(min_length=1, max_length=64)
+    method: str = Field(pattern=r'^(GET|POST)$')
+    path: str = Field(min_length=1, max_length=256)
+    device_id: str = Field(min_length=4, max_length=128)
+    timestamp: str = Field(min_length=1, max_length=32)
+    nonce: str = Field(min_length=16, max_length=128)
+    signature: str = Field(min_length=16, max_length=2048)
+    signature_algorithm: str = Field(default='SHA256withECDSA', max_length=64)
 
 
 def limited(key: str) -> bool:
@@ -169,6 +181,59 @@ def renewal_error_response(result: dict):
     else:
         status = 400
     return JSONResponse(status_code=status, content=result)
+
+
+@router.post('/internal/device-auth/verify')
+def verify_device_auth(
+    payload: DeviceAuthVerifyRequest,
+    x_pool_bridge_key: str = Header(default='', alias='X-Pool-Bridge-Key'),
+):
+    supplied_key = x_pool_bridge_key.strip()
+    if (
+        not POOL_BRIDGE_API_KEY
+        or not supplied_key
+        or not secrets.compare_digest(supplied_key, POOL_BRIDGE_API_KEY)
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={'allowed': False, 'reason': 'device_auth_forbidden'},
+        )
+    if (
+        not payload.path.startswith('/')
+        or '\n' in payload.path
+        or '\r' in payload.path
+        or '\n' in payload.device_id
+        or '\r' in payload.device_id
+    ):
+        return JSONResponse(
+            status_code=400,
+            content={'allowed': False, 'reason': 'device_proof_invalid'},
+        )
+
+    try:
+        result = authenticate_registered_device(
+            raw_code=payload.access_key,
+            method=payload.method,
+            path=payload.path,
+            device_id=payload.device_id,
+            timestamp=payload.timestamp,
+            nonce=payload.nonce,
+            signature_base64=payload.signature,
+            signature_algorithm=payload.signature_algorithm,
+        )
+    except DeviceAuthError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={'allowed': False, 'reason': error.reason},
+        )
+
+    confirmed_device_id = str(result.get('device_id') or '').strip()
+    if not confirmed_device_id or not secrets.compare_digest(confirmed_device_id, payload.device_id):
+        return JSONResponse(
+            status_code=403,
+            content={'allowed': False, 'reason': 'device_mismatch'},
+        )
+    return {'allowed': True, 'device_id': confirmed_device_id}
 
 
 @router.get('/checkout')
