@@ -159,10 +159,9 @@ class TProxyService(
             appendLine("tunnel:")
             appendLine("  mtu: ${SettingsManager.getVpnMtu()}")
             appendLine("  ipv4: ${vpnConfig.ipv4Client}")
-
-            if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PREFER_IPV6)) {
-                appendLine("  ipv6: '${vpnConfig.ipv6Client}'")
-            }
+            // Privacy invariant: Android routes IPv6 into the VPN regardless of the
+            // address-family preference, so HEV must always be able to consume it.
+            appendLine("  ipv6: '${vpnConfig.ipv6Client}'")
 
             appendLine("socks5:")
             appendLine("  port: ${socksPort}")
