@@ -106,12 +106,29 @@ def test_public_region_list_contains_no_physical_node_id(monkeypatch):
     monkeypatch.setattr(privacy_routes, "SubscriptionService", lambda db: fake_service)
     monkeypatch.setattr(privacy_routes, "app_update_required", lambda version: False)
 
-    result = privacy_routes.list_vpn_regions(x_skryon_app_version_code=718, db=object())
+    regions = privacy_routes.list_vpn_regions(x_skryon_app_version_code=718, db=object())
+    legacy_shape = privacy_routes.list_vpn_servers_private(
+        x_skryon_app_version_code=718,
+        db=object(),
+    )
 
-    assert len(result) == 1
-    assert result[0].model_dump() == {
+    assert len(regions) == 1
+    assert regions[0].model_dump() == {
         "region_code": "de",
         "name": "Germany",
         "is_available": True,
     }
-    assert "987654" not in str(result[0].model_dump())
+    assert "987654" not in str(regions[0].model_dump())
+
+    assert len(legacy_shape) == 1
+    assert legacy_shape[0]["id"] == privacy_routes.logical_region_id("de")
+    assert legacy_shape[0]["id"] != 987654
+    assert legacy_shape[0]["city"] == "Germany"
+
+
+def test_logical_region_id_is_stable_and_not_a_small_database_id():
+    first = privacy_routes.logical_region_id("de")
+    second = privacy_routes.logical_region_id("DE")
+
+    assert first == second
+    assert first >= 1_500_000_000
