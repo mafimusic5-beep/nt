@@ -5,10 +5,10 @@ from pydantic import BaseModel, Field, SecretStr, model_validator
 from src.common.location_labels import russian_location_label
 
 
-# Capacity is an operator-controlled scheduling limit, not a hardware profile.
-# The same VPN/policy logic runs on every node; upgrading CPU/RAM only requires
-# raising this value (and the configured dedicated-port range if necessary).
-MAX_CONFIGURABLE_NODE_CAPACITY = 10_000
+# One physical VPN server may serve at most 15 active clients. Operators may
+# temporarily configure a lower value for draining/degraded nodes, but no API
+# path may raise a node above this safety ceiling.
+MAX_CONFIGURABLE_NODE_CAPACITY = 15
 
 
 class GrantSubscriptionRequest(BaseModel):
@@ -28,7 +28,7 @@ class ManualNodeBootstrapRequest(BaseModel):
     endpoint: str
     ssh_user: str = "root"
     ssh_password: SecretStr
-    capacity_clients: int = Field(default=5, ge=1, le=MAX_CONFIGURABLE_NODE_CAPACITY)
+    capacity_clients: int = Field(default=15, ge=1, le=MAX_CONFIGURABLE_NODE_CAPACITY)
     bandwidth_limit_mbps: int = Field(default=1000, ge=1, le=100000)
     per_device_speed_limit_mbps: int = Field(default=100, ge=1, le=10000)
     device_gate_host: str = ""
@@ -75,7 +75,7 @@ class VpnNodeUpsertRequest(BaseModel):
     health_status: str = "unknown"
     load_score: int = 1000
     priority: int = 0
-    capacity_clients: int = Field(default=20, ge=1, le=MAX_CONFIGURABLE_NODE_CAPACITY)
+    capacity_clients: int = Field(default=15, ge=1, le=MAX_CONFIGURABLE_NODE_CAPACITY)
     bandwidth_limit_mbps: int = 600
     current_clients: int = 0
     per_device_speed_limit_mbps: int = 30
