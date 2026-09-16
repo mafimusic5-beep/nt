@@ -58,7 +58,7 @@ def _existing_gated_node(db_session, monkeypatch) -> VpnNode:
             device_gate_spki_sha256="a" * 64,
             status="active",
             health_status="healthy",
-            capacity_clients=20,
+            capacity_clients=15,
             current_clients=2,
             per_device_speed_limit_mbps=30,
         )
