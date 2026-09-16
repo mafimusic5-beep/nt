@@ -2,6 +2,7 @@ package com.v2ray.ang.handler
 
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.security.SkryonSecretStore
 import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10,6 +11,7 @@ private const val PREF_EMERY_DEVICE_ID_LOCAL = "pref_emery_device_id"
 private const val PREF_EMERY_DEVICE_NAME_LOCAL = "pref_emery_device_name"
 private const val PREF_EMERY_DEVICES_LIMIT_LOCAL = "pref_emery_devices_limit"
 private const val PREF_EMERY_DEVICES_JSON_LOCAL = "pref_emery_devices_json_v1"
+private const val PREF_EMERY_ACCESS_KEY_ENCRYPTED = "pref_emery_access_key_encrypted_v1"
 
 data class EmeryDeviceRecord(
     val deviceId: String,
@@ -63,11 +65,11 @@ internal fun validateDeviceLimit(planName: String, devicesUsed: Int, devicesLimi
 object EmeryAccessManager {
 
     fun isActivated(): Boolean {
-        return !MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY).isNullOrBlank()
+        return !readAccessKey().isNullOrBlank()
     }
 
     fun loadProfile(): EmeryAccessProfile? {
-        val key = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY) ?: return null
+        val key = readAccessKey() ?: return null
         if (key.isBlank()) return null
         val expires = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_EXPIRES_AT) ?: return null
         val plan = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_PLAN_NAME) ?: ""
@@ -108,7 +110,7 @@ object EmeryAccessManager {
     }
 
     fun saveProfile(profile: EmeryAccessProfile) {
-        MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ACCESS_KEY, profile.accessKey)
+        saveAccessKey(profile.accessKey)
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_VPN_ENABLED, profile.vpnEnabled)
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ROUTER_ENABLED, profile.routerEnabled)
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_EXPIRES_AT, profile.expiresAt)
@@ -141,6 +143,7 @@ object EmeryAccessManager {
     }
 
     fun clearSession() {
+        MmkvManager.encodeSettings(PREF_EMERY_ACCESS_KEY_ENCRYPTED, "")
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ACCESS_KEY, "")
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_VPN_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ROUTER_ENABLED, false)
@@ -150,6 +153,44 @@ object EmeryAccessManager {
         MmkvManager.encodeSettings(AppConfig.PREF_EMERY_DEVICES_USED, 0)
         MmkvManager.encodeSettings(PREF_EMERY_DEVICES_LIMIT_LOCAL, 0)
         MmkvManager.encodeSettings(PREF_EMERY_DEVICES_JSON_LOCAL, "[]")
+    }
+
+    private fun readAccessKey(): String? {
+        val encrypted = MmkvManager.decodeSettingsString(PREF_EMERY_ACCESS_KEY_ENCRYPTED).orEmpty()
+        if (encrypted.isNotBlank()) {
+            SkryonSecretStore.decrypt(encrypted)?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+
+        val legacy = MmkvManager.decodeSettingsString(AppConfig.PREF_EMERY_ACCESS_KEY)?.trim().orEmpty()
+        if (legacy.isBlank()) return null
+
+        // Seamless migration for existing installations. Only clear the legacy
+        // plaintext value after Keystore encryption has succeeded.
+        val migrated = runCatching { SkryonSecretStore.encrypt(legacy) }.getOrNull().orEmpty()
+        if (migrated.isNotBlank()) {
+            MmkvManager.encodeSettings(PREF_EMERY_ACCESS_KEY_ENCRYPTED, migrated)
+            MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ACCESS_KEY, "")
+        }
+        return legacy
+    }
+
+    private fun saveAccessKey(accessKey: String) {
+        val normalized = accessKey.trim()
+        if (normalized.isBlank()) {
+            MmkvManager.encodeSettings(PREF_EMERY_ACCESS_KEY_ENCRYPTED, "")
+            MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ACCESS_KEY, "")
+            return
+        }
+
+        val encrypted = runCatching { SkryonSecretStore.encrypt(normalized) }.getOrNull().orEmpty()
+        if (encrypted.isNotBlank()) {
+            MmkvManager.encodeSettings(PREF_EMERY_ACCESS_KEY_ENCRYPTED, encrypted)
+            MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ACCESS_KEY, "")
+        } else {
+            // Availability-safe fallback for unusual devices where AndroidKeyStore
+            // is temporarily unavailable. The next load attempts migration again.
+            MmkvManager.encodeSettings(AppConfig.PREF_EMERY_ACCESS_KEY, normalized)
+        }
     }
 
     private fun encodeDevices(devices: List<EmeryDeviceRecord>) {
