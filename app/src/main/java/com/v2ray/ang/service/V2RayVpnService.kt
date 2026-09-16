@@ -302,19 +302,15 @@ class V2RayVpnService : VpnService(), ServiceControl {
             builder.addRoute("0.0.0.0", 0)
         }
 
-        // Russia policy must also capture IPv6; otherwise an app could bypass
-        // the IPv4 restrictions whenever the device has native IPv6 access.
-        val captureIpv6 =
-            RegionalPolicyManager.isRussiaModeEnabled() ||
-                MmkvManager.decodeSettingsBool(AppConfig.PREF_PREFER_IPV6)
-        if (captureIpv6) {
-            builder.addAddress(vpnConfig.ipv6Client, 126)
-            if (bypassLan) {
-                builder.addRoute("2000::", 3) // Currently only 1/8 of total IPv6 is in use
-                builder.addRoute("fc00::", 18) // Xray-core default FakeIPv6 Pool
-            } else {
-                builder.addRoute("::", 0)
-            }
+        // Privacy invariant: IPv6 must never bypass an active VPN merely because
+        // the user does not prefer IPv6 for address resolution. Capture it on every
+        // VPN connection; the transport layer can still prefer IPv4 independently.
+        builder.addAddress(vpnConfig.ipv6Client, 126)
+        if (bypassLan) {
+            builder.addRoute("2000::", 3) // Currently only 1/8 of total IPv6 is in use
+            builder.addRoute("fc00::", 18) // Xray-core default FakeIPv6 Pool
+        } else {
+            builder.addRoute("::", 0)
         }
 
         // Configure DNS servers
@@ -397,7 +393,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     // In bypass mode, disallow the selected apps
                     builder.addDisallowedApplication(it)
                 } else {
-                    // In proxy mode, only allow the selected apps
+                    // In proxy mode, only allow the selected apps (excluding self)
                     builder.addAllowedApplication(it)
                 }
             } catch (e: PackageManager.NameNotFoundException) {
