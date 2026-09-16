@@ -134,6 +134,68 @@ def release_candidate(
     return min(releasable, key=lambda owner: (owner.last_seen_at, owner.device_row_id))
 
 
+def claim_assignment_release(
+    con: sqlite3.Connection,
+    *,
+    device_row_id: int,
+    assignment_id: int,
+    now: float | None = None,
+) -> str | None:
+    """Hide one exact offline owner from allocation while remote Xray release runs."""
+    now_epoch = time.time() if now is None else float(now)
+    live = con.execute(
+        'SELECT 1 FROM vpn_live_leases WHERE device_row_id = ? AND expires_at > ? LIMIT 1',
+        (int(device_row_id), now_epoch),
+    ).fetchone()
+    if live:
+        return None
+    row = con.execute(
+        '''SELECT pool_status FROM code_devices
+           WHERE id = ? AND active = 1 AND pool_assignment_id = ?''',
+        (int(device_row_id), int(assignment_id)),
+    ).fetchone()
+    if row is None or str(row['pool_status']) not in {'active', 'pending'}:
+        return None
+    previous_status = str(row['pool_status'])
+    pending_status = f'release_pending_{previous_status}'
+    cursor = con.execute(
+        '''UPDATE code_devices
+           SET pool_status = ?, pool_updated_at = ?
+           WHERE id = ? AND active = 1 AND pool_assignment_id = ?
+             AND pool_status = ?''',
+        (
+            pending_status,
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            int(device_row_id), int(assignment_id), previous_status,
+        ),
+    )
+    return previous_status if cursor.rowcount == 1 else None
+
+
+def restore_assignment_release(
+    con: sqlite3.Connection,
+    *,
+    device_row_id: int,
+    assignment_id: int,
+    previous_status: str,
+) -> bool:
+    if previous_status not in {'active', 'pending'}:
+        raise ValueError('invalid_previous_pool_status')
+    cursor = con.execute(
+        '''UPDATE code_devices
+           SET pool_status = ?, pool_updated_at = ?
+           WHERE id = ? AND active = 1 AND pool_assignment_id = ?
+             AND pool_status = ?''',
+        (
+            previous_status,
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            int(device_row_id), int(assignment_id),
+            f'release_pending_{previous_status}',
+        ),
+    )
+    return cursor.rowcount == 1
+
+
 def clear_assignment(
     con: sqlite3.Connection,
     *,

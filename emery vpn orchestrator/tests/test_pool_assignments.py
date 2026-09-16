@@ -339,3 +339,47 @@ def test_release_refuses_stale_owner_after_rebind(db_session):
             subject_key='a' * 64,
         ))
     assert error.value.detail == 'assignment_owner_changed'
+
+def test_release_failure_preserves_capacity_for_retry(db_session):
+    class FailingRemoveTransport(FakeCredentialTransport):
+        def remove(self, node, assignment):
+            self.removed.append(assignment.id)
+            return CredentialMutationResult(False, 'remove_failed')
+
+    node = add_node(db_session)
+    transport = FailingRemoveTransport()
+    service = PoolAssignmentService(db_session, transport)
+    prepared = service.prepare(request('a'))
+    service.confirm(PoolReservationConfirmRequest(
+        assignment_id=prepared.assignment_id,
+        confirmation_token=prepared.confirmation_token,
+    ))
+    with pytest.raises(HTTPException) as error:
+        service.release(PoolReservationReleaseRequest(
+            assignment_id=prepared.assignment_id,
+            subject_key='a' * 64,
+        ))
+    assignment = db_session.get(VpnAssignment, prepared.assignment_id)
+    assert error.value.status_code == 503
+    assert assignment.status == 'revocation_pending'
+    assert db_session.get(VpnNode, node.id).current_clients == 1
+
+
+def test_released_port_is_reusable(db_session):
+    node = add_node(db_session)
+    transport = FakeCredentialTransport()
+    service = PoolAssignmentService(db_session, transport)
+    first = service.prepare(request('a'))
+    first_port = db_session.get(VpnAssignment, first.assignment_id).client_port
+    service.confirm(PoolReservationConfirmRequest(
+        assignment_id=first.assignment_id,
+        confirmation_token=first.confirmation_token,
+    ))
+    service.release(PoolReservationReleaseRequest(
+        assignment_id=first.assignment_id,
+        subject_key='a' * 64,
+    ))
+    second = service.prepare(request('b'))
+    second_port = db_session.get(VpnAssignment, second.assignment_id).client_port
+    assert second_port == first_port
+    assert db_session.get(VpnNode, node.id).current_clients == 1

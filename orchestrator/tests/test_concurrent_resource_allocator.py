@@ -7,7 +7,9 @@ from concurrent_resource_allocator import (
     choose_recyclable_assignment,
     resource_state,
     release_candidate,
+    claim_assignment_release,
     clear_assignment,
+    restore_assignment_release,
     transfer_assignment,
 )
 
@@ -224,3 +226,33 @@ def test_downgrade_five_to_two_has_three_release_candidates(db):
         db.commit()
         released.append(victim.assignment_id)
     assert len(released) == 3
+
+def test_release_claim_hides_resource_until_restore(db):
+    add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z')
+    add_owner(db, 2, 102, seen='2026-02-01T00:00:00Z')
+    victim = release_candidate(db, code='CODE', limit=1, now=1000)
+    assert victim is not None
+    previous = claim_assignment_release(
+        db,
+        device_row_id=victim.device_row_id,
+        assignment_id=victim.assignment_id,
+        now=1000,
+    )
+    assert previous == 'active'
+    db.commit()
+    assert release_candidate(db, code='CODE', limit=1, now=1000) is None
+    assert restore_assignment_release(
+        db,
+        device_row_id=victim.device_row_id,
+        assignment_id=victim.assignment_id,
+        previous_status=previous,
+    )
+    db.commit()
+    assert release_candidate(db, code='CODE', limit=1, now=1000) is not None
+
+
+def test_release_claim_refuses_live_assignment(db):
+    add_owner(db, 1, 101, seen='2026-01-01T00:00:00Z', online=True)
+    assert claim_assignment_release(
+        db, device_row_id=1, assignment_id=101, now=1000
+    ) is None

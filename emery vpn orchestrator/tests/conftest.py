@@ -6,12 +6,14 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from src.backend.core.assignment_port_lifecycle import install_assignment_port_lifecycle
 from src.backend.core.bootstrap import seed_plans
 from src.common.db import Base
 
 
 @pytest.fixture()
 def db_session(tmp_path: Path) -> Session:
+    install_assignment_port_lifecycle()
     db_file = tmp_path / "test.db"
     engine = create_engine(f"sqlite+pysqlite:///{db_file}", future=True)
     TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)

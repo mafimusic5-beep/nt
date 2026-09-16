@@ -13,8 +13,8 @@ import httpx
 
 import concurrent_sessions
 from concurrent_resource_allocator import (
-    assignment_for_device, clear_assignment, plan_resource,
-    release_candidate, transfer_assignment,
+    assignment_for_device, claim_assignment_release, clear_assignment, plan_resource,
+    release_candidate, restore_assignment_release, transfer_assignment,
 )
 
 from config import (
@@ -277,42 +277,95 @@ def reconcile_concurrent_resources() -> int:
         con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
         con.row_factory = sqlite3.Row
         con.execute('PRAGMA foreign_keys = ON')
-        candidate = None
+        device_row_id = 0
+        assignment_id = 0
+        device_id = ''
         code = ''
-        limit = 0
+        previous_status = ''
         try:
             con.execute('BEGIN IMMEDIATE')
             concurrent_sessions.ensure_storage(con)
-            rows = con.execute(
+
+            pending = con.execute(
                 '''
-                SELECT code, max_devices
-                FROM activation_codes
-                WHERE status = 'active' AND max_devices IN (1, 2, 5)
+                SELECT id, code, device_id, pool_assignment_id, pool_status
+                FROM code_devices
+                WHERE active = 1
+                  AND pool_assignment_id IS NOT NULL
+                  AND pool_status IN ('release_pending_active', 'release_pending_pending')
                 ORDER BY id ASC
+                LIMIT 1
                 '''
-            ).fetchall()
-            for row in rows:
-                maybe = release_candidate(
-                    con, code=str(row['code']), limit=int(row['max_devices'])
-                )
-                if maybe is not None:
-                    candidate = maybe
+            ).fetchone()
+            if pending is not None:
+                device_row_id = int(pending['id'])
+                assignment_id = int(pending['pool_assignment_id'])
+                device_id = str(pending['device_id'])
+                code = str(pending['code'])
+                previous_status = str(pending['pool_status']).removeprefix('release_pending_')
+            else:
+                rows = con.execute(
+                    '''
+                    SELECT code, max_devices
+                    FROM activation_codes
+                    WHERE status = 'active' AND max_devices IN (1, 2, 5)
+                    ORDER BY id ASC
+                    '''
+                ).fetchall()
+                for row in rows:
+                    maybe = release_candidate(
+                        con, code=str(row['code']), limit=int(row['max_devices'])
+                    )
+                    if maybe is None:
+                        continue
+                    claimed_status = claim_assignment_release(
+                        con,
+                        device_row_id=maybe.device_row_id,
+                        assignment_id=maybe.assignment_id,
+                    )
+                    if claimed_status is None:
+                        continue
+                    device_row_id = maybe.device_row_id
+                    assignment_id = maybe.assignment_id
+                    device_id = maybe.device_id
                     code = str(row['code'])
-                    limit = int(row['max_devices'])
+                    previous_status = claimed_status
                     break
             con.commit()
+        except Exception:
+            con.rollback()
+            raise
         finally:
             con.close()
-        if candidate is None:
+
+        if assignment_id <= 0:
             return released
 
         try:
             release_assignment(
-                assignment_id=candidate.assignment_id,
+                assignment_id=assignment_id,
                 formatted_code=code,
-                device_id=candidate.device_id,
+                device_id=device_id,
             )
-        except PoolBridgeError:
+        except PoolBridgeError as error:
+            if error.reason == 'assignment_owner_changed':
+                con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
+                con.row_factory = sqlite3.Row
+                con.execute('PRAGMA foreign_keys = ON')
+                try:
+                    con.execute('BEGIN IMMEDIATE')
+                    restore_assignment_release(
+                        con,
+                        device_row_id=device_row_id,
+                        assignment_id=assignment_id,
+                        previous_status=previous_status,
+                    )
+                    con.commit()
+                except Exception:
+                    con.rollback()
+                    raise
+                finally:
+                    con.close()
             return released
 
         con = sqlite3.connect(DATABASE_PATH, timeout=30.0)
@@ -321,19 +374,17 @@ def reconcile_concurrent_resources() -> int:
         try:
             con.execute('BEGIN IMMEDIATE')
             concurrent_sessions.ensure_storage(con)
-            current = release_candidate(con, code=code, limit=limit)
-            if (
-                current is not None
-                and current.device_row_id == candidate.device_row_id
-                and current.assignment_id == candidate.assignment_id
-                and clear_assignment(
-                    con,
-                    device_row_id=candidate.device_row_id,
-                    assignment_id=candidate.assignment_id,
-                )
+            if not clear_assignment(
+                con,
+                device_row_id=device_row_id,
+                assignment_id=assignment_id,
             ):
-                released += 1
+                raise RuntimeError('released_pool_assignment_not_clearable')
+            released += 1
             con.commit()
+        except Exception:
+            con.rollback()
+            raise
         finally:
             con.close()
 
@@ -377,7 +428,8 @@ def _concurrent_entitlement_row(con: sqlite3.Connection, raw_code: str, device_i
 
     return con.execute(
         """
-        SELECT c.code, c.plan, c.expires_at, c.max_devices, d.id AS device_row_id
+        SELECT c.code, c.plan, c.expires_at, c.max_devices, d.id AS device_row_id,
+               d.pool_status AS pool_status
         FROM activation_codes c
         JOIN code_devices d ON d.code = c.code
         WHERE c.code = ?
@@ -406,6 +458,8 @@ def _refresh_concurrent_assignment(raw_code: str, device_id: str) -> dict[str, A
         row = _concurrent_entitlement_row(con, raw_code, safe_device_id)
         if row is None:
             raise PoolBridgeError('device_not_registered', 403)
+        if str(row['pool_status'] or '').startswith('release_pending_'):
+            raise PoolBridgeError('pool_assignment_maintenance_in_progress', 409)
         code = str(row['code'])
         plan = str(row['plan'] or '')
         expires_at = str(row['expires_at'] or '').strip()
