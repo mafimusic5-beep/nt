@@ -137,7 +137,7 @@ jobs:
         run: |
           grep -F 'val appVersionCode = 718' app/build.gradle.kts
           grep -F 'versionName = "2.0.18"' app/build.gradle.kts
-      - name: Discover live Skryon TLS SPKI chain
+      - name: Verify Skryon TLS pins
         run: |
           set -euo pipefail
           openssl s_client -connect skryon.ru:443 -servername skryon.ru -showcerts </dev/null 2>/dev/null > /tmp/skryon-chain.txt
@@ -147,22 +147,75 @@ jobs:
           import pathlib
           import re
           import subprocess
+          import xml.etree.ElementTree as ET
 
-          text = pathlib.Path('/tmp/skryon-chain.txt').read_text()
-          certs = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', text, re.S)
-          if len(certs) < 2:
-              raise SystemExit(f'expected certificate chain, got {len(certs)} cert(s)')
+          config_path = pathlib.Path('app/src/main/res/xml/network_security_config.xml')
+          xml_text = config_path.read_text()
+          root = ET.fromstring(xml_text)
+
+          assert 'cleartextTrafficPermitted="false"' in xml_text
+          assert 'src="user"' not in xml_text
+
+          domains = {
+              element.text.strip()
+              for element in root.findall('.//domain')
+              if element.text and element.text.strip()
+          }
+          assert 'skryon.ru' in domains
+
+          pin_set = root.find('.//pin-set')
+          assert pin_set is not None
+          assert pin_set.attrib.get('expiration') == '2027-09-30'
+          pins = {
+              element.text.strip()
+              for element in pin_set.findall('pin')
+              if element.text and element.text.strip()
+          }
+          expected_pins = {
+              'kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=',
+              'mEflZT5enoR1FuXLgYYGqnVEoZvmf9c2bVBpiOjYQ0c=',
+          }
+          assert expected_pins <= pins
+          assert len(pins) >= 2
+
+          debug_text = pathlib.Path('app/src/debug/res/xml/network_security_config.xml').read_text()
+          assert 'cleartextTrafficPermitted="true"' in debug_text
+          assert 'src="user"' in debug_text
+
+          api_config = pathlib.Path(
+              'app/src/main/java/com/v2ray/ang/handler/EmeryApiConfig.kt'
+          ).read_text()
+          assert 'if (!BuildConfig.DEBUG) return DEFAULT_BASE_URL' in api_config
+          assert 'private const val DEFAULT_BASE_URL = "https://skryon.ru"' in api_config
+
+          chain_text = pathlib.Path('/tmp/skryon-chain.txt').read_text()
+          certs = re.findall(
+              r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----',
+              chain_text,
+              re.S,
+          )
+          if not certs:
+              raise SystemExit('live skryon.ru certificate chain is empty')
+
+          live_pins = set()
           for index, pem in enumerate(certs, start=1):
-              path = pathlib.Path(f'/tmp/skryon-cert-{index}.pem')
-              path.write_text(pem + '\n')
-              subject = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-noout', '-subject'], text=True).strip()
-              issuer = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-noout', '-issuer'], text=True).strip()
-              pubkey = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-pubkey', '-noout'])
-              der = subprocess.check_output(['openssl', 'pkey', '-pubin', '-outform', 'DER'], input=pubkey)
-              pin = base64.b64encode(hashlib.sha256(der).digest()).decode()
-              print(f'SKRYON_CERT_{index}_SUBJECT {subject}')
-              print(f'SKRYON_CERT_{index}_ISSUER {issuer}')
-              print(f'SKRYON_CERT_{index}_SPKI sha256/{pin}')
+              cert_path = pathlib.Path(f'/tmp/skryon-cert-{index}.pem')
+              cert_path.write_text(pem + '\n')
+              pubkey = subprocess.check_output(
+                  ['openssl', 'x509', '-in', str(cert_path), '-pubkey', '-noout']
+              )
+              der = subprocess.check_output(
+                  ['openssl', 'pkey', '-pubin', '-outform', 'DER'],
+                  input=pubkey,
+              )
+              live_pins.add(base64.b64encode(hashlib.sha256(der).digest()).decode())
+
+          if not (pins & live_pins):
+              raise SystemExit(
+                  f'configured Skryon TLS pins do not match live chain: {sorted(live_pins)}'
+              )
+
+          print('Configured Skryon pins match the live TLS chain.')
           PY
       - name: Verify IPv6 leak protection
         run: |
