@@ -22,6 +22,7 @@ on:
       - 'app/src/main/java/com/v2ray/ang/handler/RegionalPolicyManager.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryPoolClient.kt'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
       - '.github/workflows/activation-key-tests.yml'
   pull_request:
@@ -45,6 +46,7 @@ on:
       - 'app/src/main/java/com/v2ray/ang/handler/RegionalPolicyManager.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
+      - 'app/src/main/java/com/v2ray/ang/network/EmeryPoolClient.kt'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
       - '.github/workflows/activation-key-tests.yml'
 
@@ -135,6 +137,33 @@ jobs:
         run: |
           grep -F 'val appVersionCode = 718' app/build.gradle.kts
           grep -F 'versionName = "2.0.18"' app/build.gradle.kts
+      - name: Discover live Skryon TLS SPKI chain
+        run: |
+          set -euo pipefail
+          openssl s_client -connect skryon.ru:443 -servername skryon.ru -showcerts </dev/null 2>/dev/null > /tmp/skryon-chain.txt
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import pathlib
+          import re
+          import subprocess
+
+          text = pathlib.Path('/tmp/skryon-chain.txt').read_text()
+          certs = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', text, re.S)
+          if len(certs) < 2:
+              raise SystemExit(f'expected certificate chain, got {len(certs)} cert(s)')
+          for index, pem in enumerate(certs, start=1):
+              path = pathlib.Path(f'/tmp/skryon-cert-{index}.pem')
+              path.write_text(pem + '\n')
+              subject = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-noout', '-subject'], text=True).strip()
+              issuer = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-noout', '-issuer'], text=True).strip()
+              pubkey = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-pubkey', '-noout'])
+              der = subprocess.check_output(['openssl', 'pkey', '-pubin', '-outform', 'DER'], input=pubkey)
+              pin = base64.b64encode(hashlib.sha256(der).digest()).decode()
+              print(f'SKRYON_CERT_{index}_SUBJECT {subject}')
+              print(f'SKRYON_CERT_{index}_ISSUER {issuer}')
+              print(f'SKRYON_CERT_{index}_SPKI sha256/{pin}')
+          PY
       - name: Verify IPv6 leak protection
         run: |
           python3 - <<'PY'
