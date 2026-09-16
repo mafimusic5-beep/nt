@@ -1,21 +1,20 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Skryon release hardening.
+# Keep only reflection/JNI-sensitive surfaces; application implementation code remains obfuscatable.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Gson models are reflection-backed and many Kotlin DTOs do not have no-arg constructors.
+-keep class com.v2ray.ang.dto.** { *; }
+-keepattributes Signature,*Annotation*,InnerClasses,EnclosingMethod
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Native Go/Xray bindings and VPN service contracts may be resolved from native code or Android IPC.
+-keep class libv2ray.** { *; }
+-keep class go.** { *; }
+-keep class com.v2ray.ang.contracts.** { *; }
+-keep class com.v2ray.ang.service.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# MMKV/Android components ship consumer rules, but preserve native methods explicitly.
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+
+# Do not retain source file names in release mappings/APKs.
+-renamesourcefileattribute SourceFile
