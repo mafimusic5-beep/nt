@@ -471,20 +471,30 @@ internal suspend fun syncSkryonConfig(
 
         configSyncClient.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful || text.isBlank()) {
+            if (text.isBlank()) {
                 return@withContext SkryonConfigSyncResult(
                     ok = false,
                     error = "Синхронизация сервера недоступна",
                 )
             }
 
-            val json = JSONObject(text)
+            val json = runCatching { JSONObject(text) }.getOrNull()
+                ?: return@withContext SkryonConfigSyncResult(
+                    ok = false,
+                    error = "Синхронизация сервера недоступна",
+                )
             if (!json.optBoolean("ok", false)) {
                 val reason = json.serverReason()
                 return@withContext SkryonConfigSyncResult(
                     ok = false,
                     reason = reason,
                     error = json.optString("message").ifBlank { activationReasonText(reason) },
+                )
+            }
+            if (!response.isSuccessful) {
+                return@withContext SkryonConfigSyncResult(
+                    ok = false,
+                    error = "Синхронизация сервера недоступна",
                 )
             }
 
@@ -672,6 +682,8 @@ private fun activationReasonText(reason: String): String {
         "not_bound" -> "Код не привязан к этому устройству"
         "already_bound" -> "Код уже активирован на другом устройстве"
         "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
+        "concurrent_limit_reached" ->
+            "Все одновременные подключения заняты. Отключите VPN на другом устройстве и повторите"
         "device_signature_invalid", "device_signature_missing" -> "Не удалось подтвердить подлинность устройства"
         "device_key_rotation_requires_reset" -> "Требуется безопасное восстановление этого устройства"
         "play_integrity_not_configured", "device_recovery_unavailable" ->
