@@ -183,24 +183,23 @@ class NodeOrchestrationService:
 
         return sorted(rows, key=lambda row: (row["region_name"] or "", row["region_code"] or "", row["id"]))
 
-    def build_user_config_for_node(self, subscription_id: int, node_id: int, device: Device | None) -> dict:
+    def build_user_config_for_region(self, subscription_id: int, region_code: str, device: Device | None) -> dict:
         subscription = self.repo.get_subscription(subscription_id)
         if not subscription:
             raise HTTPException(status_code=404, detail="subscription_not_found")
 
-        requested_node = self.repo.get_node(node_id)
-        if not requested_node:
-            raise HTTPException(status_code=404, detail="server_not_found")
+        normalized_region = region_code.strip().lower()
+        if not normalized_region:
+            raise HTTPException(status_code=400, detail="region_required")
 
-        node = self._select_best_node(requested_node.region_code, device)
+        node = self._select_best_node(normalized_region, device)
         agent_log(
             hypothesis_id="H3",
-            location="node_orchestration_service.py:build_user_config_for_node",
+            location="node_orchestration_service.py:build_user_config_for_region",
             message="best regional server selected at connection time",
             data={
-                "requested_node_id": node_id,
+                "region_code": normalized_region,
                 "selected_node_id": node.id,
-                "region_code": requested_node.region_code,
                 "current_clients": node.current_clients,
                 "capacity_clients": node.capacity_clients,
                 "fill_percent": int(self._fill_ratio(node, device) * 100),
@@ -214,12 +213,23 @@ class NodeOrchestrationService:
         if not import_text:
             agent_log(
                 hypothesis_id="H5",
-                location="node_orchestration_service.py:build_user_config_for_node",
+                location="node_orchestration_service.py:build_user_config_for_region",
                 message="server config unavailable",
-                data={"requested_node_id": node_id, "selected_node_id": node.id},
+                data={"region_code": normalized_region, "selected_node_id": node.id},
             )
             raise HTTPException(status_code=409, detail="server_config_unavailable")
         return {"node": node, "import_text": import_text}
+
+    def build_user_config_for_node(self, subscription_id: int, node_id: int, device: Device | None) -> dict:
+        subscription = self.repo.get_subscription(subscription_id)
+        if not subscription:
+            raise HTTPException(status_code=404, detail="subscription_not_found")
+
+        requested_node = self.repo.get_node(node_id)
+        if not requested_node:
+            raise HTTPException(status_code=404, detail="server_not_found")
+
+        return self.build_user_config_for_region(subscription_id, requested_node.region_code, device)
 
     def provision_node(self, node_id: int) -> dict:
         node = self.repo.get_node(node_id)
