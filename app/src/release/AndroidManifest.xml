@@ -9,4 +9,8 @@
         android:name="android.permission.READ_MEDIA_IMAGES"
         tools:node="remove" />
 
+    <application
+        android:usesCleartextTraffic="false"
+        tools:replace="android:usesCleartextTraffic" />
+
 </manifest>
