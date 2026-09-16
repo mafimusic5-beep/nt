@@ -55,10 +55,18 @@ class VpnConfigResponse(BaseModel):
     error: str | None = None
 
 
+# Legacy response kept for installed clients. New clients use VpnRegionItemResponse
+# so physical node IDs never need to leave the backend.
 class VpnServerItemResponse(BaseModel):
     id: int
     city: str
     health_status: str
+    is_available: bool
+
+
+class VpnRegionItemResponse(BaseModel):
+    region_code: str
+    name: str
     is_available: bool
 
 
@@ -68,9 +76,21 @@ class VpnConnectRequest(BaseModel):
     traffic_policy: str = Field(pattern=r"^(international|russia)$")
 
 
+class VpnRegionConnectRequest(BaseModel):
+    access_key: str = Field(min_length=1, max_length=128)
+    region_code: str = Field(min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    traffic_policy: str = Field(pattern=r"^(international|russia)$")
+
+
 class VpnConnectResponse(BaseModel):
     server_id: int
     city: str
+    import_text: str
+
+
+class VpnRegionConnectResponse(BaseModel):
+    region_code: str
+    name: str
     import_text: str
 
 
