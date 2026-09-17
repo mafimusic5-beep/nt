@@ -2,6 +2,7 @@ import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
+import java.util.Properties
 import java.util.zip.ZipInputStream
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -13,6 +14,34 @@ plugins {
 
 /** Must match [android.defaultConfig.versionCode] (used in [androidComponents] per-ABI overrides). */
 val appVersionCode = 718
+
+val skryonSigningPropertiesFile = providers.environmentVariable("SKRYON_SIGNING_PROPERTIES")
+    .orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.let(::file)
+    ?: file("${System.getProperty("user.home")}/.skryon/signing/keystore.properties")
+val skryonSigningProperties = Properties()
+val skryonSigningAvailable = skryonSigningPropertiesFile.isFile
+if (skryonSigningAvailable) {
+    skryonSigningPropertiesFile.inputStream().use(skryonSigningProperties::load)
+}
+fun skryonSigningValue(name: String): String =
+    skryonSigningProperties.getProperty(name)?.trim().orEmpty()
+
+val releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("Release", ignoreCase = true)
+}
+if (releaseTaskRequested) {
+    if (!skryonSigningAvailable) {
+        throw GradleException("Skryon release signing configuration is missing")
+    }
+    val missingSigningValues = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+        .filter { skryonSigningValue(it).isBlank() }
+    if (missingSigningValues.isNotEmpty()) {
+        throw GradleException("Skryon release signing configuration is incomplete")
+    }
+}
 
 android {
     namespace = "com.v2ray.ang"
@@ -51,8 +80,22 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (skryonSigningAvailable) {
+            create("skryonRelease") {
+                storeFile = file(skryonSigningValue("storeFile"))
+                storePassword = skryonSigningValue("storePassword")
+                keyAlias = skryonSigningValue("keyAlias")
+                keyPassword = skryonSigningValue("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (skryonSigningAvailable) {
+                signingConfig = signingConfigs.getByName("skryonRelease")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -211,7 +254,7 @@ dependencies {
 }
 
 /**
- * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, вЂ¦) ship inside libv2ray.aar.
+ * Native bindings (`go.Seq`, `libv2ray.Libv2ray`, …) ship inside libv2ray.aar.
  * Upstream CI downloads it from 2dust/AndroidLibXrayLite; local clones often omit the binary.
  * Override tag: ./gradlew assembleDebug -Plibv2ray.version=v26.3.9
  */
@@ -229,7 +272,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
             URI(
                 "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
             ).toURL()
-        logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
+        logger.lifecycle("Downloading libv2ray.aar ({}) …", libv2rayVersionProperty)
         url.openStream().use { input: InputStream ->
             libv2rayAar.outputStream().use { output: OutputStream ->
                 input.copyTo(output)
