@@ -1,0 +1,40 @@
+name: One-shot privacy normalization
+
+on:
+  push:
+    branches:
+      - feature/concurrent-vpn-resource-allocation
+    paths:
+      - 'tools/privacy_normalize_once.py'
+      - '.github/workflows/privacy-normalize-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/concurrent-vpn-resource-allocation
+          fetch-depth: 0
+
+      - name: Apply exact privacy patches
+        run: python3 tools/privacy_normalize_once.py
+
+      - name: Validate patched Python
+        run: |
+          set -euo pipefail
+          git diff --check
+          python3 -m compileall -q orchestrator 'emery vpn orchestrator/src/backend/services/xray_credential_service.py'
+
+      - name: Commit privacy normalization
+        run: |
+          set -euo pipefail
+          git config user.name 'skryon-privacy-ci'
+          git config user.email 'actions@users.noreply.github.com'
+          git add orchestrator/device_auth.py orchestrator/api.py orchestrator/device_recovery_routes.py 'emery vpn orchestrator/src/backend/services/xray_credential_service.py'
+          git diff --cached --quiet && { echo 'No target changes produced.' >&2; exit 1; }
+          git commit -m 'Minimize legacy VPN activity metadata'
+          git push origin HEAD:feature/concurrent-vpn-resource-allocation
