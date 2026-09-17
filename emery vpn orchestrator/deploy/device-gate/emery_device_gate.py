@@ -429,7 +429,7 @@ async def _main() -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=os.getenv("EMERY_GATE_LOG_LEVEL", "INFO").upper(),
+        level=os.getenv("EMERY_GATE_LOG_LEVEL", "CRITICAL").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     try:
