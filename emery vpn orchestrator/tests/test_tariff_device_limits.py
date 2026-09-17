@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import select
 
 from src.backend.repositories.subscription_repo import SubscriptionRepository
@@ -20,7 +19,7 @@ from src.common.models import Device, Subscription, User
         ("family_1m", 5),
     ],
 )
-def test_paid_tariff_sets_exact_registered_device_limit(
+def test_paid_tariff_limit_is_concurrency_not_registration(
     db_session,
     plan_code: str,
     expected_limit: int,
@@ -28,9 +27,7 @@ def test_paid_tariff_sets_exact_registered_device_limit(
     telegram_id = {1: 1001, 2: 1002, 5: 1005}[expected_limit]
     orders = OrderService(db_session)
     subscriptions = SubscriptionService(db_session)
-    order = orders.create_order(
-        CreateOrderRequest(telegram_id=telegram_id, plan_code=plan_code)
-    )
+    order = orders.create_order(CreateOrderRequest(telegram_id=telegram_id, plan_code=plan_code))
     paid = orders.confirm_payment(
         ConfirmPaymentRequest(
             order_id=order.order_id,
@@ -39,7 +36,8 @@ def test_paid_tariff_sets_exact_registered_device_limit(
         )
     )
 
-    for index in range(expected_limit):
+    registration_count = expected_limit + 3
+    for index in range(registration_count):
         subscriptions.redeem_code(
             RedeemActivationCodeRequest(
                 code=paid.activation_code,
@@ -52,33 +50,20 @@ def test_paid_tariff_sets_exact_registered_device_limit(
 
     status = subscriptions.get_status(telegram_id)
     assert status.plan_code == plan_code
-    assert status.devices_used == expected_limit
+    assert status.devices_used == 0
     assert status.devices_limit == expected_limit
-
-    with pytest.raises(HTTPException) as exc:
-        subscriptions.redeem_code(
-            RedeemActivationCodeRequest(
-                code=paid.activation_code,
-                telegram_id=telegram_id,
-                device_fingerprint=f"{plan_code}-overflow",
-                platform="android",
-                device_name="Overflow Phone",
-            )
-        )
-    assert exc.value.status_code == 409
-    assert exc.value.detail == "device_limit_reached"
+    assert subscriptions.repo.count_active_devices(paid.subscription_id) == registration_count
 
     slots = list(
         db_session.scalars(
             select(Device.slot_index)
             .where(Device.subscription_id == paid.subscription_id)
-            .order_by(Device.slot_index.asc())
         ).all()
     )
-    assert slots == list(range(1, expected_limit + 1))
+    assert slots == [None] * registration_count
 
 
-def test_repository_slot_gate_cannot_bypass_personal_limit(db_session) -> None:
+def test_repository_registration_is_unlimited_for_personal_plan(db_session) -> None:
     user = User(telegram_id=909090)
     db_session.add(user)
     db_session.flush()
@@ -96,21 +81,14 @@ def test_repository_slot_gate_cannot_bypass_personal_limit(db_session) -> None:
     repo = SubscriptionRepository(db_session)
 
     first = repo.upsert_device(
-        subscription.id,
-        "first-device",
-        "android",
-        "First phone",
-        devices_limit=1,
+        subscription.id, "first-device", "android", "First phone", devices_limit=1
+    )
+    second = repo.upsert_device(
+        subscription.id, "second-device", "android", "Second phone", devices_limit=1
     )
     db_session.commit()
-    second = repo.upsert_device(
-        subscription.id,
-        "second-device",
-        "android",
-        "Second phone",
-        devices_limit=1,
-    )
 
-    assert first is not None
-    assert first.slot_index == 1
-    assert second is None
+    assert first is not None and second is not None
+    assert first.slot_index is None
+    assert second.slot_index is None
+    assert repo.count_active_devices(subscription.id) == 2

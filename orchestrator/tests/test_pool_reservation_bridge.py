@@ -188,27 +188,25 @@ def test_bridge_rejects_speed_above_product_limit():
     assert error.value.reason == 'invalid_pool_speed_limit'
 
 
-def test_registration_rolls_back_when_pool_has_no_real_slot(legacy_db, monkeypatch):
+def test_registration_does_not_touch_pool_when_capacity_is_unavailable(legacy_db, monkeypatch):
     code = storage.create_checkout_code('personal', 1, external_id='pool-full')['code']
-    monkeypatch.setattr(device_auth, 'pool_bridge_enabled', lambda: True)
 
-    def fail_prepare(**kwargs):
-        raise bridge.PoolBridgeError('server_capacity_unavailable', 409)
+    def fail_if_called(**kwargs):
+        raise AssertionError('registration must not prepare a VPN assignment')
 
-    monkeypatch.setattr(device_auth, 'prepare_assignment', fail_prepare)
+    monkeypatch.setattr(bridge, 'prepare_assignment', fail_if_called)
+    result = _signed_registration(code, 'device-full-pool')
 
-    with pytest.raises(device_auth.DeviceAuthError) as error:
-        _signed_registration(code, 'device-full-pool')
-
-    assert error.value.reason == 'server_capacity_unavailable'
+    assert result['devices_used'] == 0
+    assert storage.get_device_pool_assignment(code, 'device-full-pool') is None
     with sqlite3.connect(legacy_db) as con:
-        assert con.execute('SELECT COUNT(*) FROM code_devices').fetchone()[0] == 0
-        assert con.execute('SELECT COUNT(*) FROM device_request_nonces').fetchone()[0] == 0
+        assert con.execute('SELECT COUNT(*) FROM code_devices').fetchone()[0] == 1
 
 
-def test_registration_persists_then_confirms_personal_config(legacy_db, monkeypatch):
+def test_connect_lazily_prepares_and_confirms_personal_config(legacy_db, monkeypatch):
     code = storage.create_checkout_code('personal', 1, external_id='pool-ok')['code']
-    monkeypatch.setattr(device_auth, 'pool_bridge_enabled', lambda: True)
+    device_id = 'device-with-personal-vless'
+    _signed_registration(code, device_id)
     prepared = {
         'pool_assignment_id': 17,
         'pool_status': 'pending',
@@ -228,7 +226,7 @@ def test_registration_persists_then_confirms_personal_config(legacy_db, monkeypa
         'pool_entitlement_expires_at': '2026-09-10T00:00:00+00:00',
         'confirmation_required': True,
     }
-    monkeypatch.setattr(device_auth, 'prepare_assignment', lambda **kwargs: dict(prepared))
+    monkeypatch.setattr(bridge, 'prepare_assignment', lambda **kwargs: dict(prepared))
     monkeypatch.setattr(
         bridge,
         'confirm_assignment',
@@ -239,10 +237,11 @@ def test_registration_persists_then_confirms_personal_config(legacy_db, monkeypa
         },
     )
 
-    result = _signed_registration(code, 'device-with-personal-vless')
-    stored = storage.get_device_pool_assignment(code, 'device-with-personal-vless')
+    result = bridge.refresh_stored_assignment(code, device_id, node_id=4)
+    stored = storage.get_device_pool_assignment(code, device_id)
 
-    assert result['vpn_assignment']['pool_status'] == 'active'
-    assert result['vpn_assignment']['pool_config'] == DEVICE_CONFIG
+    assert result['pool_status'] == 'active'
+    assert result['pool_config'] == DEVICE_CONFIG
     assert stored['pool_status'] == 'active'
     assert stored['pool_confirmation_token'] == ''
+    assert stored['pool_node_id'] == 4

@@ -128,6 +128,7 @@ def registered_assignment(tmp_path, monkeypatch):
             "pool_gate_spki_sha256": GATE_SPKI_SHA256,
         },
     )
+    session = device_auth.acquire_vpn_session(code, device_id)
     return {
         "database_path": database_path,
         "code": code,

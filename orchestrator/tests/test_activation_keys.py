@@ -203,20 +203,33 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
             signature_algorithm='SHA256withECDSA',
         )
 
-    def assert_limit(self, plan: str, limit: int) -> None:
+    def assert_concurrency_limit(self, plan: str, limit: int) -> None:
         code = self.create_code(plan, limit)
-        for index in range(limit):
-            result = self.register(code=code, device_id=f'device-{index:02d}')
-            self.assertEqual(index + 1, result['devices_used'])
+        device_ids = [f'device-{index:02d}' for index in range(limit + 1)]
+        for device_id in device_ids:
+            result = self.register(code=code, device_id=device_id)
+            self.assertEqual(0, result['devices_used'])
             self.assertEqual(limit, result['devices_limit'])
+
+        sessions = []
+        for index, device_id in enumerate(device_ids[:limit]):
+            session = device_auth.acquire_vpn_session(code, device_id)
+            sessions.append(session)
+            self.assertEqual(index + 1, session['active_connections'])
+            self.assertEqual(limit, session['connections_limit'])
+
         with self.assertRaises(device_auth.DeviceAuthError) as caught:
-            self.register(code=code, device_id='device-over-limit')
-        self.assertEqual('device_limit_reached', caught.exception.reason)
+            device_auth.acquire_vpn_session(code, device_ids[-1])
+        self.assertEqual('concurrent_limit_reached', caught.exception.reason)
+
+        device_auth.release_vpn_session(code, device_ids[0], sessions[0]['session_id'])
+        replacement = device_auth.acquire_vpn_session(code, device_ids[-1])
+        self.assertEqual(limit, replacement['active_connections'])
 
     def test_tariff_limits_are_exact(self) -> None:
-        self.assert_limit('personal', 1)
-        self.assert_limit('personal_plus', 2)
-        self.assert_limit('family', 5)
+        self.assert_concurrency_limit('personal', 1)
+        self.assert_concurrency_limit('personal_plus', 2)
+        self.assert_concurrency_limit('family', 5)
 
     def test_validation_does_not_consume_slot_until_registration(self) -> None:
         code = self.create_code('personal', 1)
@@ -253,15 +266,25 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
             device_id='validated-device-1',
             private_key=first_key,
         )
-        with self.assertRaises(device_auth.DeviceAuthError) as caught:
-            self.validate_registration(
-                code=code,
-                device_id='validated-device-2',
-                private_key=second_key,
-            )
-        self.assertEqual('device_limit_reached', caught.exception.reason)
+        after_first = self.validate_registration(
+            code=code,
+            device_id='validated-device-2',
+            private_key=second_key,
+        )
+        self.assertEqual(0, after_first['devices_used'])
+        self.register(
+            code=code,
+            device_id='validated-device-2',
+            private_key=second_key,
+        )
+        with sqlite3.connect(self.db_path) as con:
+            registered_after = con.execute(
+                'SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1',
+                (storage.format_code(code),),
+            ).fetchone()[0]
+        self.assertEqual(2, registered_after)
 
-    def test_parallel_registration_cannot_exceed_limit(self) -> None:
+    def test_parallel_registration_is_not_tariff_limited(self) -> None:
         code = self.create_code('personal', 1)
 
         def attempt(index: int) -> str:
@@ -274,22 +297,74 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(attempt, range(8)))
 
-        self.assertEqual(1, results.count('success'))
-        self.assertEqual(7, results.count('device_limit_reached'))
+        self.assertEqual(8, results.count('success'))
         with sqlite3.connect(self.db_path) as con:
             count = con.execute(
                 'SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1',
                 (storage.format_code(code),),
             ).fetchone()[0]
-        self.assertEqual(1, count)
+        self.assertEqual(8, count)
 
-    def test_same_device_does_not_consume_second_slot(self) -> None:
+    def test_parallel_session_acquire_only_one_wins_for_personal(self) -> None:
+        code = self.create_code('personal', 1)
+        device_ids = [f'parallel-session-{index}' for index in range(8)]
+        for device_id in device_ids:
+            self.register(code=code, device_id=device_id)
+
+        def acquire(device_id: str) -> str:
+            try:
+                device_auth.acquire_vpn_session(code, device_id)
+                return 'success'
+            except device_auth.DeviceAuthError as error:
+                return error.reason
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(acquire, device_ids))
+
+        self.assertEqual(1, results.count('success'))
+        self.assertEqual(7, results.count('concurrent_limit_reached'))
+
+    def test_same_device_reuses_one_active_session(self) -> None:
         code = self.create_code('personal', 1)
         key = self.new_private_key()
         first = self.register(code=code, device_id='stable-device', private_key=key)
         second = self.register(code=code, device_id='stable-device', private_key=key)
-        self.assertEqual(1, first['devices_used'])
-        self.assertEqual(1, second['devices_used'])
+        self.assertEqual(0, first['devices_used'])
+        self.assertEqual(0, second['devices_used'])
+
+        first_session = device_auth.acquire_vpn_session(code, 'stable-device')
+        second_session = device_auth.acquire_vpn_session(code, 'stable-device')
+        self.assertEqual(1, first_session['active_connections'])
+        self.assertEqual(1, second_session['active_connections'])
+        self.assertEqual(first_session['session_id'], second_session['session_id'])
+
+    def test_expired_session_frees_concurrency_slot(self) -> None:
+        code = self.create_code('personal', 1)
+        self.register(code=code, device_id='first-device')
+        self.register(code=code, device_id='second-device')
+        device_auth.acquire_vpn_session(code, 'first-device')
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                'UPDATE code_devices SET vpn_session_expires_at_epoch = ? WHERE code = ? AND device_id = ?',
+                (int(time.time()) - 1, storage.format_code(code), 'first-device'),
+            )
+            con.commit()
+
+        replacement = device_auth.acquire_vpn_session(code, 'second-device')
+        self.assertEqual(1, replacement['active_connections'])
+
+    def test_old_session_id_cannot_release_new_session(self) -> None:
+        code = self.create_code('personal', 1)
+        self.register(code=code, device_id='stable-device')
+        old_session = device_auth.acquire_vpn_session(code, 'stable-device')
+        device_auth.release_vpn_session(code, 'stable-device', old_session['session_id'])
+        new_session = device_auth.acquire_vpn_session(code, 'stable-device')
+        self.assertNotEqual(old_session['session_id'], new_session['session_id'])
+
+        with self.assertRaises(device_auth.DeviceAuthError) as caught:
+            device_auth.release_vpn_session(code, 'stable-device', old_session['session_id'])
+        self.assertEqual('vpn_session_mismatch', caught.exception.reason)
+        self.assertTrue(device_auth.is_vpn_session_active(code, 'stable-device'))
 
     def test_activation_code_cannot_replace_registered_device_key(self) -> None:
         code = self.create_code('personal', 1)
@@ -302,7 +377,7 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         self.assertEqual('device_key_rotation_requires_reset', caught.exception.reason)
 
         profile = self.authenticate(code=code, device_id='stable-device', private_key=old_key)
-        self.assertEqual(1, profile['devices_used'])
+        self.assertEqual(0, profile['devices_used'])
         self.assertEqual('stable-device', profile['device_id'])
 
     def test_revoked_device_cannot_reactivate_itself(self) -> None:
@@ -397,7 +472,8 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         code = self.create_code('personal', 1)
         unformatted_lowercase = ''.join(ch for ch in code if ch.isalnum()).lower()
         result = self.register(code=unformatted_lowercase, device_id='normalized-device')
-        self.assertEqual(1, result['devices_used'])
+        self.assertEqual(0, result['devices_used'])
+        self.assertEqual(1, result['devices_limit'])
 
     def test_unknown_plan_or_nonstandard_limit_is_rejected(self) -> None:
         code = storage.create_activation_code(days=30, max_devices=3, plan='manual')
@@ -413,7 +489,9 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
     def test_renewal_rejects_banned_key_and_unsafe_plan_downgrade(self) -> None:
         family_code = self.create_code('family', 5)
         for index in range(3):
-            self.register(code=family_code, device_id=f'family-device-{index}')
+            device_id = f'family-device-{index}'
+            self.register(code=family_code, device_id=device_id)
+            device_auth.acquire_vpn_session(family_code, device_id)
         conflict = checkout_routes.issue_renewal(
             family_code,
             'personal',

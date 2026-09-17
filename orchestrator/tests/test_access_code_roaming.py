@@ -202,7 +202,7 @@ class AccessCodeRoamingTests(unittest.TestCase):
                 ).fetchall()
             ]
 
-    def test_personal_rebinds_single_slot_after_reset_or_new_phone(self) -> None:
+    def test_personal_new_installation_does_not_rebind_existing_registration(self) -> None:
         code = self.create_code('personal', 1)
         old_id = self.installation_id('personal-old')
         new_id = self.installation_id('personal-new')
@@ -210,32 +210,23 @@ class AccessCodeRoamingTests(unittest.TestCase):
         new_key = self.new_private_key()
         self.register(code=code, device_id=old_id, key=old_key)
 
-        with sqlite3.connect(self.db_path) as con:
-            original_row_id = con.execute(
-                'SELECT id FROM code_devices WHERE code = ? AND device_id = ?',
-                (storage.format_code(code), old_id),
-            ).fetchone()[0]
-
         status, body = self.roam(code=code, device_id=new_id, key=new_key)
         self.assertEqual(200, status)
-        self.assertEqual('slot_rebound', body['status'])
+        self.assertEqual('not_needed', body['status'])
         self.assertFalse(body['integrity_required'])
-        self.assertEqual([new_id], self.active_device_ids(code))
+        self.assertEqual([old_id], self.active_device_ids(code))
 
-        with sqlite3.connect(self.db_path) as con:
-            rebound_row_id = con.execute(
-                'SELECT id FROM code_devices WHERE code = ? AND device_id = ?',
-                (storage.format_code(code), new_id),
-            ).fetchone()[0]
-        self.assertEqual(original_row_id, rebound_row_id)
+        registered = self.register(code=code, device_id=new_id, key=new_key)
+        self.assertEqual(0, registered['devices_used'])
+        self.assertEqual(1, registered['devices_limit'])
+        self.assertCountEqual([old_id, new_id], self.active_device_ids(code))
 
-        profile = self.authenticate(code=code, device_id=new_id, key=new_key)
-        self.assertEqual(1, profile['devices_used'])
-        self.assertEqual(1, profile['devices_limit'])
-        with self.assertRaises(device_auth.DeviceAuthError):
-            self.authenticate(code=code, device_id=old_id, key=old_key)
+        old_profile = self.authenticate(code=code, device_id=old_id, key=old_key)
+        new_profile = self.authenticate(code=code, device_id=new_id, key=new_key)
+        self.assertEqual(0, old_profile['devices_used'])
+        self.assertEqual(0, new_profile['devices_used'])
 
-    def test_personal_plus_uses_free_slot_before_replacing_any_device(self) -> None:
+    def test_personal_plus_registration_is_unlimited(self) -> None:
         code = self.create_code('personal_plus', 2)
         first_id = self.installation_id('plus-a')
         second_id = self.installation_id('plus-b')
@@ -249,59 +240,56 @@ class AccessCodeRoamingTests(unittest.TestCase):
         self.assertEqual([first_id], self.active_device_ids(code))
 
         registered = self.register(code=code, device_id=second_id, key=second_key)
-        self.assertEqual(2, registered['devices_used'])
+        self.assertEqual(0, registered['devices_used'])
         self.assertEqual(2, registered['devices_limit'])
         self.assertCountEqual([first_id, second_id], self.active_device_ids(code))
 
-    def test_personal_plus_replaces_least_recent_slot_when_full(self) -> None:
+    def test_personal_plus_does_not_evict_old_registration(self) -> None:
         code = self.create_code('personal_plus', 2)
         first_id = self.installation_id('plus-oldest')
         second_id = self.installation_id('plus-newer')
-        third_id = self.installation_id('plus-replacement')
+        third_id = self.installation_id('plus-third')
         first_key = self.new_private_key()
         second_key = self.new_private_key()
         third_key = self.new_private_key()
         self.register(code=code, device_id=first_id, key=first_key)
         self.register(code=code, device_id=second_id, key=second_key)
 
-        with sqlite3.connect(self.db_path) as con:
-            con.execute(
-                'UPDATE code_devices SET last_seen_at = ? WHERE code = ? AND device_id = ?',
-                ('2026-01-01T00:00:00+00:00', storage.format_code(code), first_id),
-            )
-            con.execute(
-                'UPDATE code_devices SET last_seen_at = ? WHERE code = ? AND device_id = ?',
-                ('2026-02-01T00:00:00+00:00', storage.format_code(code), second_id),
-            )
-            con.commit()
-
         status, body = self.roam(code=code, device_id=third_id, key=third_key)
         self.assertEqual(200, status)
-        self.assertEqual('slot_rebound', body['status'])
-        self.assertCountEqual([second_id, third_id], self.active_device_ids(code))
-        self.assertEqual(2, len(self.active_device_ids(code)))
+        self.assertEqual('not_needed', body['status'])
+        self.register(code=code, device_id=third_id, key=third_key)
 
-    def test_family_never_exceeds_five_active_slots(self) -> None:
+        self.assertCountEqual(
+            [first_id, second_id, third_id],
+            self.active_device_ids(code),
+        )
+
+    def test_family_limits_only_five_concurrent_sessions(self) -> None:
         code = self.create_code('family', 5)
-        keys = []
         ids = []
-        for index in range(5):
+        sessions = []
+        for index in range(6):
             device_id = self.installation_id(f'family-{index}')
-            key = self.new_private_key()
             ids.append(device_id)
-            keys.append(key)
-            result = self.register(code=code, device_id=device_id, key=key)
-            self.assertEqual(index + 1, result['devices_used'])
+            result = self.register(code=code, device_id=device_id, key=self.new_private_key())
+            self.assertEqual(0, result['devices_used'])
             self.assertEqual(5, result['devices_limit'])
 
-        replacement_id = self.installation_id('family-sixth')
-        replacement_key = self.new_private_key()
-        status, body = self.roam(code=code, device_id=replacement_id, key=replacement_key)
-        self.assertEqual(200, status)
-        self.assertEqual('slot_rebound', body['status'])
-        active = self.active_device_ids(code)
-        self.assertEqual(5, len(active))
-        self.assertIn(replacement_id, active)
+        self.assertEqual(6, len(self.active_device_ids(code)))
+        for index, device_id in enumerate(ids[:5]):
+            session = device_auth.acquire_vpn_session(code, device_id)
+            sessions.append(session)
+            self.assertEqual(index + 1, session['active_connections'])
+            self.assertEqual(5, session['connections_limit'])
+
+        with self.assertRaises(device_auth.DeviceAuthError) as caught:
+            device_auth.acquire_vpn_session(code, ids[5])
+        self.assertEqual('concurrent_limit_reached', caught.exception.reason)
+
+        device_auth.release_vpn_session(code, ids[0], sessions[0]['session_id'])
+        replacement = device_auth.acquire_vpn_session(code, ids[5])
+        self.assertEqual(5, replacement['active_connections'])
 
     def test_same_installation_can_rotate_lost_key_without_integrity(self) -> None:
         code = self.create_code('personal', 1)
@@ -337,7 +325,7 @@ class AccessCodeRoamingTests(unittest.TestCase):
         self.assertEqual(403, status)
         self.assertEqual('device_revoked', body['reason'])
 
-    def test_pool_assignment_alias_is_preserved_when_full_slot_is_rebound(self) -> None:
+    def test_new_registration_does_not_inherit_existing_pool_assignment(self) -> None:
         code = self.create_code('personal', 1)
         old_id = self.installation_id('pool-old')
         new_id = self.installation_id('pool-new')
@@ -345,34 +333,29 @@ class AccessCodeRoamingTests(unittest.TestCase):
         new_key = self.new_private_key()
         self.register(code=code, device_id=old_id, key=old_key)
 
-        original_secret = device_identity_aliases.POOL_BRIDGE_PSEUDONYM_KEY
-        device_identity_aliases.POOL_BRIDGE_PSEUDONYM_KEY = 'test-pool-pseudonym-secret'
-        try:
-            with sqlite3.connect(self.db_path) as con:
-                con.execute(
-                    'UPDATE code_devices SET pool_assignment_id = 4242 WHERE code = ? AND device_id = ?',
-                    (storage.format_code(code), old_id),
-                )
-                con.commit()
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                'UPDATE code_devices SET pool_assignment_id = 4242 WHERE code = ? AND device_id = ?',
+                (storage.format_code(code), old_id),
+            )
+            con.commit()
 
-            status, body = self.roam(code=code, device_id=new_id, key=new_key)
-            self.assertEqual(200, status)
-            self.assertEqual('slot_rebound', body['status'])
+        status, body = self.roam(code=code, device_id=new_id, key=new_key)
+        self.assertEqual(200, status)
+        self.assertEqual('not_needed', body['status'])
+        self.register(code=code, device_id=new_id, key=new_key)
 
-            expected = hmac.new(
-                b'test-pool-pseudonym-secret',
-                ('legacy-device-v1\0' + storage.format_code(code) + '\0' + old_id).encode('utf-8'),
-                hashlib.sha256,
-            ).hexdigest()
-            with sqlite3.connect(self.db_path) as con:
-                alias = con.execute(
-                    'SELECT subject_key FROM device_pool_subject_aliases WHERE code = ? AND device_id = ?',
-                    (storage.format_code(code), new_id),
-                ).fetchone()
-            self.assertIsNotNone(alias)
-            self.assertEqual(expected, alias[0])
-        finally:
-            device_identity_aliases.POOL_BRIDGE_PSEUDONYM_KEY = original_secret
+        with sqlite3.connect(self.db_path) as con:
+            old_assignment = con.execute(
+                'SELECT pool_assignment_id FROM code_devices WHERE code = ? AND device_id = ?',
+                (storage.format_code(code), old_id),
+            ).fetchone()[0]
+            new_assignment = con.execute(
+                'SELECT pool_assignment_id FROM code_devices WHERE code = ? AND device_id = ?',
+                (storage.format_code(code), new_id),
+            ).fetchone()[0]
+        self.assertEqual(4242, old_assignment)
+        self.assertIsNone(new_assignment)
 
 
 if __name__ == '__main__':

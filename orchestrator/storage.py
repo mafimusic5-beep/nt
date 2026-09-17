@@ -67,6 +67,15 @@ def init_storage() -> None:
         _add_column_if_missing(con, 'activation_codes', 'max_devices', 'INTEGER NOT NULL DEFAULT 1')
         _add_column_if_missing(con, 'activation_codes', 'plan', 'TEXT NOT NULL DEFAULT "manual"')
         _add_column_if_missing(con, 'servers', 'pool_node_id', 'INTEGER')
+        # storage.py itself reads the active/session counters, so these columns
+        # must exist even when callers do not import device_auth first.
+        _add_column_if_missing(con, 'code_devices', 'active', 'INTEGER NOT NULL DEFAULT 1')
+        _add_column_if_missing(
+            con,
+            'code_devices',
+            'vpn_session_expires_at_epoch',
+            'INTEGER NOT NULL DEFAULT 0',
+        )
         _ensure_pool_assignment_columns(con)
 
 
