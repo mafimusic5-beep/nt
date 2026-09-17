@@ -80,7 +80,7 @@ internal fun DeviceTableCard(
             ),
     ) {
         Text(
-            text = "Устройства тарифа",
+            text = "Одновременные подключения",
             style = MaterialTheme.typography.titleMedium,
             color = DeviceCardColors.TextPrimary,
             fontWeight = FontWeight.SemiBold,
@@ -99,7 +99,7 @@ internal fun DeviceTableCard(
         val currentProfile = profile
         if (currentProfile == null) {
             Text(
-                text = "Введите и подтвердите код доступа, чтобы увидеть устройства тарифа.",
+                text = "Введите и подтвердите код доступа, чтобы увидеть лимит одновременных подключений.",
                 style = MaterialTheme.typography.bodySmall,
                 color = DeviceCardColors.TextSecondary,
             )
@@ -152,7 +152,7 @@ internal fun DeviceTableCard(
                 disabledContentColor = DeviceCardColors.TextSecondary,
             ),
         ) {
-            Text("Обновить устройства")
+            Text("Обновить данные")
         }
     }
 }
@@ -170,7 +170,7 @@ private fun DeviceUsageSummary(profile: EmeryAccessProfile) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "Используется устройств",
+            text = "Активно подключений",
             style = MaterialTheme.typography.bodyMedium,
             color = DeviceCardColors.TextPrimary,
             fontWeight = FontWeight.Medium,
@@ -217,7 +217,7 @@ private fun DeviceCard(device: EmeryDeviceRecord) {
             )
             Spacer(Modifier.height(3.dp))
             Text(
-                text = if (device.active) "Активно" else "Отключено",
+                text = if (device.active) "VPN подключён" else "VPN не подключён",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (device.active) DeviceCardColors.Positive else DeviceCardColors.Error,
             )
@@ -254,7 +254,7 @@ private fun displayDeviceName(device: EmeryDeviceRecord): String {
 private fun displayLastActivity(device: EmeryDeviceRecord): String {
     val raw = device.lastSeenAt.ifBlank { device.firstSeenAt }.trim()
     if (raw.isBlank()) {
-        return if (device.isCurrent && device.active) "Активно сейчас" else "Нет данных об активности"
+        return if (device.isCurrent && device.active) "VPN активно сейчас" else "Нет данных об активности"
     }
     val time = raw
         .replace('T', ' ')

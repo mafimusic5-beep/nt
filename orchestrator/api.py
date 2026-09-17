@@ -1,6 +1,11 @@
 import asyncio
+import hashlib
+import hmac
+import json
 import secrets
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
@@ -16,13 +21,18 @@ from config import (
     DEFAULT_SERVER_REGION,
     DEVICE_GATE_API_KEY,
     MIN_SUPPORTED_APP_VERSION_CODE,
+    SERVER_POOL_SYNC_URL,
 )
 from device_auth import (
     DeviceAuthError,
+    acquire_vpn_session,
     authenticate_registered_device,
     authorize_gateway_connection,
     ensure_device_auth_storage,
+    heartbeat_vpn_session,
+    is_vpn_session_active,
     register_device,
+    release_vpn_session,
     validate_device_registration,
 )
 from pool_reservation_bridge import (
@@ -30,8 +40,9 @@ from pool_reservation_bridge import (
     apply_stored_assignment_policy,
     is_enabled as pool_bridge_enabled,
     refresh_stored_assignment,
+    release_assignment,
 )
-from storage import get_server_snapshot, init_storage, save_server
+from storage import clear_device_pool_assignment, get_server_snapshot, init_storage, save_server
 
 
 app = FastAPI(title='Skryon Orchestrator API')
@@ -41,6 +52,7 @@ RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMIT_MAX_ATTEMPTS = 12
 CONFIG_SYNC_WAIT_SECONDS = 25.0
 CONFIG_SYNC_POLL_INTERVAL_SECONDS = 0.5
+_RATE_LIMIT_PSEUDONYM_KEY = secrets.token_bytes(32)
 _attempts: Dict[str, Deque[float]] = defaultdict(deque)
 
 
@@ -85,6 +97,16 @@ class RegionalPolicyRequest(BaseModel):
     appVersionCode: int = Field(default=0, ge=0)
 
 
+class VpnSessionAcquireRequest(BaseModel):
+    access_key: str = Field(min_length=1, max_length=64)
+    server_id: int = Field(gt=0)
+    traffic_policy: str = Field(pattern=r'^(international|russia)$')
+
+
+class VpnSessionControlRequest(BaseModel):
+    session_id: str = Field(min_length=16, max_length=128)
+
+
 class DeviceGateAuthorizeRequest(BaseModel):
     assignment_id: int = Field(gt=0)
     node_id: int = Field(gt=0)
@@ -120,7 +142,12 @@ def client_key(request: Request, payload: ActivationRequest) -> str:
     forwarded = request.headers.get('x-forwarded-for', '')
     ip = forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else 'unknown')
     device = payload.deviceId.strip()[:64]
-    return ip + ':' + device
+    material = (ip + '\0' + device).encode('utf-8', errors='ignore')
+    return hmac.new(
+        _RATE_LIMIT_PSEUDONYM_KEY,
+        material,
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def rate_limited(key: str) -> bool:
@@ -199,6 +226,23 @@ def on_startup() -> None:
 def health() -> dict:
     return {'ok': True}
 
+
+@app.get('/api/vpn/servers')
+def vpn_servers():
+    upstream = f"{SERVER_POOL_SYNC_URL.rstrip('/')}/api/v1/vpn/servers"
+    try:
+        with urlopen(upstream, timeout=5.0) as response:
+            if response.status != 200:
+                raise RuntimeError('server_list_unavailable')
+            payload = json.loads(response.read().decode('utf-8'))
+        if not isinstance(payload, list):
+            raise ValueError('invalid_server_list')
+        return payload
+    except (HTTPError, URLError, TimeoutError, ValueError, RuntimeError):
+        return JSONResponse(
+            status_code=503,
+            content={'ok': False, 'reason': 'server_list_unavailable'},
+        )
 
 @app.post('/api/device-gate/authorize')
 @app.post('/internal/device-gate/authorize')
@@ -280,6 +324,131 @@ def device_profile(request: Request):
         )
     except DeviceAuthError as error:
         return _auth_error(error)
+
+
+@app.post('/api/vpn/session/acquire')
+def vpn_session_acquire(payload: VpnSessionAcquireRequest, request: Request):
+    try:
+        raw_code = _bearer_code(request)
+        if payload.access_key.strip() != raw_code:
+            raise DeviceAuthError('device_proof_mismatch', 401)
+        device_id = _header(request, 'x-emery-device-id')
+        authenticate_registered_device(
+            raw_code=raw_code,
+            method='POST',
+            path=request.url.path,
+            device_id=device_id,
+            timestamp=_header(request, 'x-emery-timestamp'),
+            nonce=_header(request, 'x-emery-nonce'),
+            signature_base64=_header(request, 'x-emery-signature'),
+            signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+        )
+        lease = acquire_vpn_session(raw_code, device_id)
+    except DeviceAuthError as error:
+        return _auth_error(error)
+
+    if pool_bridge_enabled():
+        for stale in lease.get('stale_assignments', []):
+            assignment_id = int(stale.get('assignment_id') or 0)
+            stale_device_id = str(stale.get('device_id') or '')
+            if assignment_id <= 0 or not stale_device_id:
+                continue
+            try:
+                release_assignment(assignment_id)
+                clear_device_pool_assignment(raw_code, stale_device_id)
+            except PoolBridgeError:
+                pass
+        try:
+            assignment = refresh_stored_assignment(
+                raw_code,
+                device_id,
+                node_id=payload.server_id,
+            )
+            apply_stored_assignment_policy(
+                raw_code,
+                device_id,
+                payload.traffic_policy,
+            )
+        except PoolBridgeError as error:
+            try:
+                release_vpn_session(raw_code, device_id, str(lease.get('session_id') or ''))
+            except DeviceAuthError:
+                pass
+            return JSONResponse(
+                status_code=error.status_code,
+                content={'ok': False, 'reason': error.reason, 'error': error.reason},
+            )
+        server = _pool_assignment_server(assignment)
+    else:
+        snapshot = get_server_snapshot()
+        server = snapshot['server']
+        if not server:
+            try:
+                release_vpn_session(raw_code, device_id, str(lease.get('session_id') or ''))
+            except DeviceAuthError:
+                pass
+            return JSONResponse(status_code=503, content={'ok': False, 'reason': 'no_server'})
+
+    return {
+        'ok': True,
+        'server_id': int(server['id']),
+        'city': str(server['name']),
+        'import_text': str(server['config']),
+        'session_id': lease['session_id'],
+        'session_expires_at_epoch': lease['expires_at_epoch'],
+        'active_connections': lease['active_connections'],
+        'connections_limit': lease['connections_limit'],
+    }
+
+
+@app.post('/api/vpn/session/heartbeat')
+def vpn_session_heartbeat(payload: VpnSessionControlRequest, request: Request):
+    try:
+        raw_code = _bearer_code(request)
+        device_id = _header(request, 'x-emery-device-id')
+        authenticate_registered_device(
+            raw_code=raw_code,
+            method='POST',
+            path=request.url.path,
+            device_id=device_id,
+            timestamp=_header(request, 'x-emery-timestamp'),
+            nonce=_header(request, 'x-emery-nonce'),
+            signature_base64=_header(request, 'x-emery-signature'),
+            signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+        )
+        return heartbeat_vpn_session(raw_code, device_id, payload.session_id)
+    except DeviceAuthError as error:
+        return _auth_error(error)
+
+
+@app.post('/api/vpn/session/release')
+def vpn_session_release(payload: VpnSessionControlRequest, request: Request):
+    try:
+        raw_code = _bearer_code(request)
+        device_id = _header(request, 'x-emery-device-id')
+        authenticate_registered_device(
+            raw_code=raw_code,
+            method='POST',
+            path=request.url.path,
+            device_id=device_id,
+            timestamp=_header(request, 'x-emery-timestamp'),
+            nonce=_header(request, 'x-emery-nonce'),
+            signature_base64=_header(request, 'x-emery-signature'),
+            signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+        )
+        released = release_vpn_session(raw_code, device_id, payload.session_id)
+    except DeviceAuthError as error:
+        return _auth_error(error)
+
+    assignment_id = int(released.get('assignment_id') or 0)
+    cleanup_pending = False
+    if pool_bridge_enabled() and assignment_id > 0:
+        try:
+            release_assignment(assignment_id)
+            clear_device_pool_assignment(raw_code, device_id)
+        except PoolBridgeError:
+            cleanup_pending = True
+    return {'ok': True, 'cleanup_pending': cleanup_pending}
 
 
 @app.post('/api/activate/validate')
@@ -364,27 +533,14 @@ def activate(payload: ActivationRequest, request: Request):
     except DeviceAuthError as error:
         return _auth_error(error)
 
-    if pool_bridge_enabled():
-        assignment = access.get('vpn_assignment')
-        if not isinstance(assignment, dict) or assignment.get('pool_status') != 'active':
-            return JSONResponse(status_code=503, content={'ok': False, 'reason': 'pool_assignment_unconfirmed'})
-        server = _pool_assignment_server(assignment)
-        revision = int(assignment.get('pool_config_revision') or 0)
-    else:
-        snapshot = get_server_snapshot()
-        server = snapshot['server']
-        if not server:
-            return {'ok': False, 'reason': 'no_server'}
-        revision = snapshot['revision']
-
     return {
         'ok': True,
         'code': payload.code.strip(),
-        'revision': revision,
-        'serverId': server['id'],
-        'serverName': server['name'],
-        'region': server['region'],
-        'config': server['config'],
+        'revision': -1,
+        'serverId': -1,
+        'serverName': '',
+        'region': '',
+        'config': '',
         'plan': access.get('plan_code'),
         'planTitle': access.get('plan_name'),
         'usedDevices': access.get('devices_used'),
@@ -462,6 +618,14 @@ async def sync_config(payload: ConfigSyncRequest, request: Request):
         return _auth_error(error)
 
     if pool_bridge_enabled():
+        if not is_vpn_session_active(payload.code, header_device_id):
+            return {
+                'ok': True,
+                'changed': False,
+                'revision': payload.revision,
+                'reason': 'session_inactive',
+                'server': None,
+            }
         try:
             assignment = await asyncio.to_thread(
                 refresh_stored_assignment,

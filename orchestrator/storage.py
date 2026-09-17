@@ -67,6 +67,15 @@ def init_storage() -> None:
         _add_column_if_missing(con, 'activation_codes', 'max_devices', 'INTEGER NOT NULL DEFAULT 1')
         _add_column_if_missing(con, 'activation_codes', 'plan', 'TEXT NOT NULL DEFAULT "manual"')
         _add_column_if_missing(con, 'servers', 'pool_node_id', 'INTEGER')
+        # storage.py itself reads the active/session counters, so these columns
+        # must exist even when callers do not import device_auth first.
+        _add_column_if_missing(con, 'code_devices', 'active', 'INTEGER NOT NULL DEFAULT 1')
+        _add_column_if_missing(
+            con,
+            'code_devices',
+            'vpn_session_expires_at_epoch',
+            'INTEGER NOT NULL DEFAULT 0',
+        )
         _ensure_pool_assignment_columns(con)
 
 
@@ -159,6 +168,35 @@ def save_device_pool_assignment(code: str, device_id: str, assignment: Dict[str,
     with connect() as con:
         _ensure_pool_assignment_columns(con)
         save_device_pool_assignment_in_connection(con, code, device_id, assignment)
+
+
+def clear_device_pool_assignment(code: str, device_id: str) -> None:
+    with connect() as con:
+        _ensure_pool_assignment_columns(con)
+        con.execute(
+            '''
+            UPDATE code_devices
+            SET pool_assignment_id = NULL,
+                pool_status = '',
+                pool_confirmation_token = '',
+                pool_node_id = NULL,
+                pool_node_name = '',
+                pool_region = '',
+                pool_config = '',
+                pool_config_revision = 0,
+                pool_speed_limit_mbps = 0,
+                pool_client_port = NULL,
+                pool_gate_host = '',
+                pool_gate_port = NULL,
+                pool_gate_server_name = '',
+                pool_gate_spki_sha256 = '',
+                pool_entitlement_hash = '',
+                pool_entitlement_expires_at = '',
+                pool_updated_at = ?
+            WHERE code = ? AND device_id = ?
+            ''',
+            (now_iso(), format_code(code), device_id.strip()[:128]),
+        )
 
 
 def get_device_pool_assignment(code: str, device_id: str) -> Optional[Dict[str, Any]]:
@@ -323,7 +361,7 @@ def get_activation_code(code: str) -> Optional[Dict[str, Any]]:
     formatted = format_code(code)
     with connect() as con:
         row = con.execute(
-            'SELECT code, status, expires_at, max_devices, plan, (SELECT COUNT(*) FROM code_devices WHERE code_devices.code = activation_codes.code) AS used_devices FROM activation_codes WHERE code = ?',
+            'SELECT code, status, expires_at, max_devices, plan, (SELECT COUNT(*) FROM code_devices WHERE code_devices.code = activation_codes.code AND code_devices.active = 1 AND code_devices.vpn_session_expires_at_epoch > CAST(strftime("%s", "now") AS INTEGER)) AS used_devices FROM activation_codes WHERE code = ?',
             (formatted,),
         ).fetchone()
         if not row:
@@ -566,16 +604,20 @@ def validate_activation_code(code: str, device_id: str) -> Dict[str, Any]:
             return {'ok': False, 'reason': 'expired'}
 
         existing_device = con.execute('SELECT id FROM code_devices WHERE code = ? AND device_id = ?', (formatted, safe_device_id)).fetchone()
-        used_devices = con.execute('SELECT COUNT(*) AS count FROM code_devices WHERE code = ?', (formatted,)).fetchone()['count']
         max_devices = int(row['max_devices'] or 1)
 
         if not existing_device:
-            if used_devices >= max_devices:
-                return {'ok': False, 'reason': 'device_limit', 'usedDevices': used_devices, 'maxDevices': max_devices}
             con.execute('INSERT INTO code_devices(code, device_id, activated_at) VALUES (?, ?, ?)', (formatted, safe_device_id, current_time))
-            used_devices += 1
 
+        used_devices = con.execute(
+            '''
+            SELECT COUNT(*) AS count
+            FROM code_devices
+            WHERE code = ? AND active = 1 AND vpn_session_expires_at_epoch > ?
+            ''',
+            (formatted, int(datetime.now(timezone.utc).timestamp())),
+        ).fetchone()['count']
         con.execute('UPDATE activation_codes SET device_id = COALESCE(device_id, ?), used_at = COALESCE(used_at, ?) WHERE code = ?', (safe_device_id, current_time, formatted))
 
-    add_event('code_validated', f'Code {formatted} validated: {used_devices}/{max_devices}', formatted, row['plan'])
+    add_event('code_validated', f'Code {formatted} validated: active VPN {used_devices}/{max_devices}', formatted, row['plan'])
     return {'ok': True, 'code': formatted, 'usedDevices': used_devices, 'maxDevices': max_devices, 'plan': row['plan']}

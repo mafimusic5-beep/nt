@@ -94,7 +94,7 @@ Environment=DEVICE_BOUND_GATE_ENABLED=false
 Environment=UNIQUE_DEVICE_CREDENTIALS_ENABLED=false
 Environment=MIN_SUPPORTED_APP_VERSION_CODE=0
 ExecStart=
-ExecStart=$runtime_python $runtime_uvicorn src.backend.main:app --app-dir "$release_root" --host 127.0.0.1 --port 9330
+ExecStart=$runtime_python $runtime_uvicorn src.backend.main:app --app-dir "$release_root" --host 127.0.0.1 --port 9330 --no-access-log
 EOF
 dropin_changed=1
 systemctl daemon-reload

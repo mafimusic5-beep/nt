@@ -171,31 +171,11 @@ def recovery_challenge(payload: legacy.RecoveryChallengeRequest):
                 con.commit()
                 return _success("key_rotated", True)
 
-            limit, _ = device_auth._plan_limit_and_title(
-                str(activation["plan"] or ""),
-                int(activation["max_devices"] or 1),
-            )
-            active_rows = _active_rows(con, code)
-
-            if len(active_rows) < limit:
-                con.commit()
-                return _success("not_needed", False)
-
-            replacement = active_rows[0]
-            legacy._migrate_device_id_if_needed(
-                con,
-                code=code,
-                row=replacement,
-                requested_device_id=requested_device_id,
-            )
-            _bind_key(
-                con,
-                row_id=int(replacement["id"]),
-                public_key=payload.client_public_key,
-                fingerprint=new_key_fingerprint,
-            )
+            # A new installation never replaces another installation. Registration
+            # is unlimited; the tariff limit is enforced only when VPN sessions
+            # are acquired. Normal activation will create this installation row.
             con.commit()
-            return _success("slot_rebound", True)
+            return _success("not_needed", False)
         except device_auth.DeviceAuthError as error:
             if error.reason == "expired":
                 con.commit()

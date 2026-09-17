@@ -2,6 +2,8 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
+import hashlib
+import hmac
 import secrets
 import time
 from collections import defaultdict, deque
@@ -23,6 +25,7 @@ MIN_MONTHS = 1
 MAX_MONTHS = 12
 WINDOW = 300
 MAX_ATTEMPTS = 12
+_RATE_LIMIT_PSEUDONYM_KEY = secrets.token_bytes(32)
 _attempts: Dict[str, Deque[float]] = defaultdict(deque)
 
 
@@ -61,9 +64,14 @@ def limited(key: str) -> bool:
     return False
 
 
-def remote_ip(request: Request) -> str:
+def remote_bucket_key(request: Request) -> str:
     forwarded = request.headers.get('x-forwarded-for', '')
-    return forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else 'unknown')
+    ip = forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else 'unknown')
+    return hmac.new(
+        _RATE_LIMIT_PSEUDONYM_KEY,
+        ip.encode('utf-8', errors='ignore'),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def plan_or_error(plan: str):
@@ -194,7 +202,7 @@ def get_code(
 ):
     if not checkout_secret_valid(x_checkout_secret):
         return checkout_auth_error()
-    if limited('checkout:' + remote_ip(request)):
+    if limited('checkout:' + remote_bucket_key(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
@@ -203,7 +211,7 @@ def get_code(
 
 @router.post('/api/checkout/find-code')
 def find_code(payload: CodeLookupRequest, request: Request):
-    if limited('find-code:' + remote_ip(request)):
+    if limited('find-code:' + remote_bucket_key(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     row = get_activation_code(payload.code)
     if not row:
@@ -219,7 +227,7 @@ def renew_code(
 ):
     if not checkout_secret_valid(x_checkout_secret):
         return checkout_auth_error()
-    if limited('renew-code:' + remote_ip(request)):
+    if limited('renew-code:' + remote_bucket_key(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
     if not plan_or_error(payload.plan):
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})

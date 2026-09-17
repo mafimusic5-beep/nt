@@ -300,7 +300,7 @@ async def _detect_node_location(endpoint: str) -> dict | None:
             response.raise_for_status()
             payload = response.json()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("geoip lookup failed: endpoint=%s ip=%s err=%s", endpoint, ip, exc)
+        logger.warning("geoip lookup failed: endpoint=%s err=%s", endpoint, exc)
         return None
 
     if not isinstance(payload, dict) or payload.get("error"):

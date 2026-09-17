@@ -6,6 +6,8 @@ import com.v2ray.ang.dto.SubscriptionItem
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.security.EmeryDeviceGateConfig
+import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
+import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -48,6 +50,7 @@ object EmeryVpnSync {
         val serverId: Long,
         val city: String,
         val selectedGuid: String,
+        val sessionId: String,
     )
 
     suspend fun syncProfileAndVpnConfig(accessKey: String): Result<EmeryAccessProfile> = withContext(Dispatchers.IO) {
@@ -139,9 +142,10 @@ object EmeryVpnSync {
             return@withContext Result.failure(err)
         }
 
-        val preparedImportText = runCatching {
+        val preparedImportText = try {
             EmeryDeviceGateConfig.prepareImportText(payload.importText)
-        }.getOrElse { error ->
+        } catch (error: Exception) {
+            EmeryBackendClient.releaseVpnSession(accessKey, payload.sessionId)
             ManualModeDiagnostics.reportError(
                 code = ManualDiagnosticCodes.VPN_IMPORT_FAILED,
                 message = "Device-bound server config was rejected",
@@ -156,6 +160,7 @@ object EmeryVpnSync {
             append = false,
         )
         if (count <= 0) {
+            EmeryBackendClient.releaseVpnSession(accessKey, payload.sessionId)
             ManualModeDiagnostics.reportError(
                 code = ManualDiagnosticCodes.VPN_IMPORT_FAILED,
                 message = "Import returned zero profiles",
@@ -167,6 +172,7 @@ object EmeryVpnSync {
 
         val selectedGuid = MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID).firstOrNull().orEmpty()
         if (selectedGuid.isBlank()) {
+            EmeryBackendClient.releaseVpnSession(accessKey, payload.sessionId)
             ManualModeDiagnostics.reportError(
                 code = ManualDiagnosticCodes.SELECTED_SERVER_MISSING,
                 message = "Imported profile not selected",
@@ -176,6 +182,8 @@ object EmeryVpnSync {
             return@withContext Result.failure(IllegalStateException("selected_server_missing"))
         }
         MmkvManager.setSelectServer(selectedGuid)
+        MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, payload.serverId)
+        MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, payload.sessionId)
         ManualModeDiagnostics.clearError()
         ManualModeDiagnostics.recordSuccessStep("Server selected: ${payload.city}")
         ManualModeDebugLogger.log(
@@ -193,6 +201,7 @@ object EmeryVpnSync {
                 serverId = payload.serverId,
                 city = payload.city,
                 selectedGuid = selectedGuid,
+                sessionId = payload.sessionId,
             )
         )
     }

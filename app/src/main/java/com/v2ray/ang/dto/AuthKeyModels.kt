@@ -69,5 +69,22 @@ data class VpnConnectApiResponseBody(
     @SerializedName("server_id") val serverId: Long? = null,
     @SerializedName("city") val city: String? = null,
     @SerializedName("import_text") val importText: String? = null,
+    @SerializedName("session_id") val sessionId: String? = null,
+    @SerializedName("session_expires_at_epoch") val sessionExpiresAtEpoch: Long? = null,
+    @SerializedName("active_connections") val activeConnections: Int? = null,
+    @SerializedName("connections_limit") val connectionsLimit: Int? = null,
+    @SerializedName("reason") val reason: String? = null,
+    @SerializedName("error") val error: String? = null,
+)
+
+data class VpnSessionControlRequestBody(
+    @SerializedName("session_id") val sessionId: String,
+)
+
+data class VpnSessionControlResponseBody(
+    @SerializedName("ok") val ok: Boolean? = null,
+    @SerializedName("expires_at_epoch") val expiresAtEpoch: Long? = null,
+    @SerializedName("cleanup_pending") val cleanupPending: Boolean? = null,
+    @SerializedName("reason") val reason: String? = null,
     @SerializedName("error") val error: String? = null,
 )

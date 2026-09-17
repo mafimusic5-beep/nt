@@ -189,15 +189,19 @@ private fun EmeryApp(
                     PendingActivationCommitScreen(
                         code = pendingActivationCode,
                         onCommitted = { result, formattedCode ->
-                            val guid = saveActivatedSkryonConfig(result.config)
+                            MmkvManager.decodeSettingsString(SKRYON_SERVER_GUID_PREF)?.let { oldGuid ->
+                                if (oldGuid.isNotBlank()) MmkvManager.removeServer(oldGuid)
+                            }
+                            MmkvManager.removeServerViaSubid(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)
                             MmkvManager.encodeSettings(
                                 SKRYON_ACTIVATION_CODE_PREF,
                                 result.code.ifBlank { formattedCode },
                             )
-                            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, result.config)
-                            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
-                            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, result.serverId)
-                            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, result.revision)
+                            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, "")
+                            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, "")
+                            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, -1L)
+                            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, -1L)
+                            MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
                             MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_MODE, "")
                             MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, true)
                             pendingActivationCode = ""
