@@ -61,13 +61,12 @@ class SubscriptionRepository(BaseRepository):
         device_name: str,
         devices_limit: int,
     ) -> Device | None:
-        now = datetime.now(timezone.utc)
+        # Only the stable pseudonymous fingerprint and slot membership are
+        # required for entitlement enforcement. Do not retain activity history,
+        # device labels or app/platform telemetry supplied by the client.
         device = self.find_device(subscription_id, fingerprint)
         if device and device.slot_index is not None:
             device.is_active = True
-            device.last_seen_at = now
-            device.platform = platform
-            device.device_name = device_name
             return device
 
         # A unique (subscription, slot_index) constraint is the final admission
@@ -78,18 +77,18 @@ class SubscriptionRepository(BaseRepository):
             candidate = device or Device(
                 subscription_id=subscription_id,
                 device_fingerprint=fingerprint,
-                platform=platform,
-                device_name=device_name,
-                last_seen_at=now,
+                platform="android",
+                device_name="Android-устройство",
+                last_seen_at=None,
                 is_active=True,
             )
             try:
                 with self.db.begin_nested():
                     candidate.slot_index = slot_index
                     candidate.is_active = True
-                    candidate.last_seen_at = now
-                    candidate.platform = platform
-                    candidate.device_name = device_name
+                    candidate.platform = "android"
+                    candidate.device_name = "Android-устройство"
+                    candidate.last_seen_at = None
                     self.db.add(candidate)
                     self.db.flush()
                 return candidate
@@ -98,19 +97,15 @@ class SubscriptionRepository(BaseRepository):
                 concurrent = self.find_device(subscription_id, fingerprint)
                 if concurrent and concurrent.slot_index is not None:
                     concurrent.is_active = True
-                    concurrent.last_seen_at = now
-                    concurrent.platform = platform
-                    concurrent.device_name = device_name
                     return concurrent
                 device = concurrent
         return None
 
     def heartbeat(self, subscription_id: int, fingerprint: str) -> bool:
+        # Heartbeat is authorization only. It must not create a timeline of
+        # when a user or device was online.
         device = self.find_device(subscription_id, fingerprint)
-        if not device or not device.is_active:
-            return False
-        device.last_seen_at = datetime.now(timezone.utc)
-        return True
+        return bool(device and device.is_active)
 
     def unbind_device(self, subscription_id: int, fingerprint: str) -> bool:
         device = self.find_device(subscription_id, fingerprint)
