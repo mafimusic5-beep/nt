@@ -149,10 +149,14 @@ def ensure_device_auth_storage() -> None:
         con.execute(
             '''
             UPDATE code_devices
-            SET first_seen_at = COALESCE(first_seen_at, activated_at),
-                last_seen_at = COALESCE(last_seen_at, activated_at),
+            SET device_name = ?,
+                platform = 'android',
+                app_version = '',
+                first_seen_at = NULL,
+                last_seen_at = NULL,
                 active = COALESCE(active, 1)
-            '''
+            ''',
+            (DEFAULT_DEVICE_NAME,),
         )
         con.commit()
     finally:
@@ -399,7 +403,7 @@ def _device_rows(con: sqlite3.Connection, code: str) -> list[sqlite3.Row]:
             active
         FROM code_devices
         WHERE code = ?
-        ORDER BY active DESC, last_seen_at DESC, id ASC
+        ORDER BY active DESC, id ASC
         ''',
         (code,),
     ).fetchall()
@@ -427,11 +431,11 @@ def _profile_payload(
     devices = [
         {
             'device_id': row['device_id'],
-            'device_name': _public_device_name(str(row['device_name'] or '')),
+            'device_name': DEFAULT_DEVICE_NAME,
             'platform': 'android',
             'app_version': '',
-            'first_seen_at': row['first_seen_at'] or '',
-            'last_seen_at': row['last_seen_at'] or '',
+            'first_seen_at': '',
+            'last_seen_at': '',
             'active': bool(row['active']),
             'is_current': row['device_id'] == current_device_id,
         }
@@ -441,7 +445,7 @@ def _profile_payload(
         'valid': True,
         'device_registered': True,
         'device_id': current_device_id,
-        'device_name': _public_device_name(str(current['device_name'] or '')),
+        'device_name': DEFAULT_DEVICE_NAME,
         'plan_name': plan_title,
         'plan_code': activation['plan'] or '',
         'devices_used': concurrent_sessions.count(con, str(activation['code'])) if concurrent_sessions.enabled() else len(active_rows),
@@ -577,7 +581,7 @@ def register_device(
         canonical,
         signature_algorithm,
     )
-    safe_device_name = _public_device_name(signed_device_name)
+    safe_device_name = DEFAULT_DEVICE_NAME
 
     con = _connect()
     pool_assignment: Dict[str, Any] | None = None
@@ -634,21 +638,17 @@ def register_device(
                 SET device_name = ?,
                     public_key = ?,
                     public_key_fingerprint = ?,
-                    platform = ?,
-                    app_version = ?,
-                    first_seen_at = COALESCE(first_seen_at, activated_at, ?),
-                    last_seen_at = ?,
+                    platform = 'android',
+                    app_version = '',
+                    first_seen_at = NULL,
+                    last_seen_at = NULL,
                     active = 1
                 WHERE id = ?
                 ''',
                 (
-                    safe_device_name,
+                    DEFAULT_DEVICE_NAME,
                     public_key_base64,
                     fingerprint,
-                    'android',
-                    app_version.strip()[:32],
-                    current_time,
-                    current_time,
                     existing['id'],
                 ),
             )
@@ -658,7 +658,7 @@ def register_device(
                 SELECT id, device_id, device_name, public_key
                 FROM code_devices
                 WHERE code = ? AND active = 1
-                ORDER BY last_seen_at DESC, id ASC
+                ORDER BY id ASC
                 ''',
                 (code,),
             ).fetchall()
@@ -681,19 +681,15 @@ def register_device(
                     last_seen_at,
                     active
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                VALUES (?, ?, ?, ?, ?, ?, 'android', '', NULL, NULL, 1)
                 ''',
                 (
                     code,
                     safe_device_id,
                     current_time,
-                    safe_device_name,
+                    DEFAULT_DEVICE_NAME,
                     public_key_base64,
                     fingerprint,
-                    'android',
-                    app_version.strip()[:32],
-                    current_time,
-                    current_time,
                 ),
             )
 
@@ -814,10 +810,9 @@ def authenticate_registered_device(
         )
         _consume_nonce(con, code=code, device_id=safe_device_id, nonce=nonce)
 
-        current_time = now_iso()
         con.execute(
-            'UPDATE code_devices SET last_seen_at = ? WHERE id = ?',
-            (current_time, device['id']),
+            'UPDATE code_devices SET last_seen_at = NULL WHERE id = ?',
+            (device['id'],),
         )
         payload = _profile_payload(
             con,
@@ -969,8 +964,8 @@ def authorize_gateway_connection(
             nonce=replay_nonce,
         )
         con.execute(
-            'UPDATE code_devices SET last_seen_at = ? WHERE id = ?',
-            (now_iso(), int(row['device_row_id'])),
+            'UPDATE code_devices SET last_seen_at = NULL WHERE id = ?',
+            (int(row['device_row_id']),),
         )
         lease = {}
         if concurrent_sessions.enabled():

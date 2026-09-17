@@ -1,5 +1,7 @@
 import asyncio
 import concurrent_sessions
+import hashlib
+import hmac
 import sqlite3
 import secrets
 import time
@@ -45,6 +47,7 @@ RATE_LIMIT_MAX_ATTEMPTS = 12
 CONFIG_SYNC_WAIT_SECONDS = 25.0
 CONFIG_SYNC_POLL_INTERVAL_SECONDS = 0.5
 _attempts: Dict[str, Deque[float]] = defaultdict(deque)
+_RATE_LIMIT_KEY = secrets.token_bytes(32)
 
 
 class DeviceRegisterRequest(BaseModel):
@@ -124,7 +127,8 @@ def client_key(request: Request, payload: ActivationRequest) -> str:
     forwarded = request.headers.get('x-forwarded-for', '')
     ip = forwarded.split(',')[0].strip() if forwarded else (request.client.host if request.client else 'unknown')
     device = payload.deviceId.strip()[:64]
-    return ip + ':' + device
+    material = (ip + '\0' + device).encode('utf-8')
+    return hmac.new(_RATE_LIMIT_KEY, material, hashlib.sha256).hexdigest()
 
 
 def rate_limited(key: str) -> bool:

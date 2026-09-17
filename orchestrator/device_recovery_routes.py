@@ -346,8 +346,8 @@ def recovery_challenge(payload: RecoveryChallengeRequest):
                         requested_device_id=requested_device_id,
                     )
                 con.execute(
-                    "UPDATE code_devices SET last_seen_at = ? WHERE id = ?",
-                    (now_iso(), int(row["id"])),
+                    "UPDATE code_devices SET last_seen_at = NULL WHERE id = ?",
+                    (int(row["id"]),),
                 )
                 con.commit()
                 return {
@@ -591,14 +591,13 @@ def recovery_confirm(payload: RecoveryConfirmRequest):
                 UPDATE code_devices
                 SET public_key = ?,
                     public_key_fingerprint = ?,
-                    last_seen_at = ?,
+                    last_seen_at = NULL,
                     active = 1
                 WHERE id = ?
                 """,
                 (
                     payload.client_public_key,
                     new_key_fingerprint,
-                    now_iso(),
                     int(device["id"]),
                 ),
             )

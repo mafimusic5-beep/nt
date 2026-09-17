@@ -203,6 +203,12 @@ with open(path, "r", encoding="utf-8") as handle:
     original_text = handle.read()
 config = json.loads(original_text)
 original_config = json.loads(original_text)
+config["log"] = {
+    "access": "none",
+    "error": "none",
+    "loglevel": "none",
+    "dnsLog": False,
+}
 tag_prefix = "emery-device-%s-" % DATA["assignment_id"]
 tag = tag_prefix + str(DATA["speed_limit_mbps"])
 inbounds = list(config.get("inbounds") or [])
@@ -223,7 +229,6 @@ if DATA["action"] == "upsert_client":
     settings_block["clients"] = [{
         "id": DATA["client_uuid"],
         "flow": flow,
-        "email": tag,
     }]
     # The base inbound is a template/listener only.  Its historical shared UUID
     # must stop authenticating as soon as unique-device mode is activated.
