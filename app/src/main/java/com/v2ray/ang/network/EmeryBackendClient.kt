@@ -240,7 +240,7 @@ object EmeryBackendClient {
 
     suspend fun fetchVpnServers(): Result<List<BackendServer>> = withContext(Dispatchers.IO) {
         val request = Request.Builder()
-            .url("${baseUrl()}/api/v1/vpn/servers")
+            .url("${baseUrl()}/api/vpn/servers")
             .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
             .get()
             .build()

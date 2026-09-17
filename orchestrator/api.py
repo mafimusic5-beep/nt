@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import secrets
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
@@ -18,6 +21,7 @@ from config import (
     DEFAULT_SERVER_REGION,
     DEVICE_GATE_API_KEY,
     MIN_SUPPORTED_APP_VERSION_CODE,
+    SERVER_POOL_SYNC_URL,
 )
 from device_auth import (
     DeviceAuthError,
@@ -222,6 +226,23 @@ def on_startup() -> None:
 def health() -> dict:
     return {'ok': True}
 
+
+@app.get('/api/vpn/servers')
+def vpn_servers():
+    upstream = f"{SERVER_POOL_SYNC_URL.rstrip('/')}/api/v1/vpn/servers"
+    try:
+        with urlopen(upstream, timeout=5.0) as response:
+            if response.status != 200:
+                raise RuntimeError('server_list_unavailable')
+            payload = json.loads(response.read().decode('utf-8'))
+        if not isinstance(payload, list):
+            raise ValueError('invalid_server_list')
+        return payload
+    except (HTTPError, URLError, TimeoutError, ValueError, RuntimeError):
+        return JSONResponse(
+            status_code=503,
+            content={'ok': False, 'reason': 'server_list_unavailable'},
+        )
 
 @app.post('/api/device-gate/authorize')
 @app.post('/internal/device-gate/authorize')

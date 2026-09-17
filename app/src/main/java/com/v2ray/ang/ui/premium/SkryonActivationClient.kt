@@ -495,7 +495,7 @@ internal suspend fun syncSkryonConfig(
                 config = config,
                 serverId = server?.optLong("id", -1L) ?: -1L,
                 revision = json.optLong("revision", revision),
-                reason = if (server == null) "no_server" else "",
+                reason = json.optString("reason").ifBlank { if (server == null) "no_server" else "" },
             )
         }
     } catch (_: Exception) {

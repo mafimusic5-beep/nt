@@ -382,6 +382,14 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     continue
                 }
 
+                val activeSessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
+                    ?.trim()
+                    .orEmpty()
+                if (activeSessionId.isNotBlank()) {
+                    delay(CONFIG_SYNC_RETRY_DELAY_MS)
+                    continue
+                }
+
                 val knownRevision = MmkvManager.decodeSettingsLong(
                     SKRYON_CONFIG_REVISION_PREF,
                     -1L,
@@ -404,6 +412,10 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 }
 
                 MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, result.revision)
+                if (result.reason == "session_inactive") {
+                    delay(CONFIG_SYNC_RETRY_DELAY_MS)
+                    continue
+                }
                 if (result.config.isBlank()) {
                     removeSyncedSkryonConfig("Сервер удалён администратором")
                 } else {
@@ -605,8 +617,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         if (!isImportProfileLink(config)) {
             return null
         }
+        val serverId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
+        if (serverId <= 0L) {
+            return null
+        }
         return VpnLocationOption(
-            id = "skryon-activated",
+            id = serverId.toString(),
             title = titleFromConfigLink(config, 1),
             importText = config,
         )
