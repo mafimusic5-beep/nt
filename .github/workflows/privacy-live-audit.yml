@@ -20,6 +20,7 @@ jobs:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
+          test -n "$VPS_SSH_PRIVATE_KEY"
           mkdir -p ~/.ssh
           printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
@@ -27,41 +28,20 @@ jobs:
 
       - name: Audit live privacy state
         env:
-          DEPLOY_HOST: 31.70.76.155
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
-          deploy_host=""
-          deploy_port=""
-          seen_candidates=" "
-          candidate_hosts=("$DEPLOY_HOST" "${VPS_HOST:-}" "82.146.49.10")
-          candidate_ports=("${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022)
-          for candidate_host in "${candidate_hosts[@]}"; do
-            [[ -n "$candidate_host" ]] || continue
-            candidate_host="${candidate_host#http://}"
-            candidate_host="${candidate_host#https://}"
-            candidate_host="${candidate_host%%/*}"
-            candidate_host="${candidate_host%%:*}"
-            for candidate_port in "${candidate_ports[@]}"; do
-              [[ "$candidate_port" =~ ^[0-9]+$ ]] || continue
-              candidate_key=" $candidate_host:$candidate_port "
-              [[ "$seen_candidates" != *"$candidate_key"* ]] || continue
-              seen_candidates+="$candidate_key"
-              if ssh -4 -p "$candidate_port" -i ~/.ssh/id_ed25519 \
-                -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new \
-                "${VPS_USER:-root}@${candidate_host}" true >/dev/null 2>&1; then
-                deploy_host="$candidate_host"
-                deploy_port="$candidate_port"
-                break 2
-              fi
-            done
-          done
-          [[ -n "$deploy_host" ]] || { echo 'No authorized VPS endpoint accepted the deploy key.' >&2; exit 70; }
+          test -n "${VPS_HOST:-}"
+          test -n "${VPS_USER:-}"
+          port="${VPS_PORT:-22}"
+          [[ "$port" =~ ^[0-9]+$ ]]
 
-          remote="${VPS_USER:-root}@${deploy_host}"
-          ssh -4 -p "$deploy_port" -i ~/.ssh/id_ed25519 \
+          # Never put production addresses in this public workflow or print them
+          # to the job log. The endpoint exists only in encrypted Actions secrets.
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 \
             -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 \
             -o StrictHostKeyChecking=accept-new "$remote" <<'EOF'
           set -euo pipefail
@@ -72,6 +52,10 @@ jobs:
           heartbeat_history=no
           log_masking=no
           migration=no
+          nginx_no_access=no
+          uvicorn_no_access=no
+          xray_no_activity_log=not_present
+          gate_no_activity_log=not_present
           user_audit_rows=unknown
           last_seen_rows=unknown
 
@@ -87,6 +71,59 @@ jobs:
           fi
           if [[ -f "$logging_file" ]] && grep -Fq 'uvicorn.access' "$logging_file" && grep -Fq 'client_ip=' "$logging_file"; then
             log_masking=yes
+          fi
+
+          if nginx -T >/tmp/skryon-nginx-audit 2>/dev/null; then
+            if grep -Eq '^[[:space:]]*access_log[[:space:]]+off;' /tmp/skryon-nginx-audit; then
+              nginx_no_access=yes
+            fi
+          fi
+          rm -f /tmp/skryon-nginx-audit
+
+          if systemctl cat emery-backend.service >/tmp/skryon-backend-unit 2>/dev/null; then
+            if grep -Fq -- '--no-access-log' /tmp/skryon-backend-unit; then
+              uvicorn_no_access=yes
+            fi
+          elif pgrep -af 'uvicorn.*src\.backend\.main:app' >/tmp/skryon-uvicorn-process 2>/dev/null; then
+            if grep -Fq -- '--no-access-log' /tmp/skryon-uvicorn-process; then
+              uvicorn_no_access=yes
+            fi
+          fi
+          rm -f /tmp/skryon-backend-unit /tmp/skryon-uvicorn-process
+
+          xray_config=''
+          for candidate in /usr/local/etc/xray/config.json /etc/xray/config.json; do
+            if [[ -f "$candidate" ]]; then
+              xray_config="$candidate"
+              break
+            fi
+          done
+          if [[ -n "$xray_config" ]]; then
+            xray_no_activity_log=no
+            if python3 - "$xray_config" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], 'r', encoding='utf-8') as handle:
+              config = json.load(handle)
+          log = config.get('log') or {}
+          ok = (
+              log.get('access') == 'none'
+              and log.get('error') == 'none'
+              and log.get('loglevel') == 'none'
+              and log.get('dnsLog') is False
+          )
+          raise SystemExit(0 if ok else 1)
+          PY
+            then
+              xray_no_activity_log=yes
+            fi
+          fi
+
+          if [[ -f /etc/emery/device-gate.env ]]; then
+            gate_no_activity_log=no
+            if grep -Eq '^EMERY_GATE_LOG_LEVEL=CRITICAL$' /etc/emery/device-gate.env; then
+              gate_no_activity_log=yes
+            fi
           fi
 
           if [[ -x "$runtime/bin/alembic" && -f "$modern/alembic.ini" ]]; then
@@ -119,6 +156,10 @@ jobs:
           printf 'LIVE_HEARTBEAT_HISTORY_BLOCKED=%s\n' "$heartbeat_history"
           printf 'LIVE_LOG_REDACTION=%s\n' "$log_masking"
           printf 'LIVE_PRIVACY_MIGRATION=%s\n' "$migration"
+          printf 'LIVE_NGINX_ACCESS_LOG_DISABLED=%s\n' "$nginx_no_access"
+          printf 'LIVE_UVICORN_ACCESS_LOG_DISABLED=%s\n' "$uvicorn_no_access"
+          printf 'LIVE_XRAY_ACTIVITY_LOG_DISABLED=%s\n' "$xray_no_activity_log"
+          printf 'LIVE_GATE_ACTIVITY_LOG_DISABLED=%s\n' "$gate_no_activity_log"
           printf 'LIVE_USER_AUDIT_ROWS=%s\n' "$user_audit_rows"
           printf 'LIVE_LAST_SEEN_ROWS=%s\n' "$last_seen_rows"
           EOF
