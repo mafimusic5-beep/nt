@@ -50,5 +50,12 @@ def setup_logging(level: str) -> None:
     for handler in root.handlers:
         handler.addFilter(privacy_filter)
 
+    # A per-request access log is effectively browsing/connection metadata for
+    # the API. Operational failures are available through application/error
+    # logs, so do not maintain a client-IP + path request history.
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.disabled = True
+    access_logger.propagate = False
+
     for noisy_logger in ("httpx", "httpcore", "paramiko", "paramiko.transport"):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
