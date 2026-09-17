@@ -96,6 +96,11 @@ def _ensure_legacy_privacy_guards(con: sqlite3.Connection) -> None:
 
 
 def ensure_storage(con: sqlite3.Connection) -> None:
+    # Some callers invoke storage setup before they explicitly open their
+    # BEGIN IMMEDIATE transaction; others call it while already holding one.
+    # Privacy scrubbing performs UPDATEs, so only commit the setup work when
+    # this function itself started from an idle connection.
+    caller_had_transaction = con.in_transaction
     con.execute('''CREATE TABLE IF NOT EXISTS vpn_live_leases (
         token_hash TEXT PRIMARY KEY,
         device_row_id INTEGER NOT NULL REFERENCES code_devices(id) ON DELETE CASCADE,
@@ -107,6 +112,8 @@ def ensure_storage(con: sqlite3.Connection) -> None:
     con.execute('CREATE INDEX IF NOT EXISTS vpn_live_expiry ON vpn_live_leases(expires_at)')
     con.execute('CREATE INDEX IF NOT EXISTS vpn_live_device ON vpn_live_leases(device_row_id)')
     _ensure_legacy_privacy_guards(con)
+    if not caller_had_transaction and con.in_transaction:
+        con.commit()
 
 
 def _logical_sessions(con: sqlite3.Connection, code: str, now: float):
