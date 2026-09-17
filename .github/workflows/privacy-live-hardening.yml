@@ -1,0 +1,196 @@
+name: Live privacy logging hardening
+
+on:
+  push:
+    branches:
+      - feature/concurrent-vpn-resource-allocation
+    paths:
+      - '.github/workflows/privacy-live-hardening.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Apply privacy-only runtime changes
+        env:
+          DEPLOY_HOST: 31.70.76.155
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          deploy_host=""
+          deploy_port=""
+          seen_candidates=" "
+          candidate_hosts=("$DEPLOY_HOST" "${VPS_HOST:-}" "82.146.49.10")
+          candidate_ports=("${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022)
+          for candidate_host in "${candidate_hosts[@]}"; do
+            [[ -n "$candidate_host" ]] || continue
+            candidate_host="${candidate_host#http://}"
+            candidate_host="${candidate_host#https://}"
+            candidate_host="${candidate_host%%/*}"
+            candidate_host="${candidate_host%%:*}"
+            for candidate_port in "${candidate_ports[@]}"; do
+              [[ "$candidate_port" =~ ^[0-9]+$ ]] || continue
+              candidate_key=" $candidate_host:$candidate_port "
+              [[ "$seen_candidates" != *"$candidate_key"* ]] || continue
+              seen_candidates+="$candidate_key"
+              if ssh -4 -p "$candidate_port" -i ~/.ssh/id_ed25519 \
+                -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new \
+                "${VPS_USER:-root}@${candidate_host}" true >/dev/null 2>&1; then
+                deploy_host="$candidate_host"
+                deploy_port="$candidate_port"
+                break 2
+              fi
+            done
+          done
+          [[ -n "$deploy_host" ]] || { echo 'No authorized VPS endpoint accepted the deploy key.' >&2; exit 70; }
+
+          remote="${VPS_USER:-root}@${deploy_host}"
+          ssh -4 -p "$deploy_port" -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 \
+            -o StrictHostKeyChecking=accept-new "$remote" <<'EOF'
+          set -Eeuo pipefail
+          [[ "$(id -u)" -eq 0 ]]
+          umask 077
+          backup="/root/skryon-privacy-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$backup"
+
+          xray_state=absent
+          xray_config=/usr/local/etc/xray/config.json
+          if [[ -f "$xray_config" ]]; then
+            cp -a "$xray_config" "$backup/xray-config.json"
+            python3 - "$xray_config" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          config = json.loads(path.read_text(encoding='utf-8'))
+          config['log'] = {
+              'access': 'none',
+              'error': 'none',
+              'loglevel': 'none',
+              'dnsLog': False,
+          }
+          temp = path.with_suffix(path.suffix + '.privacy-new')
+          temp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          os.chmod(temp, path.stat().st_mode & 0o777)
+          os.replace(temp, path)
+          PY
+            if ! xray run -test -config "$xray_config" >/dev/null 2>&1; then
+              cp -a "$backup/xray-config.json" "$xray_config"
+              echo 'Xray privacy config validation failed; original restored.' >&2
+              exit 71
+            fi
+            was_active=0
+            systemctl is-active --quiet xray.service && was_active=1 || true
+            if ((was_active)); then
+              if ! systemctl restart xray.service || ! systemctl is-active --quiet xray.service; then
+                cp -a "$backup/xray-config.json" "$xray_config"
+                systemctl restart xray.service || true
+                echo 'Xray restart failed; original restored.' >&2
+                exit 72
+              fi
+            fi
+            for old_log in /var/log/xray/access.log /var/log/xray/error.log /var/log/Xray/access.log /var/log/Xray/error.log; do
+              [[ -f "$old_log" ]] && : > "$old_log"
+            done
+            xray_state=private
+          fi
+
+          gate_state=absent
+          gate_env=/etc/emery/device-gate.env
+          if [[ -f "$gate_env" ]]; then
+            cp -a "$gate_env" "$backup/device-gate.env"
+            if grep -q '^EMERY_GATE_LOG_LEVEL=' "$gate_env"; then
+              sed -i 's/^EMERY_GATE_LOG_LEVEL=.*/EMERY_GATE_LOG_LEVEL=CRITICAL/' "$gate_env"
+            else
+              printf '\nEMERY_GATE_LOG_LEVEL=CRITICAL\n' >> "$gate_env"
+            fi
+            chmod 0600 "$gate_env"
+            if systemctl list-unit-files emery-device-gate.service >/dev/null 2>&1; then
+              was_active=0
+              systemctl is-active --quiet emery-device-gate.service && was_active=1 || true
+              if ((was_active)); then
+                if ! systemctl restart emery-device-gate.service || ! systemctl is-active --quiet emery-device-gate.service; then
+                  cp -a "$backup/device-gate.env" "$gate_env"
+                  systemctl restart emery-device-gate.service || true
+                  echo 'Device gate restart failed; original restored.' >&2
+                  exit 73
+                fi
+              fi
+            fi
+            gate_state=private
+          fi
+
+          backend_state=absent
+          if systemctl cat emery-backend.service >/dev/null 2>&1 && \
+             [[ -x /opt/nt/.runtime/modern/bin/uvicorn ]]; then
+            current_exec="$(systemctl show emery-backend.service --property=ExecStart --value)"
+            if [[ "$current_exec" == *'/opt/nt/.runtime/modern/bin/uvicorn'* && "$current_exec" == *'--port 9330'* ]]; then
+              dropin=/etc/systemd/system/emery-backend.service.d/30-privacy-no-access-log.conf
+              mkdir -p "$(dirname "$dropin")"
+              [[ -f "$dropin" ]] && cp -a "$dropin" "$backup/backend-privacy-dropin.conf" || true
+              cat > "$dropin" <<'UNIT'
+          [Service]
+          ExecStart=
+          ExecStart=/opt/nt/.runtime/modern/bin/uvicorn src.backend.main:app --host 127.0.0.1 --port 9330 --no-access-log
+          UNIT
+              systemctl daemon-reload
+              if ! systemctl restart emery-backend.service || ! systemctl is-active --quiet emery-backend.service; then
+                if [[ -f "$backup/backend-privacy-dropin.conf" ]]; then
+                  cp -a "$backup/backend-privacy-dropin.conf" "$dropin"
+                else
+                  rm -f "$dropin"
+                fi
+                systemctl daemon-reload
+                systemctl restart emery-backend.service || true
+                echo 'Backend privacy drop-in failed; original restored.' >&2
+                exit 74
+              fi
+              for attempt in $(seq 1 15); do
+                curl -fsS --max-time 3 http://127.0.0.1:9330/api/v1/health >/dev/null 2>&1 && break
+                sleep 1
+              done
+              curl -fsS --max-time 3 http://127.0.0.1:9330/api/v1/health >/dev/null
+              backend_state=private
+            else
+              backend_state=unknown_exec
+            fi
+          fi
+
+          nginx_state=absent
+          if command -v nginx >/dev/null 2>&1; then
+            if nginx -t >/dev/null 2>&1; then
+              if nginx -T 2>/dev/null | grep -Eq '^[[:space:]]*access_log[[:space:]]+off;'; then
+                nginx_state=access_off
+              else
+                nginx_state=needs_review
+              fi
+            else
+              nginx_state=invalid_config
+            fi
+          fi
+
+          printf 'XRAY_PRIVACY=%s\n' "$xray_state"
+          printf 'DEVICE_GATE_PRIVACY=%s\n' "$gate_state"
+          printf 'BACKEND_PRIVACY=%s\n' "$backend_state"
+          printf 'NGINX_PRIVACY=%s\n' "$nginx_state"
+          echo 'Live privacy hardening completed without changing VPN routing or credentials.'
+          EOF
