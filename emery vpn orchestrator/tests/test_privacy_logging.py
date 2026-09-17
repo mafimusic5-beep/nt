@@ -35,5 +35,7 @@ def test_auth_material_is_redacted():
     message = _filtered_message(
         "request access_key=ABC nonce=123 signature=xyz public_key=pk token=tok"
     )
-    for secret in ("ABC", "123", "xyz", "pk", "tok"):
-        assert secret not in message
+    assert message == (
+        "request access_key=***REDACTED*** nonce=***REDACTED*** "
+        "signature=***REDACTED*** public_key=***REDACTED*** token=***REDACTED***"
+    )
