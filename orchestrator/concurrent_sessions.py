@@ -20,6 +20,81 @@ def enabled() -> bool:
     return config.CONCURRENT_SESSIONS_ENABLED
 
 
+def _ensure_legacy_privacy_guards(con: sqlite3.Connection) -> None:
+    """Keep legacy device storage entitlement-only.
+
+    Older activation code paths still write device labels/version/timestamps.
+    These fields are not required to enforce a 1/2/5 concurrent entitlement,
+    so scrub existing values and enforce the minimized representation with a
+    SQLite trigger. This lets the compatibility API keep its wire shape without
+    accumulating a user activity timeline.
+    """
+    columns = {
+        str(row[1])
+        for row in con.execute("PRAGMA table_info(code_devices)").fetchall()
+    }
+    required = {"device_name", "platform", "app_version", "first_seen_at", "last_seen_at"}
+    if not required.issubset(columns):
+        return
+
+    con.execute(
+        '''
+        UPDATE code_devices
+        SET device_name = 'Android-устройство',
+            platform = 'android',
+            app_version = '',
+            first_seen_at = NULL,
+            last_seen_at = NULL
+        WHERE device_name <> 'Android-устройство'
+           OR platform <> 'android'
+           OR app_version <> ''
+           OR first_seen_at IS NOT NULL
+           OR last_seen_at IS NOT NULL
+        '''
+    )
+    con.execute(
+        '''
+        CREATE TRIGGER IF NOT EXISTS trg_code_devices_privacy_minimize_insert
+        AFTER INSERT ON code_devices
+        WHEN NEW.device_name <> 'Android-устройство'
+          OR NEW.platform <> 'android'
+          OR NEW.app_version <> ''
+          OR NEW.first_seen_at IS NOT NULL
+          OR NEW.last_seen_at IS NOT NULL
+        BEGIN
+            UPDATE code_devices
+            SET device_name = 'Android-устройство',
+                platform = 'android',
+                app_version = '',
+                first_seen_at = NULL,
+                last_seen_at = NULL
+            WHERE id = NEW.id;
+        END
+        '''
+    )
+    con.execute(
+        '''
+        CREATE TRIGGER IF NOT EXISTS trg_code_devices_privacy_minimize_update
+        AFTER UPDATE OF device_name, platform, app_version, first_seen_at, last_seen_at
+        ON code_devices
+        WHEN NEW.device_name <> 'Android-устройство'
+          OR NEW.platform <> 'android'
+          OR NEW.app_version <> ''
+          OR NEW.first_seen_at IS NOT NULL
+          OR NEW.last_seen_at IS NOT NULL
+        BEGIN
+            UPDATE code_devices
+            SET device_name = 'Android-устройство',
+                platform = 'android',
+                app_version = '',
+                first_seen_at = NULL,
+                last_seen_at = NULL
+            WHERE id = NEW.id;
+        END
+        '''
+    )
+
+
 def ensure_storage(con: sqlite3.Connection) -> None:
     con.execute('''CREATE TABLE IF NOT EXISTS vpn_live_leases (
         token_hash TEXT PRIMARY KEY,
@@ -31,6 +106,7 @@ def ensure_storage(con: sqlite3.Connection) -> None:
     )''')
     con.execute('CREATE INDEX IF NOT EXISTS vpn_live_expiry ON vpn_live_leases(expires_at)')
     con.execute('CREATE INDEX IF NOT EXISTS vpn_live_device ON vpn_live_leases(device_row_id)')
+    _ensure_legacy_privacy_guards(con)
 
 
 def _logical_sessions(con: sqlite3.Connection, code: str, now: float):
