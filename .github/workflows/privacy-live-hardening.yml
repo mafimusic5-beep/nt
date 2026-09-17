@@ -20,6 +20,7 @@ jobs:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
+          test -n "$VPS_SSH_PRIVATE_KEY"
           mkdir -p ~/.ssh
           printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
@@ -27,41 +28,20 @@ jobs:
 
       - name: Apply privacy-only runtime changes
         env:
-          DEPLOY_HOST: 31.70.76.155
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
-          deploy_host=""
-          deploy_port=""
-          seen_candidates=" "
-          candidate_hosts=("$DEPLOY_HOST" "${VPS_HOST:-}" "82.146.49.10")
-          candidate_ports=("${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022)
-          for candidate_host in "${candidate_hosts[@]}"; do
-            [[ -n "$candidate_host" ]] || continue
-            candidate_host="${candidate_host#http://}"
-            candidate_host="${candidate_host#https://}"
-            candidate_host="${candidate_host%%/*}"
-            candidate_host="${candidate_host%%:*}"
-            for candidate_port in "${candidate_ports[@]}"; do
-              [[ "$candidate_port" =~ ^[0-9]+$ ]] || continue
-              candidate_key=" $candidate_host:$candidate_port "
-              [[ "$seen_candidates" != *"$candidate_key"* ]] || continue
-              seen_candidates+="$candidate_key"
-              if ssh -4 -p "$candidate_port" -i ~/.ssh/id_ed25519 \
-                -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new \
-                "${VPS_USER:-root}@${candidate_host}" true >/dev/null 2>&1; then
-                deploy_host="$candidate_host"
-                deploy_port="$candidate_port"
-                break 2
-              fi
-            done
-          done
-          [[ -n "$deploy_host" ]] || { echo 'No authorized VPS endpoint accepted the deploy key.' >&2; exit 70; }
+          test -n "${VPS_HOST:-}"
+          test -n "${VPS_USER:-}"
+          port="${VPS_PORT:-22}"
+          [[ "$port" =~ ^[0-9]+$ ]]
 
-          remote="${VPS_USER:-root}@${deploy_host}"
-          ssh -4 -p "$deploy_port" -i ~/.ssh/id_ed25519 \
+          # Production topology must never be committed to this public repo or
+          # echoed into Actions output. Address/user live only in encrypted secrets.
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 \
             -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 \
             -o StrictHostKeyChecking=accept-new "$remote" <<'EOF'
           set -Eeuo pipefail
@@ -88,6 +68,12 @@ jobs:
               'loglevel': 'none',
               'dnsLog': False,
           }
+          # Xray client labels are unnecessary for Skryon's routing and can
+          # become a durable per-assignment dimension in future stats/logging.
+          for inbound in config.get('inbounds') or []:
+              for client in (inbound.get('settings') or {}).get('clients') or []:
+                  if isinstance(client, dict):
+                      client.pop('email', None)
           temp = path.with_suffix(path.suffix + '.privacy-new')
           temp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
           os.chmod(temp, path.stat().st_mode & 0o777)
