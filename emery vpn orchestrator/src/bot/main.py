@@ -5,6 +5,7 @@ import subprocess
 from aiogram import Bot, Dispatcher
 from aiogram.types import ErrorEvent
 
+from src.backend.core.logging import setup_logging
 from src.bot.handlers.admin import router as admin_router
 from src.bot.handlers.admin_codes import router as admin_codes_router
 from src.bot.handlers.admin_node_delete import router as admin_node_delete_router
@@ -47,7 +48,7 @@ async def on_error(event: ErrorEvent) -> None:
 async def run() -> None:
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is required. Fill it in your .env file.")
-    logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+    setup_logging(settings.log_level)
 
     await asyncio.to_thread(_disable_legacy_polling_service)
 
