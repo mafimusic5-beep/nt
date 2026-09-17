@@ -8,7 +8,6 @@ import android.content.res.Configuration.UI_MODE_NIGHT_MASK
 import android.content.res.Configuration.UI_MODE_NIGHT_NO
 import android.os.Build
 import android.os.LocaleList
-import android.provider.Settings
 import android.text.Editable
 import android.util.Base64
 import android.util.Log
@@ -19,7 +18,9 @@ import androidx.core.net.toUri
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.LOOPBACK
 import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.security.EmeryDeviceIdentity
 import java.io.IOException
+import java.security.MessageDigest
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.URI
@@ -411,16 +412,16 @@ object Utils {
     }
 
     /**
-     * Get the device ID for XUDP base key.
-     *
-     * @return The device ID for XUDP base key.
+     * Get an app-scoped XUDP base key derived from Skryon's random installation ID.
+     * No Android hardware or platform identifier is read for this purpose.
      */
     fun getDeviceIdForXUDPBaseKey(): String {
         return try {
-            val androidId = Settings.Secure.ANDROID_ID.toByteArray(Charsets.UTF_8)
-            Base64.encodeToString(androidId.copyOf(32), Base64.NO_PADDING.or(Base64.URL_SAFE))
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(EmeryDeviceIdentity.deviceId().toByteArray(Charsets.UTF_8))
+            Base64.encodeToString(digest, Base64.NO_PADDING.or(Base64.NO_WRAP).or(Base64.URL_SAFE))
         } catch (e: Exception) {
-            Log.e(AppConfig.TAG, "Failed to generate device ID", e)
+            Log.e(AppConfig.TAG, "Failed to generate app-scoped XUDP key", e)
             ""
         }
     }

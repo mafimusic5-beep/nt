@@ -32,6 +32,7 @@ internal const val SKRYON_ACTIVATION_CONFIG_PREF = "SKRYON_ACTIVATION_CONFIG"
 internal const val SKRYON_SERVER_GUID_PREF = "SKRYON_SERVER_GUID"
 internal const val SKRYON_SERVER_ID_PREF = "SKRYON_SERVER_ID"
 internal const val SKRYON_CONFIG_REVISION_PREF = "SKRYON_CONFIG_REVISION"
+internal const val SKRYON_VPN_SESSION_ID_PREF = "SKRYON_VPN_SESSION_ID"
 internal const val SKRYON_ACTIVATION_CODE_LENGTH = 11
 
 private const val SKRYON_WEBSITE_API_BASE_URL = "https://skryon.ru"
@@ -202,7 +203,7 @@ internal suspend fun validateSkryonCode(
         val response = executeActivationRequest(request)
         val json = runCatching { JSONObject(response.body) }.getOrNull()
         if (response.code == 409) {
-            val reason = json?.serverReason().orEmpty().ifBlank { "device_limit_reached" }
+            val reason = json?.serverReason().orEmpty().ifBlank { "activation_conflict" }
             return@withContext activationFailure(activationReasonText(reason), reason, response)
         }
         if (response.code == 429) {
@@ -252,10 +253,9 @@ internal suspend fun validateSkryonCode(
 }
 
 /**
- * One signed POST atomically reserves the tariff slot, records the device and returns
- * the VPN configuration. Existing production already enforces code/device counters;
- * the upgraded backend additionally verifies the Keystore signature and returns the
- * complete device inventory in the same response.
+ * One signed POST registers this installation and its Keystore public key.
+ * Registration is unlimited; no VPN credential or concurrent-session slot is
+ * allocated until the user explicitly connects.
  */
 internal suspend fun activateSkryonCode(
     context: Context,
@@ -302,7 +302,7 @@ internal suspend fun activateSkryonCode(
         val json = runCatching { JSONObject(text) }.getOrNull()
 
         if (response.code == 409) {
-            val reason = json?.serverReason().orEmpty().ifBlank { "device_limit_reached" }
+            val reason = json?.serverReason().orEmpty().ifBlank { "activation_conflict" }
             return@withContext activationFailure(
                 error = activationReasonText(reason),
                 reason = reason,
@@ -348,14 +348,9 @@ internal suspend fun activateSkryonCode(
             )
         }
 
-        val config = json.optString("config").trim()
-        if (!config.startsWith("vless://")) {
-            return@withContext activationFailure(
-                error = "Конфиг сервера повреждён",
-                reason = "client_server_config_invalid",
-                response = response,
-            )
-        }
+        // Activation intentionally returns no VPN config. A short-lived config
+        // is issued only by /api/vpn/session/acquire when the user connects.
+        val config = ""
 
         val devicesUsed = json.optIntOrNull("devices_used", "devicesUsed", "usedDevices")
             ?: return@withContext activationFailure(
@@ -392,9 +387,7 @@ internal suspend fun activateSkryonCode(
                 devicesUsed = devicesUsed,
             )
         }
-        if (devices.count { it.active } != devicesUsed ||
-            devices.none { it.deviceId == proof.deviceId && it.active }
-        ) {
+        if (devices.none { it.deviceId == proof.deviceId }) {
             return@withContext activationFailure(
                 error = activationReasonText("device_inventory_mismatch"),
                 reason = "device_inventory_mismatch",
@@ -623,29 +616,16 @@ private fun provisionalDeviceInventory(
     currentDeviceName: String,
     devicesUsed: Int,
 ): List<EmeryDeviceRecord> {
-    return buildList {
-        add(
-            EmeryDeviceRecord(
-                deviceId = currentDeviceId,
-                deviceName = currentDeviceName,
-                platform = "android",
-                appVersion = BuildConfig.VERSION_NAME,
-                active = true,
-                isCurrent = true,
-            )
+    return listOf(
+        EmeryDeviceRecord(
+            deviceId = currentDeviceId,
+            deviceName = currentDeviceName,
+            platform = "android",
+            appVersion = BuildConfig.VERSION_NAME,
+            active = false,
+            isCurrent = true,
         )
-        for (index in 2..devicesUsed) {
-            add(
-                EmeryDeviceRecord(
-                    deviceId = "legacy-slot-$index",
-                    deviceName = "Зарегистрированное устройство $index",
-                    platform = "server",
-                    active = true,
-                    isCurrent = false,
-                )
-            )
-        }
-    }
+    )
 }
 
 private fun JSONObject.optIntOrNull(vararg names: String): Int? {
@@ -670,7 +650,8 @@ private fun activationReasonText(reason: String): String {
         "banned" -> "Код отключён"
         "not_bound" -> "Код не привязан к этому устройству"
         "already_bound" -> "Код уже активирован на другом устройстве"
-        "device_limit", "device_limit_reached" -> "Лимит устройств для этого тарифа исчерпан"
+        "concurrent_limit_reached" -> "Достигнут лимит одновременных VPN-подключений для тарифа"
+        "device_limit", "device_limit_reached" -> "Сервер вернул устаревшее ограничение доступа"
         "device_signature_invalid", "device_signature_missing" -> "Не удалось подтвердить подлинность устройства"
         "device_key_rotation_requires_reset" -> "Требуется безопасное восстановление этого устройства"
         "play_integrity_not_configured", "device_recovery_unavailable" ->
@@ -688,7 +669,7 @@ private fun activationReasonText(reason: String): String {
         "device_mismatch", "device_inventory_mismatch" -> "Сервер вернул другое устройство"
         "device_inventory_missing" -> "Сервер не вернул таблицу зарегистрированных устройств"
         "device_counter_missing", "device_counter_mismatch" -> "Сервер не подтвердил количество устройств"
-        "plan_limit_mismatch" -> "Лимит устройств не соответствует выбранному тарифу"
+        "plan_limit_mismatch" -> "Лимит одновременных подключений не соответствует выбранному тарифу"
         "activation_code_mismatch" -> "Сервер вернул конфигурацию для другого кода"
         "no_server", "pool_no_nodes", "pool_region_unavailable" ->
             "VPN-сервер для этого региона пока недоступен. Попробуйте немного позже"

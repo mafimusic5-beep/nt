@@ -156,5 +156,5 @@ async def detect_node_location(endpoint: str) -> dict | None:
                 )
                 return location
 
-    logger.warning("all geoip providers failed: endpoint=%s ip=%s", endpoint, ip)
+    logger.warning("all geoip providers failed: endpoint=%s", endpoint)
     return None

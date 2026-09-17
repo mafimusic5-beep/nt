@@ -9,6 +9,7 @@ class PoolReservationPrepareRequest(BaseModel):
     entitlement_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     entitlement_expires_at: datetime
     region_code: str = Field(min_length=1, max_length=16, pattern=r"^[a-z0-9-]+$")
+    node_id: int | None = Field(default=None, gt=0)
 
 
 class PoolReservationResponse(BaseModel):
@@ -40,6 +41,15 @@ class PoolReservationConfirmResponse(BaseModel):
     assignment_id: int
     status: str
     confirmed_at: datetime
+
+
+class PoolReservationReleaseRequest(BaseModel):
+    assignment_id: int = Field(gt=0)
+
+
+class PoolReservationReleaseResponse(BaseModel):
+    assignment_id: int
+    status: str
 
 
 class PoolPolicyApplyRequest(BaseModel):

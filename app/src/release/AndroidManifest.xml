@@ -2,11 +2,48 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        tools:node="remove" />
-    <uses-permission
-        android:name="android.permission.READ_MEDIA_IMAGES"
-        tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera" tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera.autofocus" tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera.front" tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera.flash" tools:node="remove" />
+    <uses-feature android:name="android.software.leanback" tools:node="remove" />
+
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.CAMERA" tools:node="remove" />
+
+    <application
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false"
+        tools:replace="android:usesCleartextTraffic">
+
+        <activity android:name=".ui.MainActivity" android:exported="false" tools:replace="android:exported" />
+        <activity
+            android:name=".ui.premium.PremiumActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            tools:node="replace">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".ui.ScannerActivity" tools:node="remove" />
+        <activity android:name="io.github.g00fy2.quickie.QRScannerActivity" tools:node="remove" />
+        <activity android:name=".ui.ScScannerActivity" tools:node="remove" />
+        <activity android:name=".ui.PerAppProxyActivity" tools:node="remove" />
+        <activity android:name=".ui.TaskerActivity" tools:node="remove" />
+        <activity android:name=".ui.UrlSchemeActivity" tools:node="remove" />
+        <activity android:name=".ui.LogcatActivity" tools:node="remove" />
+        <activity android:name=".ui.BackupActivity" tools:node="remove" />
+        <activity android:name=".ui.CheckUpdateActivity" tools:node="remove" />
+        <activity android:name=".ui.AboutActivity" tools:node="remove" />
+
+        <receiver android:name=".receiver.WidgetProvider" tools:node="remove" />
+        <receiver android:name=".receiver.TaskerReceiver" tools:node="remove" />
+        <service android:name=".service.QSTileService" tools:node="remove" />
+        <service android:name="androidx.camera.core.impl.MetadataHolderService" tools:node="remove" />
+    </application>
 
 </manifest>

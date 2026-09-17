@@ -67,59 +67,13 @@ object SkryonDeviceRecoveryClient {
                 return@withContext Result.success(Unit)
             }
 
-            val challengeId = challengeResponse.optString("challenge_id").trim()
-            val serverChallenge = challengeResponse.optString("server_challenge").trim()
-            val requestHash = challengeResponse.optString("request_hash").trim()
-            if (challengeId.isBlank() || serverChallenge.isBlank() || requestHash.isBlank()) {
-                return@withContext Result.failure(IllegalStateException("device_recovery_challenge_invalid"))
-            }
-
-            val integrityToken = try {
-                SkryonPlayIntegrity.requestRecoveryToken(context, requestHash)
-            } catch (error: Exception) {
-                val reason = error.message?.takeIf { it.startsWith("play_integrity_") }
-                    ?: "play_integrity_failed"
-                return@withContext Result.failure(IllegalStateException(reason, error))
-            }
-
-            val confirmProof = EmeryDeviceIdentity.buildRecoveryConfirmProof(
-                accessKey = key,
-                challengeId = challengeId,
-                serverChallenge = serverChallenge,
-                integrityToken = integrityToken,
+            // New production recovery never requires a third-party integrity token.
+            // If an old backend still requests one, fail closed until the backend is upgraded.
+            return@withContext Result.failure(
+                IllegalStateException("device_recovery_server_upgrade_required"),
             )
-            val confirmBody = JSONObject()
-                .put("code", key)
-                .put("device_id", confirmProof.deviceId)
-                .put("client_public_key", confirmProof.publicKeyBase64)
-                .put("timestamp", confirmProof.timestampMillis)
-                .put("nonce", confirmProof.nonce)
-                .put("signature", confirmProof.signatureBase64)
-                .put("signature_algorithm", confirmProof.signatureAlgorithm)
-                .put("challenge_id", challengeId)
-                .put("server_challenge", serverChallenge)
-                .put("integrity_token", integrityToken)
-                .toString()
 
-            val confirmRequest = Request.Builder()
-                .url(BASE_URL + CONFIRM_PATH)
-                .header("Accept", "application/json")
-                .post(confirmBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .build()
 
-            client.newCall(confirmRequest).execute().use { response ->
-                val raw = response.body?.string().orEmpty()
-                val json = runCatching { JSONObject(raw) }.getOrNull()
-                if (!response.isSuccessful || json == null || !json.optBoolean("ok", false)) {
-                    val reason = json?.optString("reason").orEmpty().ifBlank { "device_recovery_http_${response.code}" }
-                    return@withContext Result.failure(IllegalStateException(reason))
-                }
-                if (!json.optBoolean("recovered", false)) {
-                    return@withContext Result.failure(IllegalStateException("device_recovery_not_confirmed"))
-                }
-            }
-
-            Result.success(Unit)
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))
         } catch (error: Exception) {

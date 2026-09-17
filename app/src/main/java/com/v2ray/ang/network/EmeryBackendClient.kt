@@ -8,6 +8,8 @@ import com.v2ray.ang.dto.VpnConnectApiResponseBody
 import com.v2ray.ang.dto.VpnConnectRequestBody
 import com.v2ray.ang.dto.VpnConfigApiResponseBody
 import com.v2ray.ang.dto.VpnServerItemApiResponseBody
+import com.v2ray.ang.dto.VpnSessionControlRequestBody
+import com.v2ray.ang.dto.VpnSessionControlResponseBody
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryAccessProfile
 import com.v2ray.ang.handler.EmeryApiConfig
@@ -93,6 +95,9 @@ object EmeryBackendClient {
         val serverId: Long,
         val city: String,
         val importText: String,
+        val sessionId: String,
+        val activeConnections: Int,
+        val connectionsLimit: Int,
     )
 
     suspend fun fetchProfile(
@@ -163,11 +168,8 @@ object EmeryBackendClient {
                     if (ids.distinct().size != ids.size) {
                         return@withContext Result.failure(IllegalStateException("device_inventory_mismatch"))
                     }
-                    if (devices.count { it.active } != devicesUsed) {
-                        return@withContext Result.failure(IllegalStateException("device_counter_mismatch"))
-                    }
                     val currentRow = devices.firstOrNull { it.deviceId == currentDeviceId }
-                    if (currentRow == null || !currentRow.active) {
+                    if (currentRow == null) {
                         return@withContext Result.failure(IllegalStateException("device_inventory_mismatch"))
                     }
                 }
@@ -203,10 +205,8 @@ object EmeryBackendClient {
             if (profile.deviceId != activationProfile.deviceId) {
                 throw IllegalStateException("device_mismatch")
             }
-            if (profile.devicesUsed != activationProfile.devicesUsed ||
-                profile.devicesLimit != activationProfile.devicesLimit
-            ) {
-                throw IllegalStateException("device_counter_mismatch")
+            if (profile.devicesLimit != activationProfile.devicesLimit) {
+                throw IllegalStateException("plan_limit_mismatch")
             }
             profile.copy(
                 vpnEnabled = profile.vpnEnabled || activationProfile.vpnEnabled,
@@ -277,25 +277,67 @@ object EmeryBackendClient {
         val bodyJson = JsonUtil.toJson(
             VpnConnectRequestBody(accessKey = key, serverId = serverId, trafficPolicy = policy),
         ) ?: "{}"
-        val request = authorizedPost("/api/v1/vpn/connect", key, bodyJson)
+        val request = authorizedPost("/api/vpn/session/acquire", key, bodyJson)
         try {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 val parsed = JsonUtil.fromJson(raw, VpnConnectApiResponseBody::class.java)
                 val detail = try { JSONObject(raw).optString("detail") } catch (_: Exception) { "" }
-                if (response.code == 401) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "invalid_or_expired_key" }))
-                if (response.code == 404) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_not_found" }))
-                if (response.code == 409) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "server_config_unavailable" }))
-                if (!response.isSuccessful) return@withContext Result.failure(IllegalStateException(parsed?.error ?: detail.ifBlank { "http_${response.code}" }))
+                val reason = parsed?.reason.orEmpty().ifBlank { parsed?.error.orEmpty() }.ifBlank { detail }
+                if (response.code == 401) return@withContext Result.failure(IllegalStateException(reason.ifBlank { "invalid_or_expired_key" }))
+                if (response.code == 404) return@withContext Result.failure(IllegalStateException(reason.ifBlank { "server_not_found" }))
+                if (response.code == 409) return@withContext Result.failure(IllegalStateException(reason.ifBlank { "server_config_unavailable" }))
+                if (!response.isSuccessful) return@withContext Result.failure(IllegalStateException(reason.ifBlank { "http_${response.code}" }))
                 val importText = parsed?.importText?.trim().orEmpty()
-                if (importText.isEmpty()) return@withContext Result.failure(IllegalStateException("server_config_unavailable"))
+                val sessionId = parsed?.sessionId?.trim().orEmpty()
+                if (importText.isEmpty() || sessionId.length < 16) {
+                    return@withContext Result.failure(IllegalStateException("server_config_unavailable"))
+                }
                 Result.success(
                     ConnectPayload(
                         serverId = parsed?.serverId ?: serverId,
                         city = parsed?.city?.ifBlank { "Unknown" } ?: "Unknown",
                         importText = importText,
+                        sessionId = sessionId,
+                        activeConnections = parsed?.activeConnections ?: 1,
+                        connectionsLimit = parsed?.connectionsLimit ?: 1,
                     )
                 )
+            }
+        } catch (_: IOException) {
+            Result.failure(IllegalStateException("network"))
+        }
+    }
+
+    suspend fun heartbeatVpnSession(accessKey: String, sessionId: String): Result<Unit> =
+        updateVpnSession("/api/vpn/session/heartbeat", accessKey, sessionId)
+
+    suspend fun releaseVpnSession(accessKey: String, sessionId: String): Result<Unit> =
+        updateVpnSession("/api/vpn/session/release", accessKey, sessionId)
+
+    private suspend fun updateVpnSession(
+        path: String,
+        accessKey: String,
+        sessionId: String,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val key = accessKey.trim()
+        val session = sessionId.trim()
+        if (key.isEmpty() || session.length < 16) {
+            return@withContext Result.failure(IllegalStateException("bad_request"))
+        }
+        val bodyJson = JsonUtil.toJson(VpnSessionControlRequestBody(session)) ?: "{}"
+        val request = authorizedPost(path, key, bodyJson)
+        try {
+            client.newCall(request).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                val parsed = JsonUtil.fromJson(raw, VpnSessionControlResponseBody::class.java)
+                val reason = parsed?.reason.orEmpty().ifBlank { parsed?.error.orEmpty() }
+                if (!response.isSuccessful || parsed?.ok == false) {
+                    return@withContext Result.failure(
+                        IllegalStateException(reason.ifBlank { "http_${response.code}" })
+                    )
+                }
+                Result.success(Unit)
             }
         } catch (_: IOException) {
             Result.failure(IllegalStateException("network"))

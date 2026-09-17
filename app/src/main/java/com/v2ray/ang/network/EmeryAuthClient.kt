@@ -137,7 +137,7 @@ object EmeryAuthClient {
 
                 if (response.code == 409) {
                     return Result.failure(
-                        IllegalStateException(parsed?.serverError().orEmpty().ifBlank { "device_limit_reached" })
+                        IllegalStateException(parsed?.serverError().orEmpty().ifBlank { "activation_conflict" })
                     )
                 }
                 if (response.code == 429) {
@@ -224,7 +224,7 @@ object EmeryAuthClient {
 
                 if (response.code == 409) {
                     return Result.failure(
-                        IllegalStateException(parsed.serverError().ifBlank { "device_limit_reached" })
+                        IllegalStateException(parsed.serverError().ifBlank { "activation_conflict" })
                     )
                 }
                 if (response.code == 401 || response.code == 403) {
@@ -275,7 +275,7 @@ object EmeryAuthClient {
                 if (requireInventory && devices.isEmpty()) {
                     return Result.failure(IllegalStateException("device_inventory_missing"))
                 }
-                if (devices.isNotEmpty() && devices.none { it.deviceId == currentDeviceId && it.active }) {
+                if (devices.isNotEmpty() && devices.none { it.deviceId == currentDeviceId }) {
                     return Result.failure(IllegalStateException("device_inventory_mismatch"))
                 }
 
@@ -329,29 +329,16 @@ object EmeryAuthClient {
         currentDeviceName: String,
         devicesUsed: Int,
     ): List<EmeryDeviceRecord> {
-        return buildList {
-            add(
-                EmeryDeviceRecord(
-                    deviceId = currentDeviceId,
-                    deviceName = currentDeviceName,
-                    platform = "android",
-                    appVersion = BuildConfig.VERSION_NAME,
-                    active = true,
-                    isCurrent = true,
-                )
+        return listOf(
+            EmeryDeviceRecord(
+                deviceId = currentDeviceId,
+                deviceName = currentDeviceName,
+                platform = "android",
+                appVersion = BuildConfig.VERSION_NAME,
+                active = false,
+                isCurrent = true,
             )
-            for (index in 2..devicesUsed) {
-                add(
-                    EmeryDeviceRecord(
-                        deviceId = "legacy-slot-$index",
-                        deviceName = "Зарегистрированное устройство $index",
-                        platform = "server",
-                        active = true,
-                        isCurrent = false,
-                    )
-                )
-            }
-        }
+        )
     }
 
     private fun JSONObject.serverError(): String {

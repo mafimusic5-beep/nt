@@ -14,22 +14,12 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from config import DATABASE_PATH, DEVICE_GATE_AUTH_MAX_SKEW_SECONDS
-from pool_reservation_bridge import (
-    PoolBridgeError,
-    confirm_persisted_assignment,
-    is_enabled as pool_bridge_enabled,
-    prepare_assignment,
-)
-from storage import (
-    format_code,
-    now_iso,
-    parse_iso,
-    save_device_pool_assignment_in_connection,
-)
+from storage import format_code, now_iso, parse_iso
 
 
 MAX_CLOCK_SKEW_SECONDS = 300
 NONCE_RETENTION_SECONDS = 24 * 60 * 60
+VPN_SESSION_TTL_SECONDS = 90
 SUPPORTED_SIGNATURE_ALGORITHM = 'SHA256withECDSA'
 DEFAULT_DEVICE_NAME = 'Android-устройство'
 
@@ -112,6 +102,10 @@ def ensure_device_auth_storage() -> None:
             'pool_entitlement_hash': 'TEXT NOT NULL DEFAULT ""',
             'pool_entitlement_expires_at': 'TEXT NOT NULL DEFAULT ""',
             'pool_updated_at': 'TEXT',
+            'vpn_session_id': 'TEXT NOT NULL DEFAULT ""',
+            'vpn_session_started_at': 'TEXT',
+            'vpn_session_last_heartbeat_at': 'TEXT',
+            'vpn_session_expires_at_epoch': 'INTEGER NOT NULL DEFAULT 0',
         }
         for column, definition in additions.items():
             if column not in columns:
@@ -393,7 +387,8 @@ def _device_rows(con: sqlite3.Connection, code: str) -> list[sqlite3.Row]:
             app_version,
             first_seen_at,
             last_seen_at,
-            active
+            active,
+            vpn_session_expires_at_epoch
         FROM code_devices
         WHERE code = ?
         ORDER BY active DESC, last_seen_at DESC, id ASC
@@ -413,26 +408,35 @@ def _profile_payload(
         int(activation['max_devices'] or 1),
     )
     rows = _device_rows(con, str(activation['code']))
-    active_rows = [row for row in rows if bool(row['active'])]
+    registered_rows = [row for row in rows if bool(row['active'])]
     current = next(
-        (row for row in active_rows if row['device_id'] == current_device_id),
+        (row for row in registered_rows if row['device_id'] == current_device_id),
         None,
     )
     if current is None:
         raise DeviceAuthError('device_not_registered', 403)
 
+    now_epoch = int(time.time())
+    active_connections = sum(
+        1
+        for row in registered_rows
+        if int(row['vpn_session_expires_at_epoch'] or 0) > now_epoch
+    )
+    current_connected = int(current['vpn_session_expires_at_epoch'] or 0) > now_epoch
+
+    # Only the current installation is disclosed. The aggregate counter represents
+    # concurrent VPN sessions; registration itself is intentionally unlimited.
     devices = [
         {
-            'device_id': row['device_id'],
-            'device_name': _public_device_name(str(row['device_name'] or '')),
+            'device_id': current['device_id'],
+            'device_name': _public_device_name(str(current['device_name'] or '')),
             'platform': 'android',
             'app_version': '',
-            'first_seen_at': row['first_seen_at'] or '',
-            'last_seen_at': row['last_seen_at'] or '',
-            'active': bool(row['active']),
-            'is_current': row['device_id'] == current_device_id,
+            'first_seen_at': current['first_seen_at'] or '',
+            'last_seen_at': current['last_seen_at'] or '',
+            'active': current_connected,
+            'is_current': True,
         }
-        for row in rows
     ]
     return {
         'valid': True,
@@ -441,7 +445,7 @@ def _profile_payload(
         'device_name': _public_device_name(str(current['device_name'] or '')),
         'plan_name': plan_title,
         'plan_code': activation['plan'] or '',
-        'devices_used': len(active_rows),
+        'devices_used': active_connections,
         'devices_limit': limit,
         'vpn_enabled': True,
         'router_enabled': False,
@@ -517,12 +521,14 @@ def validate_device_registration(
                 if expected_fingerprint != fingerprint:
                     raise DeviceAuthError('device_key_rotation_requires_reset', 409)
 
-        active_count = int(con.execute(
-            'SELECT COUNT(*) FROM code_devices WHERE code = ? AND active = 1',
-            (code,),
+        active_connections = int(con.execute(
+            '''
+            SELECT COUNT(*)
+            FROM code_devices
+            WHERE code = ? AND active = 1 AND vpn_session_expires_at_epoch > ?
+            ''',
+            (code, int(time.time())),
         ).fetchone()[0])
-        if not already_registered and active_count >= limit:
-            raise DeviceAuthError('device_limit_reached', 409)
 
         return {
             'valid': True,
@@ -530,7 +536,7 @@ def validate_device_registration(
             'already_registered': already_registered,
             'plan_name': plan_title,
             'plan_code': activation['plan'] or '',
-            'devices_used': active_count,
+            'devices_used': active_connections,
             'devices_limit': limit,
             'expires_at': activation['expires_at'],
         }
@@ -575,12 +581,11 @@ def register_device(
     safe_device_name = _public_device_name(signed_device_name)
 
     con = _connect()
-    pool_assignment: Dict[str, Any] | None = None
     try:
         con.execute('BEGIN IMMEDIATE')
         activation = _activation_row(con, raw_code)
         code = str(activation['code'])
-        limit, _ = _plan_limit_and_title(
+        _plan_limit_and_title(
             str(activation['plan'] or ''),
             int(activation['max_devices'] or 1),
         )
@@ -648,19 +653,6 @@ def register_device(
                 ),
             )
         else:
-            active_rows = con.execute(
-                '''
-                SELECT id, device_id, device_name, public_key
-                FROM code_devices
-                WHERE code = ? AND active = 1
-                ORDER BY last_seen_at DESC, id ASC
-                ''',
-                (code,),
-            ).fetchall()
-            if len(active_rows) >= limit:
-                # Paid slots are immutable: neither a user action nor a new
-                # installation silently replaces an already registered device.
-                raise DeviceAuthError('device_limit_reached', 409)
             con.execute(
                 '''
                 INSERT INTO code_devices(
@@ -695,43 +687,18 @@ def register_device(
         con.execute(
             '''
             UPDATE activation_codes
-            SET device_id = CASE WHEN max_devices = 1 THEN ? ELSE COALESCE(device_id, ?) END,
+            SET device_id = COALESCE(device_id, ?),
                 used_at = COALESCE(used_at, ?)
             WHERE code = ?
             ''',
-            (safe_device_id, safe_device_id, current_time, code),
+            (safe_device_id, current_time, code),
         )
         payload = _profile_payload(
             con,
             activation=activation,
             current_device_id=safe_device_id,
         )
-        if pool_bridge_enabled():
-            expires_at = str(activation['expires_at'] or '').strip()
-            if not expires_at:
-                raise DeviceAuthError('entitlement_expiry_missing', 503)
-            try:
-                pool_assignment = prepare_assignment(
-                    formatted_code=code,
-                    device_id=safe_device_id,
-                    plan=str(activation['plan'] or ''),
-                    expires_at=expires_at,
-                )
-            except PoolBridgeError as error:
-                raise DeviceAuthError(error.reason, error.status_code) from error
-            save_device_pool_assignment_in_connection(
-                con,
-                code,
-                safe_device_id,
-                pool_assignment,
-            )
-            payload['vpn_assignment'] = pool_assignment
         con.commit()
-        if pool_assignment is not None:
-            try:
-                payload['vpn_assignment'] = confirm_persisted_assignment(pool_assignment)
-            except PoolBridgeError as error:
-                raise DeviceAuthError(error.reason, error.status_code) from error
         return payload
     except DeviceAuthError as error:
         if error.reason == 'expired':
@@ -834,6 +801,218 @@ def authenticate_registered_device(
         con.close()
 
 
+def acquire_vpn_session(raw_code: str, device_id: str) -> Dict[str, Any]:
+    safe_device_id = device_id.strip()[:128]
+    con = _connect()
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        activation = _activation_row(con, raw_code)
+        code = str(activation['code'])
+        limit, _ = _plan_limit_and_title(
+            str(activation['plan'] or ''),
+            int(activation['max_devices'] or 1),
+        )
+        device = con.execute(
+            '''
+            SELECT id, active, pool_assignment_id, vpn_session_id, vpn_session_expires_at_epoch
+            FROM code_devices
+            WHERE code = ? AND device_id = ?
+            ''',
+            (code, safe_device_id),
+        ).fetchone()
+        if not device or not bool(device['active']):
+            raise DeviceAuthError('device_not_registered', 403)
+
+        now_epoch = int(time.time())
+        stale_assignments = [
+            {
+                'device_id': str(row['device_id']),
+                'assignment_id': int(row['pool_assignment_id']),
+            }
+            for row in con.execute(
+                '''
+                SELECT device_id, pool_assignment_id
+                FROM code_devices
+                WHERE code = ?
+                  AND active = 1
+                  AND vpn_session_expires_at_epoch <= ?
+                  AND pool_assignment_id IS NOT NULL
+                ''',
+                (code, now_epoch),
+            ).fetchall()
+        ]
+
+        already_active = int(device['vpn_session_expires_at_epoch'] or 0) > now_epoch
+        active_connections = int(con.execute(
+            '''
+            SELECT COUNT(*)
+            FROM code_devices
+            WHERE code = ? AND active = 1 AND vpn_session_expires_at_epoch > ?
+            ''',
+            (code, now_epoch),
+        ).fetchone()[0])
+        if not already_active and active_connections >= limit:
+            raise DeviceAuthError('concurrent_limit_reached', 409)
+
+        current_time = now_iso()
+        expires_epoch = now_epoch + VPN_SESSION_TTL_SECONDS
+        session_id = (
+            str(device['vpn_session_id'] or '').strip()
+            if already_active
+            else ''
+        ) or str(uuid.uuid4())
+        con.execute(
+            '''
+            UPDATE code_devices
+            SET vpn_session_id = ?,
+                vpn_session_started_at = CASE
+                    WHEN vpn_session_expires_at_epoch > ? THEN vpn_session_started_at
+                    ELSE ?
+                END,
+                vpn_session_last_heartbeat_at = ?,
+                vpn_session_expires_at_epoch = ?
+            WHERE id = ?
+            ''',
+            (session_id, now_epoch, current_time, current_time, expires_epoch, int(device['id'])),
+        )
+        con.commit()
+        return {
+            'code': code,
+            'active_connections': active_connections if already_active else active_connections + 1,
+            'connections_limit': limit,
+            'session_id': session_id,
+            'expires_at_epoch': expires_epoch,
+            'stale_assignments': stale_assignments,
+        }
+    except DeviceAuthError as error:
+        if error.reason == 'expired':
+            con.commit()
+        else:
+            con.rollback()
+        raise
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def heartbeat_vpn_session(raw_code: str, device_id: str, session_id: str) -> Dict[str, Any]:
+    safe_device_id = device_id.strip()[:128]
+    con = _connect()
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        activation = _activation_row(con, raw_code)
+        code = str(activation['code'])
+        row = con.execute(
+            '''
+            SELECT id, active, vpn_session_id, vpn_session_expires_at_epoch
+            FROM code_devices
+            WHERE code = ? AND device_id = ?
+            ''',
+            (code, safe_device_id),
+        ).fetchone()
+        now_epoch = int(time.time())
+        if (
+            not row
+            or not bool(row['active'])
+            or str(row['vpn_session_id'] or '') != session_id.strip()
+            or int(row['vpn_session_expires_at_epoch'] or 0) <= now_epoch
+        ):
+            raise DeviceAuthError('vpn_session_expired', 409)
+        expires_epoch = now_epoch + VPN_SESSION_TTL_SECONDS
+        con.execute(
+            '''
+            UPDATE code_devices
+            SET vpn_session_last_heartbeat_at = ?, vpn_session_expires_at_epoch = ?
+            WHERE id = ?
+            ''',
+            (now_iso(), expires_epoch, int(row['id'])),
+        )
+        con.commit()
+        return {'ok': True, 'expires_at_epoch': expires_epoch}
+    except DeviceAuthError as error:
+        if error.reason == 'expired':
+            con.commit()
+        else:
+            con.rollback()
+        raise
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def release_vpn_session(raw_code: str, device_id: str, session_id: str) -> Dict[str, Any]:
+    safe_device_id = device_id.strip()[:128]
+    con = _connect()
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        activation = _activation_row(con, raw_code)
+        code = str(activation['code'])
+        row = con.execute(
+            '''
+            SELECT id, active, pool_assignment_id, vpn_session_id
+            FROM code_devices
+            WHERE code = ? AND device_id = ?
+            ''',
+            (code, safe_device_id),
+        ).fetchone()
+        if not row or not bool(row['active']):
+            raise DeviceAuthError('device_not_registered', 403)
+        if str(row['vpn_session_id'] or '') != session_id.strip():
+            raise DeviceAuthError('vpn_session_mismatch', 409)
+        con.execute(
+            '''
+            UPDATE code_devices
+            SET vpn_session_id = '',
+                vpn_session_expires_at_epoch = 0,
+                vpn_session_last_heartbeat_at = ?
+            WHERE id = ?
+            ''',
+            (now_iso(), int(row['id'])),
+        )
+        con.commit()
+        return {
+            'ok': True,
+            'code': code,
+            'assignment_id': int(row['pool_assignment_id'] or 0),
+        }
+    except DeviceAuthError as error:
+        if error.reason == 'expired':
+            con.commit()
+        else:
+            con.rollback()
+        raise
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def is_vpn_session_active(raw_code: str, device_id: str) -> bool:
+    con = _connect()
+    try:
+        formatted = format_code(raw_code)
+        row = con.execute(
+            '''
+            SELECT 1
+            FROM code_devices
+            WHERE code = ?
+              AND device_id = ?
+              AND active = 1
+              AND vpn_session_expires_at_epoch > ?
+            LIMIT 1
+            ''',
+            (formatted, device_id.strip()[:128], int(time.time())),
+        ).fetchone()
+        return row is not None
+    finally:
+        con.close()
+
+
 def authorize_gateway_connection(
     *,
     assignment_id: int,
@@ -908,6 +1087,7 @@ def authorize_gateway_connection(
                 d.pool_client_port,
                 d.pool_gate_server_name,
                 d.pool_gate_spki_sha256,
+                d.vpn_session_expires_at_epoch,
                 c.status AS code_status,
                 c.expires_at,
                 c.max_devices,
@@ -922,6 +1102,7 @@ def authorize_gateway_connection(
             raise DeviceAuthError('device_gate_not_authorized', 403)
         if (
             not bool(row['device_active'])
+            or int(row['vpn_session_expires_at_epoch'] or 0) <= int(time.time())
             or str(row['code_status'] or '') != 'active'
             or str(row['pool_status'] or '') != 'active'
             or int(row['pool_node_id'] or 0) != node_id

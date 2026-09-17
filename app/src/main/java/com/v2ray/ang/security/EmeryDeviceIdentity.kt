@@ -74,10 +74,9 @@ object EmeryDeviceIdentity {
 
     /**
      * Random identifier of this Skryon installation. It contains no hardware
-     * identifier or user data. Existing installations keep their already saved
-     * dp1 value so an app update does not consume a new subscription slot.
-     * After uninstall/factory reset a new value is created and the access code
-     * can rebind an existing tariff slot on the server.
+     * identifier or user data. A fresh installation generates it from secure
+     * randomness; reinstall/factory reset may create a new identifier. Tariff
+     * limits are enforced only for simultaneous VPN sessions, not registrations.
      */
     fun deviceId(): String {
         val saved = MmkvManager.decodeSettingsString(PREF_EMERY_DEVICE_ID)?.trim().orEmpty()

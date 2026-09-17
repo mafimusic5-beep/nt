@@ -194,18 +194,22 @@ def prepare_assignment(
     device_id: str,
     plan: str,
     expires_at: str,
+    node_id: int | None = None,
 ) -> dict[str, Any]:
     region = POOL_BRIDGE_REGION_CODE if _REGION_RE.fullmatch(POOL_BRIDGE_REGION_CODE) else 'auto'
     entitlement = _entitlement_hash(formatted_code, plan, expires_at)
+    request_payload: dict[str, Any] = {
+        'subject_type': 'legacy_device',
+        'subject_key': _subject_key(formatted_code, device_id),
+        'entitlement_hash': entitlement,
+        'entitlement_expires_at': expires_at,
+        'region_code': region,
+    }
+    if node_id is not None:
+        request_payload['node_id'] = int(node_id)
     response = _request(
         '/api/v1/internal/pool/assignments/prepare',
-        {
-            'subject_type': 'legacy_device',
-            'subject_key': _subject_key(formatted_code, device_id),
-            'entitlement_hash': entitlement,
-            'entitlement_expires_at': expires_at,
-            'region_code': region,
-        },
+        request_payload,
     )
     result = _validated_assignment(response)
     result['pool_entitlement_hash'] = entitlement
@@ -222,6 +226,18 @@ def confirm_assignment(assignment_id: int, confirmation_token: str) -> dict[str,
             'confirmation_token': confirmation_token,
         },
     )
+
+
+def release_assignment(assignment_id: int) -> dict[str, Any]:
+    if assignment_id <= 0:
+        raise PoolBridgeError('invalid_pool_assignment', 503)
+    result = _request(
+        '/api/v1/internal/pool/assignments/release',
+        {'assignment_id': assignment_id},
+    )
+    if str(result.get('status') or '') != 'revoked':
+        raise PoolBridgeError('pool_assignment_release_failed', 503)
+    return result
 
 
 def confirm_persisted_assignment(assignment: dict[str, Any]) -> dict[str, Any]:
@@ -246,10 +262,15 @@ def confirm_persisted_assignment(assignment: dict[str, Any]) -> dict[str, Any]:
     return assignment
 
 
-def refresh_stored_assignment(raw_code: str, device_id: str) -> dict[str, Any]:
-    """Refresh entitlement/config for an already authenticated legacy device."""
+def refresh_stored_assignment(
+    raw_code: str,
+    device_id: str,
+    node_id: int | None = None,
+) -> dict[str, Any]:
+    """Refresh or lazily create an assignment for an active VPN session."""
 
     from storage import (
+        clear_device_pool_assignment,
         get_device_pool_assignment,
         get_device_pool_entitlement,
         save_device_pool_assignment,
@@ -260,6 +281,15 @@ def refresh_stored_assignment(raw_code: str, device_id: str) -> dict[str, Any]:
         raise PoolBridgeError('device_not_registered', 403)
 
     stored = get_device_pool_assignment(entitlement['code'], device_id)
+    if (
+        stored
+        and node_id is not None
+        and int(stored.get('pool_node_id') or 0) != int(node_id)
+    ):
+        release_assignment(int(stored.get('pool_assignment_id') or 0))
+        clear_device_pool_assignment(entitlement['code'], device_id)
+        stored = None
+
     if stored and stored.get('pool_status') == 'pending' and stored.get('pool_confirmation_token'):
         try:
             stored['confirmation_required'] = True
@@ -274,6 +304,7 @@ def refresh_stored_assignment(raw_code: str, device_id: str) -> dict[str, Any]:
         device_id=device_id,
         plan=entitlement['plan'],
         expires_at=entitlement['expires_at'],
+        node_id=node_id,
     )
     save_device_pool_assignment(entitlement['code'], device_id, prepared)
     return confirm_persisted_assignment(prepared)

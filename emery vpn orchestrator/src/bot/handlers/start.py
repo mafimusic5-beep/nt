@@ -167,7 +167,7 @@ async def plan_selected_handler(callback: CallbackQuery) -> None:
         await client.get_subscription_status(telegram_id)
         order = await client.create_order(telegram_id, plan_code)
     except BackendClientError as exc:
-        logger.warning("order creation failed: tg=%s plan=%s err=%s", telegram_id, plan_code, exc.detail)
+        logger.warning("order creation failed: plan=%s err=%s", plan_code, exc.detail)
         await callback.message.edit_text(
             f"Не удалось создать заказ: {exc.detail}\nПроверьте настройки и попробуйте позже.",
             reply_markup=main_menu_keyboard(),
@@ -203,7 +203,7 @@ async def payment_confirm_handler(callback: CallbackQuery) -> None:
         result = await client.confirm_payment(order_id, provider_payment_id, idempotency_key)
         after = await client.get_subscription_status(telegram_id)
     except BackendClientError as exc:
-        logger.warning("payment confirm failed: tg=%s order=%s err=%s", telegram_id, order_id, exc.detail)
+        logger.warning("payment confirm failed: order=%s err=%s", order_id, exc.detail)
         await callback.message.edit_text(
             f"Не удалось подтвердить оплату: {exc.detail}\nПопробуйте позже.",
             reply_markup=main_menu_keyboard(),

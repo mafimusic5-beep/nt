@@ -29,12 +29,24 @@ import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
+import com.v2ray.ang.network.EmeryBackendClient
+import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
+import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
 import com.v2ray.ang.security.DeviceBoundVlessProxy
 import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.util.MyContextWrapper
 import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.Utils
 import java.lang.ref.SoftReference
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @SuppressLint("VpnServicePolicy")
 class V2RayVpnService : VpnService(), ServiceControl {
@@ -43,6 +55,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private var tun2SocksService: Tun2SocksControl? = null
     private var deviceGateProxy: DeviceBoundVlessProxy? = null
     private var pendingDeviceGate: DeviceBoundVlessProxy.ResolvedDescriptor? = null
+    private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var sessionHeartbeatJob: Job? = null
     @Volatile
     private var stopInProgress = false
     @Volatile
@@ -106,6 +120,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
     override fun onDestroy() {
         deviceGateProxy?.stop()
         deviceGateProxy = null
+        sessionHeartbeatJob?.cancel()
+        sessionScope.cancel()
         super.onDestroy()
         Log.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
         NotificationManager.cancelNotification()
@@ -171,6 +187,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             stopAllService()
             return
         }
+        startSessionHeartbeat()
     }
 
     override fun stopService() {
@@ -447,6 +464,30 @@ class V2RayVpnService : VpnService(), ServiceControl {
         return true
     }
 
+    private fun startSessionHeartbeat() {
+        sessionHeartbeatJob?.cancel()
+        val accessKey = MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CODE_PREF, "")
+            ?.trim().orEmpty()
+        val sessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
+            ?.trim().orEmpty()
+        if (accessKey.isBlank() || sessionId.isBlank()) return
+
+        sessionHeartbeatJob = sessionScope.launch {
+            while (isActive) {
+                delay(30_000L)
+                val heartbeat = EmeryBackendClient.heartbeatVpnSession(accessKey, sessionId)
+                if (heartbeat.isFailure) {
+                    Log.w(AppConfig.TAG, "StartCore-VPN: Session heartbeat rejected")
+                    withContext(Dispatchers.Main) {
+                        MessageUtil.sendMsg2UI(this@V2RayVpnService, AppConfig.MSG_STATE_START_FAILURE, "")
+                        stopAllService()
+                    }
+                    break
+                }
+            }
+        }
+    }
+
     private fun stopAllService(isForced: Boolean = true) {
         if (stopInProgress) {
             return
@@ -458,6 +499,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
 //        val info = loadVpnNetworkInfo(configName, emptyInfo)!! + (lastNetworkInfo ?: emptyInfo)
 //        saveVpnNetworkInfo(configName, info)
             isRunning = false
+            sessionHeartbeatJob?.cancel()
+            sessionHeartbeatJob = null
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {
                     connectivity.unregisterNetworkCallback(defaultNetworkCallback)

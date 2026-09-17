@@ -56,7 +56,7 @@ internal fun expectedDeviceLimitForPlan(planName: String): Int? {
 internal fun validateDeviceLimit(planName: String, devicesUsed: Int, devicesLimit: Int): Boolean {
     val expected = expectedDeviceLimitForPlan(planName) ?: return false
     if (devicesLimit != expected) return false
-    return devicesUsed in 1..devicesLimit
+    return devicesUsed in 0..devicesLimit
 }
 
 object EmeryAccessManager {

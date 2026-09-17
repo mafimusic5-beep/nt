@@ -24,6 +24,7 @@ import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CONFIG_PREF
 import com.v2ray.ang.ui.premium.SKRYON_CONFIG_REVISION_PREF
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_GUID_PREF
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
+import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
 import com.v2ray.ang.ui.premium.activateSkryonCode
 import com.v2ray.ang.ui.premium.clearActivatedSkryonConfig
 import com.v2ray.ang.ui.premium.formatSkryonActivationCode
@@ -130,6 +131,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     stateWaiter?.complete(false)
                     stateWaiter = null
                     trafficVerificationJob?.cancel()
+                    releaseCurrentVpnSession()
                     if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
                         setDisconnectedWithError("Не удалось запустить VPN-сервис")
                     }
@@ -203,6 +205,18 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
                 requestServiceState()
             }
+        }
+    }
+
+    private fun releaseCurrentVpnSession() {
+        val accessKey = savedActivationCode()
+        val sessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
+            ?.trim().orEmpty()
+        if (sessionId.isBlank()) return
+        MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
+        if (accessKey.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            EmeryBackendClient.releaseVpnSession(accessKey, sessionId)
         }
     }
 
@@ -330,6 +344,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
         trafficVerificationJob?.cancel()
         timerJob?.cancel()
+        releaseCurrentVpnSession()
 
         if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
             VpnUiDebugLogger.log(
@@ -704,28 +719,28 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
 
         return runCatching {
-            val guid = saveActivatedSkryonConfig(activation.config)
             val confirmedCode = activation.code.ifBlank { formatted }
+            MmkvManager.decodeSettingsString(SKRYON_SERVER_GUID_PREF)?.let { oldGuid ->
+                if (oldGuid.isNotBlank()) MmkvManager.removeServer(oldGuid)
+            }
+            MmkvManager.removeServerViaSubid(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)
             MmkvManager.encodeSettings(SKRYON_ACTIVATION_CODE_PREF, confirmedCode)
-            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, activation.config)
-            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
-            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, activation.serverId)
-            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, activation.revision)
+            MmkvManager.encodeSettings(SKRYON_ACTIVATION_CONFIG_PREF, "")
+            MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, "")
+            MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, -1L)
+            MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, -1L)
+            MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
 
-            val location = VpnLocationOption(
-                id = "skryon-activated",
-                title = titleFromConfigLink(activation.config, 1),
-                importText = activation.config,
-            )
             _uiState.update { state ->
                 state.copy(
                     activationKey = confirmedCode,
-                    locations = listOf(location),
-                    selectedLocation = location,
-                    locationsLoading = false,
+                    locations = VpnDemoData.unavailableLocations,
+                    selectedLocation = VpnDemoData.unavailableLocations.first(),
+                    locationsLoading = true,
                     locationsError = "",
                 )
             }
+            refreshLocations()
             startSkryonConfigSync()
         }.onFailure { error ->
             VpnUiDebugLogger.log(
@@ -865,6 +880,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             result.fold(
                 onSuccess = { payload ->
                     if (!stopStaleRuntimeBeforeProfileStart(attempt)) {
+                        releaseCurrentVpnSession()
                         setDisconnectedWithError("Не удалось остановить предыдущий VPN-сеанс")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -876,6 +892,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         return@fold
                     }
                     if (attempt != connectionAttempt || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+                        releaseCurrentVpnSession()
                         return@fold
                     }
 
@@ -894,6 +911,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     }
                     if (!serviceStartRequested) {
                         awaitingStartConfirmation = false
+                        releaseCurrentVpnSession()
                         setDisconnectedWithError("Не удалось запустить VPN-сервис")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -995,7 +1013,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             "device_counter_missing", "device_counter_mismatch" ->
                 "Сервер не подтвердил список устройств"
             "plan_limit_mismatch" ->
-                "Лимит устройств не соответствует тарифу"
+                "Лимит одновременных подключений не соответствует тарифу"
             "invalid_or_expired_key", "not_found", "expired", "banned", "blocked", "revoked" ->
                 "Код доступа недействителен или истёк"
             "vpn_disabled" ->
@@ -1043,42 +1061,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
         }
 
-        val importText = normalizedState.selectedLocation.importText.trim()
-        if (importText.isBlank()) {
-            return Result.failure(IllegalStateException("missing_import_text"))
-        }
-
-        return withContext(Dispatchers.IO) {
-            val preparedImportText = runCatching {
-                EmeryDeviceGateConfig.prepareImportText(importText)
-            }.getOrElse {
-                return@withContext Result.failure(IllegalStateException("device_gate_config_invalid"))
-            }
-            val (count, _) = AngConfigManager.importBatchConfig(
-                preparedImportText,
-                AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID,
-                append = false,
-            )
-            if (count <= 0) {
-                return@withContext Result.failure(IllegalStateException("import_failed"))
-            }
-
-            val selectedGuid = MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)
-                .firstOrNull()
-                .orEmpty()
-            if (selectedGuid.isBlank()) {
-                return@withContext Result.failure(IllegalStateException("selected_server_missing"))
-            }
-
-            MmkvManager.setSelectServer(selectedGuid)
-            Result.success(
-                EmeryVpnSync.ConnectServerResult(
-                    serverId = -1L,
-                    city = normalizedState.selectedLocation.title,
-                    selectedGuid = selectedGuid,
-                )
-            )
-        }
+        return Result.failure(IllegalStateException("server_selection_refresh_required"))
     }
 
     fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
@@ -1099,6 +1082,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             data = JSONObject().put("state", _uiState.value.connectionState.name).put("runtimeRunning", daemonRunning == true),
         )
         stopVpnService()
+        releaseCurrentVpnSession()
         AgentDebugNdjsonLogger.log(
             hypothesisId = "H2",
             location = "VpnMainViewModel.kt:onDisconnectClick",

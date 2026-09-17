@@ -31,6 +31,8 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationConfirmRequest,
     PoolReservationConfirmResponse,
     PoolReservationPrepareRequest,
+    PoolReservationReleaseRequest,
+    PoolReservationReleaseResponse,
     PoolReservationResponse,
 )
 from src.backend.utils.debug_log import agent_log
@@ -113,7 +115,7 @@ def get_vpn_config(
         hypothesis_id="H2",
         location="routes.py:get_vpn_config",
         message="vpn_config_requested",
-        data={"telegram_id": telegram_id},
+        data={},
     )
     return SubscriptionService(db).get_vpn_config(telegram_id, x_emery_device_id or None)
 
@@ -207,6 +209,18 @@ def internal_confirm_pool_assignment(
     db: Session = Depends(get_db),
 ):
     return PoolAssignmentService(db).confirm(payload)
+
+
+@router.post(
+    "/internal/pool/assignments/release",
+    response_model=PoolReservationReleaseResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_release_pool_assignment(
+    payload: PoolReservationReleaseRequest,
+    db: Session = Depends(get_db),
+):
+    return PoolAssignmentService(db).release(payload)
 
 
 @router.post(

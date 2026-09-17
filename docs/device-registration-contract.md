@@ -1,16 +1,16 @@
 # Device registration contract
 
-The client treats device registration as successful only after signed backend checks agree. The backend remains the source of truth and must enforce the tariff limit inside a database transaction.
+The client treats device registration as successful only after signed backend checks agree. Registration is unlimited. The backend remains the source of truth for the tariff and enforces the 1/2/5 limit only when a VPN session is acquired.
 
 ## Tariff limits
 
-| Canonical tariff | Maximum active devices |
+| Canonical tariff | Maximum simultaneous VPN sessions |
 | --- | ---: |
 | `Личный` / `Personal` | 1 |
 | `Личный+` / `Personal Plus` | 2 |
 | `Семейный` / `Family` | 5 |
 
-The limit must come from the server-side tariff record. Never accept a limit supplied by a client request.
+The limit must come from the server-side tariff record. Never accept a limit supplied by a client request. Any number of installations may register the same valid activation code.
 
 ## Installation identity
 
@@ -27,101 +27,27 @@ Signed requests contain the installation ID, timestamp, single-use nonce and ECD
 
 ## Access-code roaming
 
-The activation code is the portable subscription credential. Before normal validation/activation, the client calls `POST /api/device/recovery/challenge` with a proof signed by the current installation key.
+The activation code is the portable subscription credential. A new installation never replaces or rebinds another installation. Recovery may rotate the key for the same installation identity, but a new installation is registered as a new pseudonymous row and consumes no paid VPN slot.
 
-The roaming endpoint performs all mutations under a database write transaction:
-
-1. Validate the activation code, expiry, ban state and tariff.
-2. Validate timestamp and consume the single-use nonce.
-3. Verify the submitted public key and ECDSA signature.
-4. If the same active installation and same key already exist, only update `last_seen_at`.
-5. If the same active installation ID has a new key, rotate the public key in the same row. No new tariff slot is created.
-6. If the installation is new and the tariff has a free slot, return `not_needed`; normal activation creates that free slot.
-7. If the installation is new and all tariff slots are occupied, rebind the least recently used active row to the new installation ID and public key. The row itself is reused, so the active count cannot exceed the tariff limit.
-8. If the replaced row already owns a VPN pool assignment, preserve its pool subject alias so the same paid pool slot is reused rather than reserving an additional VPN credential.
-
-New roaming challenges do not require a hardware identifier or Google Play Integrity. The legacy confirm endpoint remains temporarily available only for already-issued old recovery challenges during rolling deployment.
-
-A manually revoked exact installation remains revoked and cannot reactivate itself through roaming.
+Tariff admission happens only at VPN session acquire. The acquire transaction counts non-expired session leases for the activation code and rejects only a new VPN session that would exceed 1/2/5.
 
 ## `POST /api/activate`
 
-This endpoint delivers the VLESS configuration used by the activation screen. It must not return a configuration merely because the code is valid.
+This endpoint registers the installation identity and public key. It does not allocate a VPN pool port, does not return a usable VLESS credential, and does not enforce the concurrent VPN limit.
 
-Before returning `config`, the endpoint must either:
-
-1. invoke the atomic registration operation; or
-2. require a previously committed active device row whose installation ID and public-key fingerprint match the signed request.
-
-It must verify the timestamp, nonce and ECDSA proof itself or through a shared registration service. A direct registration attempt that bypasses the roaming preflight must still receive HTTP `409` with `device_limit_reached` when the tariff is full.
+It verifies the activation code, timestamp, nonce and ECDSA proof, then persists or refreshes the installation binding.
 
 ## `POST /auth/key`
 
-The strict registration endpoint performs the following work in one database transaction:
+Compatibility registration follows the same rule: validate the subscription and signed installation proof, register or refresh the installation, and never reject a new installation because 1/2/5 VPN sessions are already in use.
 
-1. Validate the access key, expiry, ban state and tariff.
-2. Reject timestamps outside the permitted clock window.
-3. Consume the nonce using a unique constraint so it cannot be replayed.
-4. Verify the ECDSA signature over the canonical request payload.
-5. Lock the access-key or subscription row (`SELECT ... FOR UPDATE`, advisory lock, or equivalent).
-6. Find an active device by key fingerprint and `device_id`.
-7. If the device is new, count active device rows while the lock is held.
-8. If the count is already at the tariff limit, roll back and return HTTP `409` with `device_limit_reached`.
-9. Otherwise insert the device row and update `last_seen_at`.
-10. Re-read the active count and complete device inventory in the same transaction.
-11. Commit and return the response.
-
-The roaming endpoint is the only path allowed to replace an occupied slot automatically. This keeps a modified client from creating more simultaneous devices by calling the registration endpoint directly.
-
-Concurrent requests for the same subscription must serialize. A separate `COUNT` followed by an unlocked `INSERT` is not sufficient because two devices could pass the limit simultaneously.
-
-Required success fields include:
-
-```json
-{
-  "valid": true,
-  "device_registered": true,
-  "device_id": "same-id-from-signed-request",
-  "device_name": "Android-устройство",
-  "plan_name": "Личный+",
-  "devices_used": 2,
-  "devices_limit": 2,
-  "vpn_enabled": true,
-  "router_enabled": false,
-  "expires_at": "2026-12-31T23:59:59Z",
-  "devices": [
-    {
-      "device_id": "...",
-      "device_name": "Android-устройство",
-      "platform": "android",
-      "app_version": "1.0.0",
-      "first_seen_at": "2026-07-21T12:00:00Z",
-      "last_seen_at": "2026-07-21T20:00:00Z",
-      "active": true,
-      "is_current": true
-    }
-  ]
-}
-```
+The response may expose the tariff concurrent limit and aggregate active-session count, but should not expose the identities of other installations to the client.
 
 ## `GET /profile`
 
-This request is signed with the currently registered installation key. The backend must:
+This request is signed with the currently registered installation key. The backend validates the access key and proof, requires the current installation binding, and returns subscription state plus the aggregate number of active VPN sessions. Other installation identifiers are not required in the public response.
 
-1. Validate the access key and request proof.
-2. Require an active device row whose ID and stored key fingerprint match the signature.
-3. Update `last_seen_at`.
-4. Return the same `device_id`, tariff, exact active count, limit and complete inventory.
-
-After a slot is rebound or its key is rotated, the previous key must fail authentication immediately.
-
-The client rejects the response when:
-
-- the current device is absent or inactive;
-- a `device_id` appears more than once;
-- the active row count differs from `devices_used`;
-- the limit is not exactly 1, 2 or 5 for the named tariff;
-- either response reports different counters or a different current device.
+A registered installation is valid even when it currently has no VPN session.
 
 ## Database constraints
 
@@ -133,8 +59,8 @@ UNIQUE (subscription_id, public_key_fingerprint)
 UNIQUE (subscription_id, nonce)
 ```
 
-Device removal should normally mark a row inactive rather than delete audit history. Roaming reuses an active row when the tariff is full instead of creating a second row for the same paid slot.
+Installation rows are pseudonymous authentication records, not paid tariff slots. Session leases are short lived and are the only records counted against the 1/2/5 concurrent limit.
 
 ## Configuration delivery
 
-All VPN configuration and refresh endpoints must require the same signed registered-installation proof. A valid access code by itself must not be enough to download or refresh a VPN configuration without completing the signed activation flow.
+All VPN configuration delivery must require the signed registered-installation proof and an active short-lived VPN session lease. `session/acquire` atomically enforces 1/2/5, `session/heartbeat` extends the lease, and `session/release` frees it. A copied VLESS credential must remain unusable after the lease expires because the public device gate verifies the active session and device proof.

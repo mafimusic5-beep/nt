@@ -54,13 +54,7 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
                 return@withContext VpnTunnelProbe(true, attempt, "traffic", "vpn_https_verified_via_socks")
             }
 
-            val secondary = probeThroughLocalSocks(SECONDARY_PROBE_URL, attempt, "neutral_https_via_socks")
-            onProbe(secondary)
-            if (secondary.ok) {
-                return@withContext VpnTunnelProbe(true, attempt, "traffic", "vpn_https_verified_via_socks_fallback")
-            }
-
-            last = secondary
+            last = primary
             delay(RETRY_DELAY_MS)
         }
         last
@@ -167,6 +161,5 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
         const val READ_TIMEOUT_MS = 2_500
         const val MAX_CAUSE_DEPTH = 4
         const val PRIMARY_PROBE_URL = "https://skryon.ru/health"
-        const val SECONDARY_PROBE_URL = "https://one.one.one.one/cdn-cgi/trace"
     }
 }
