@@ -42,7 +42,10 @@ def _disable_legacy_polling_service() -> None:
 
 
 async def on_error(event: ErrorEvent) -> None:
-    logger.exception("Unhandled bot exception", exc_info=event.exception)
+    # Do not serialize traceback/local variables into production logs. The
+    # exception class is enough to group operational failures without turning
+    # a failed user request into stored diagnostic content.
+    logger.error("Unhandled bot exception type=%s", type(event.exception).__name__)
 
 
 async def run() -> None:
