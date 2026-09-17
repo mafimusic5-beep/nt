@@ -20,6 +20,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
 
 os.environ.setdefault('DATABASE_PATH', ':memory:')
 
+import api  # noqa: E402
 import checkout_routes  # noqa: E402
 import config  # noqa: E402
 import device_auth  # noqa: E402
@@ -280,6 +281,74 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
             )
             self.assertEqual(limit, replacement['active_connections'])
             self.assertEqual(limit, replacement['connections_limit'])
+
+    def test_audit_http_acquire_route_enforces_same_limits(self) -> None:
+        from fastapi.testclient import TestClient
+
+        storage.save_server(
+            'Audit server',
+            'audit',
+            'vless://00000000-0000-0000-0000-000000000001@127.0.0.1:443#Audit',
+        )
+
+        with TestClient(api.app) as client:
+            for plan, limit, device_count in (
+                ('personal', 1, 3),
+                ('personal_plus', 2, 4),
+                ('family', 5, 7),
+            ):
+                code = self.create_code(plan, limit)
+                keys = {}
+                device_ids = [f'http-{plan}-{index:02d}' for index in range(device_count)]
+                for device_id in device_ids:
+                    key = self.new_private_key()
+                    keys[device_id] = key
+                    self.register(code=code, device_id=device_id, private_key=key)
+
+                statuses = []
+                for device_id in device_ids:
+                    timestamp = str(int(time.time() * 1000))
+                    nonce = uuid.uuid4().hex
+                    canonical = self.request_canonical(
+                        method='POST',
+                        path='/api/vpn/session/acquire',
+                        raw_code=code,
+                        device_id=device_id,
+                        timestamp=timestamp,
+                        nonce=nonce,
+                    )
+                    response = client.post(
+                        '/api/vpn/session/acquire',
+                        json={
+                            'access_key': code,
+                            'server_id': 1,
+                            'traffic_policy': 'international',
+                        },
+                        headers={
+                            'Authorization': f'Bearer {code}',
+                            'x-emery-device-id': device_id,
+                            'x-emery-timestamp': timestamp,
+                            'x-emery-nonce': nonce,
+                            'x-emery-signature': self.sign(keys[device_id], canonical),
+                            'x-emery-signature-algorithm': 'SHA256withECDSA',
+                        },
+                    )
+                    body = response.json()
+                    statuses.append((device_id, response.status_code, body.get('reason') or 'success'))
+
+                accepted = [item for item in statuses if item[1] == 200]
+                rejected = [item for item in statuses if item[2] == 'concurrent_limit_reached']
+                print(
+                    f'HTTP_AUDIT plan={plan} code={code} registered={device_count} '
+                    f'accepted={len(accepted)} rejected={len(rejected)} limit={limit}'
+                )
+                print(
+                    'HTTP_AUDIT outcomes='
+                    + ','.join(f'{device}:{status}:{reason}' for device, status, reason in statuses)
+                )
+                self.assertEqual(limit, len(accepted))
+                self.assertEqual(device_count - limit, len(rejected))
+                self.assertTrue(all(item[1] == 409 for item in rejected))
 
     def test_tariff_limits_are_exact(self) -> None:
         self.assert_concurrency_limit('personal', 1)
