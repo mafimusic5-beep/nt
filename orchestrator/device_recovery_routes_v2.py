@@ -8,13 +8,14 @@ from fastapi import APIRouter
 import device_auth
 import concurrent_sessions
 import device_recovery_routes as legacy
-from storage import now_iso
 
 
 router = APIRouter(prefix="/api/device/recovery")
 
 
 def _active_rows(con: sqlite3.Connection, code: str) -> list[sqlite3.Row]:
+    # Privacy by design: recovery may choose an existing registration slot, but
+    # it must not maintain or depend on a timeline of when a device was online.
     return con.execute(
         '''
         SELECT
@@ -24,11 +25,10 @@ def _active_rows(con: sqlite3.Connection, code: str) -> list[sqlite3.Row]:
             public_key_fingerprint,
             active,
             pool_assignment_id,
-            activated_at,
-            last_seen_at
+            activated_at
         FROM code_devices
         WHERE code = ? AND active = 1
-        ORDER BY COALESCE(last_seen_at, activated_at) ASC, id ASC
+        ORDER BY activated_at ASC, id ASC
         ''',
         (code,),
     ).fetchall()
@@ -76,11 +76,11 @@ def _bind_key(
         UPDATE code_devices
         SET public_key = ?,
             public_key_fingerprint = ?,
-            last_seen_at = ?,
+            last_seen_at = NULL,
             active = 1
         WHERE id = ?
         ''',
-        (public_key, fingerprint, now_iso(), row_id),
+        (public_key, fingerprint, row_id),
     )
 
 
@@ -97,11 +97,11 @@ def _success(status: str, recovered: bool) -> dict:
 def recovery_challenge(payload: legacy.RecoveryChallengeRequest):
     """Restore access by the activation code without creating an extra paid slot.
 
-    The activation code is the portable subscription credential.  Each app
+    The activation code is the portable subscription credential. Each app
     installation still proves possession of its own private key, but a lost
     installation key (reinstall, factory reset or a new phone) does not require
-    a hardware identifier.  When all tariff slots are occupied, the least
-    recently used active slot is rebound to the new installation atomically.
+    a hardware identifier. When all tariff slots are occupied, an existing
+    registration slot is rebound atomically without collecting recent-use data.
     """
 
     requested_device_id = payload.device_id.strip().lower()
@@ -156,9 +156,11 @@ def recovery_challenge(payload: legacy.RecoveryChallengeRequest):
                     )
 
                 if same_key:
+                    # Authorization is enough; do not turn recovery into an
+                    # activity heartbeat.
                     con.execute(
-                        "UPDATE code_devices SET last_seen_at = ? WHERE id = ?",
-                        (now_iso(), int(row["id"])),
+                        "UPDATE code_devices SET last_seen_at = NULL WHERE id = ?",
+                        (int(row["id"]),),
                     )
                     con.commit()
                     return _success("migrated" if legacy_migration else "current", legacy_migration)
@@ -224,5 +226,5 @@ def recovery_challenge(payload: legacy.RecoveryChallengeRequest):
 @router.post("/confirm")
 def recovery_confirm(payload: legacy.RecoveryConfirmRequest):
     # Kept only so an already-issued legacy challenge can still finish during
-    # a rolling deployment.  New challenges never require Play Integrity.
+    # a rolling deployment. New challenges never require Play Integrity.
     return legacy.recovery_confirm(payload)
