@@ -14,6 +14,12 @@ class AuditRepository(BaseRepository):
         entity_id: str,
         details: dict | None = None,
     ) -> None:
+        # Privacy by design: user activity is not an audit product. Operational
+        # admin/system events remain auditable, but VPN use, heartbeats,
+        # activation attempts and config requests must not become a user trail.
+        if actor_type.strip().lower() == "user":
+            return
+
         log = AuditLog(
             actor_type=actor_type,
             actor_id=actor_id,
