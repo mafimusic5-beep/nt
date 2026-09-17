@@ -226,6 +226,61 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         replacement = device_auth.acquire_vpn_session(code, device_ids[-1])
         self.assertEqual(limit, replacement['active_connections'])
 
+    def test_audit_generated_codes_overdevice_concurrency_matrix(self) -> None:
+        cases = (
+            ('personal', 1, 4),
+            ('personal_plus', 2, 5),
+            ('family', 5, 8),
+        )
+        for plan, limit, device_count in cases:
+            code = self.create_code(plan, limit)
+            device_ids = [f'audit-{plan}-{index:02d}' for index in range(device_count)]
+
+            for device_id in device_ids:
+                result = self.register(code=code, device_id=device_id)
+                self.assertEqual(0, result['devices_used'])
+                self.assertEqual(limit, result['devices_limit'])
+
+            def acquire(device_id: str):
+                try:
+                    lease = device_auth.acquire_vpn_session(code, device_id)
+                    return (device_id, 'success', lease)
+                except device_auth.DeviceAuthError as error:
+                    return (device_id, error.reason, None)
+
+            with ThreadPoolExecutor(max_workers=device_count) as executor:
+                outcomes = list(executor.map(acquire, device_ids))
+
+            successes = [item for item in outcomes if item[1] == 'success']
+            rejected = [item for item in outcomes if item[1] == 'concurrent_limit_reached']
+
+            print(
+                f'AUDIT plan={plan} code={code} registered={device_count} '
+                f'limit={limit} success={len(successes)} rejected={len(rejected)}'
+            )
+            print(
+                'AUDIT outcomes='
+                + ','.join(f'{device_id}:{status}' for device_id, status, _ in outcomes)
+            )
+
+            self.assertEqual(limit, len(successes))
+            self.assertEqual(device_count - limit, len(rejected))
+
+            released_device, _, released_lease = successes[0]
+            device_auth.release_vpn_session(
+                code,
+                released_device,
+                released_lease['session_id'],
+            )
+            replacement_device = rejected[0][0]
+            replacement = device_auth.acquire_vpn_session(code, replacement_device)
+            print(
+                f'AUDIT replacement plan={plan} device={replacement_device} '
+                f'active={replacement["active_connections"]}/{replacement["connections_limit"]}'
+            )
+            self.assertEqual(limit, replacement['active_connections'])
+            self.assertEqual(limit, replacement['connections_limit'])
+
     def test_tariff_limits_are_exact(self) -> None:
         self.assert_concurrency_limit('personal', 1)
         self.assert_concurrency_limit('personal_plus', 2)
