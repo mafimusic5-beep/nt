@@ -1,0 +1,136 @@
+name: Skryon site UI hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/site-ui-hotfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Find VPS endpoint and fix first paint
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          host=''
+          port=''
+          for h in 31.70.76.155 "${VPS_HOST:-}" 82.146.49.10; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in "${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022; do
+              [[ "$p" =~ ^[0-9]+$ ]] || continue
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${VPS_USER:-root}@$h" true >/dev/null 2>&1; then
+                host="$h"; port="$p"; break 2
+              fi
+            done
+          done
+          [ -n "$host" ] || { echo 'No VPS endpoint accepted deploy key'; exit 1; }
+          echo "Using $host:$port"
+
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "${VPS_USER:-root}@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          index=/var/www/skryon.ru/html/index.html
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          mkdir -p /root/skryon-backups/site-ui
+          cp "$index" "/root/skryon-backups/site-ui/index.html.$stamp"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('/var/www/skryon.ru/html/index.html')
+          s = p.read_text(encoding='utf-8')
+
+          # Move CSS accidentally appended after </html> back into <head>.
+          end = re.search(r'</html\s*>', s, flags=re.I)
+          if end:
+              trailing = s[end.end():]
+              styles = re.findall(r'<style\b[^>]*>.*?</style>', trailing, flags=re.I | re.S)
+              if styles:
+                  trailing_clean = re.sub(r'<style\b[^>]*>.*?</style>', '', trailing, flags=re.I | re.S)
+                  s = s[:end.end()] + trailing_clean
+                  bundle = '\n\n'.join(styles)
+                  s = re.sub(r'</head\s*>', bundle + '\n</head>', s, count=1, flags=re.I)
+
+          # Prevent the browser from ever painting the legacy stylesheet state.
+          if 'id="skryon-no-fouc"' not in s:
+              critical = '''
+          <meta name="theme-color" content="#fbfbf8">
+          <style id="skryon-no-fouc">
+          html{background:#fbfbf8}
+          html:not(.sk-ready) body{visibility:hidden}
+          html.sk-ready body{visibility:visible}
+          </style>
+          <noscript><style>body{visibility:visible!important}</style></noscript>
+          '''
+              viewport = re.search(r'<meta\b[^>]*name=["\']viewport["\'][^>]*>', s, flags=re.I)
+              if viewport:
+                  s = s[:viewport.end()] + critical + s[viewport.end():]
+              else:
+                  s = re.sub(r'<head\s*>', '<head>' + critical, s, count=1, flags=re.I)
+
+          if 'id="skryon-ready-script"' not in s:
+              reveal = '''<script id="skryon-ready-script">document.documentElement.classList.add('sk-ready');</script>'''
+              s = re.sub(r'</body\s*>', reveal + '\n</body>', s, count=1, flags=re.I)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          chown www-data:www-data "$index"
+          chmod 644 "$index"
+
+          echo '--- index validation ---'
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('/var/www/skryon.ru/html/index.html').read_text(encoding='utf-8')
+          print('no_fouc=', 'id="skryon-no-fouc"' in s)
+          print('ready_script=', 'id="skryon-ready-script"' in s)
+          print('styles_after_html=', '<style' in s.lower().split('</html>',1)[-1])
+          PY
+
+          echo '--- checkout routing diagnostics ---'
+          grep -Rni -C 5 -E 'location[[:space:]]+=[[:space:]]+/checkout|location[[:space:]]+/checkout|checkout\.html' /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null || true
+          for f in /var/www/skryon.ru/html/checkout.html /opt/nt/orchestrator/web/checkout.html; do
+            if [ -f "$f" ]; then
+              wc -c "$f"
+              sha256sum "$f"
+            fi
+          done
+          set +e
+          curl -ksS --max-time 6 --resolve skryon.ru:443:127.0.0.1 https://skryon.ru/checkout -o /tmp/skryon-checkout-test.html
+          rc=$?
+          echo "origin_checkout_curl_rc=$rc"
+          [ -f /tmp/skryon-checkout-test.html ] && wc -c /tmp/skryon-checkout-test.html
+          set -e
+
+          nginx -t
+          systemctl reload nginx
+          REMOTE
+
+      - name: Public verification
+        run: |
+          set -euo pipefail
+          html=$(curl -fsSL --max-time 10 https://skryon.ru/)
+          grep -q 'id="skryon-no-fouc"' <<<"$html"
+          grep -q 'id="skryon-ready-script"' <<<"$html"
+          echo 'Public homepage contains first-paint guard.'
