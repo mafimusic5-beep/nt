@@ -1,0 +1,81 @@
+name: Skryon checkout price 269
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/checkout-price-269.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch-checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Patch live checkout Personal+
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          host=''; port=''
+          for h in 31.70.76.155 "${VPS_HOST:-}" 82.146.49.10; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in "${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022; do
+              [[ "$p" =~ ^[0-9]+$ ]] || continue
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${VPS_USER:-root}@$h" true >/dev/null 2>&1; then
+                host="$h"; port="$p"; break 2
+              fi
+            done
+          done
+          [ -n "$host" ] || { echo 'No VPS endpoint accepted deploy key'; exit 1; }
+
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "${VPS_USER:-root}@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          f=/var/www/skryon.ru/html/checkout.html
+          test -f "$f"
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          mkdir -p /root/skryon-backups/checkout
+          cp "$f" "/root/skryon-backups/checkout/checkout.html.$stamp"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/var/www/skryon.ru/html/checkout.html')
+          s=p.read_text(encoding='utf-8')
+          original=s
+          s=s.replace("price: '219 ₽'", "price: '269 ₽'")
+          s=s.replace("price: '219 ₽'", "price: '269 ₽'")
+          s=s.replace("\n      219,\n      500", "\n      269,\n      500")
+          s=s.replace("Личный+ · 219", "Личный+ · 269")
+          s=s.replace("Личный+ — 219", "Личный+ — 269")
+          s=s.replace("Личный+ 219", "Личный+ 269")
+          if s == original:
+              raise SystemExit('No known 219 Personal+ price markers found; refusing blind edit')
+          if "price: '269 ₽'" not in s:
+              raise SystemExit('269 price marker missing after patch')
+          p.write_text(s, encoding='utf-8')
+          PY
+          chown www-data:www-data "$f"
+          chmod 644 "$f"
+          grep -n -E "Личный\+|269|219" "$f" | head -80
+          REMOTE
+
+      - name: Public verification
+        run: |
+          set -euo pipefail
+          html=$(curl -fsSL --max-time 15 https://skryon.ru/checkout)
+          grep -q '269 ₽' <<<"$html"
+          echo 'Public checkout shows 269 ₽.'
