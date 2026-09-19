@@ -12,7 +12,7 @@ def seed_plans(db: Session) -> None:
     existing = {p.code: p for p in db.scalars(select(Plan)).all()}
     plans = [
         ("personal_1m", "Личный", 1, 200, 1),
-        ("personal_plus_1m", "Личный+", 1, 260, 2),
+        ("personal_plus_1m", "Личный+", 1, 269, 2),
         ("family_1m", "Семейный", 1, 500, 5),
         # Legacy products stay readable so old orders remain valid.
         ("warmup_1m", "Прогрев 1 месяц", 1, 600, 5),
@@ -24,8 +24,12 @@ def seed_plans(db: Session) -> None:
     for code, name, months, rub, devices_limit in plans:
         current = existing.get(code)
         if current:
-            # The device limit is an access-control rule, so repair stale rows.
+            # Keep persisted plans aligned with the current commercial terms.
+            current.name = name
+            current.duration_months = months
+            current.price_rub = rub
             current.devices_limit = devices_limit
+            current.is_active = True
             continue
         db.add(
             Plan(
