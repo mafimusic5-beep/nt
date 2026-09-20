@@ -3,40 +3,125 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Skryon result</title>
+  <meta name="robots" content="noindex,nofollow">
+  <title>Оплата Skryon</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:#fbfbf8;color:#111312;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+    body{display:grid;place-items:center;padding:24px}
+    main{width:min(620px,100%);background:#fff;border:1px solid #e1e3e1;border-radius:28px;padding:34px;box-shadow:0 18px 60px rgba(20,24,22,.06)}
+    .brand{font-size:18px;font-weight:650;margin-bottom:42px}
+    h1{margin:0 0 14px;font-size:clamp(34px,7vw,52px);font-weight:400;letter-spacing:-.04em;line-height:1.02}
+    p{color:#666b68;font-size:16px;line-height:1.65}
+    .code{margin:30px 0 16px;padding:21px 22px;border-radius:18px;background:#f4f5f2;font:700 clamp(20px,5vw,29px)/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;word-break:break-all;user-select:all}
+    .meta{margin-top:18px;color:#777c79;font-size:14px;line-height:1.55}
+    .actions{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}
+    button,a.button{border:0;border-radius:15px;padding:14px 18px;font:600 15px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;text-decoration:none;cursor:pointer}
+    button{background:#111312;color:#fff}
+    a.button{background:#f0f1ee;color:#111312}
+    .status{margin-top:20px;color:#6f7471;font-size:14px;min-height:23px}
+    .error{color:#9c2f2f}
+    @media(max-width:560px){main{padding:28px 22px;border-radius:22px}.brand{margin-bottom:34px}}
+  </style>
 </head>
 <body>
-  <h1>Доступ готов</h1>
-  <p>Скопируйте строку ниже и вставьте её в приложении.</p>
-  <pre id="value">Загрузка...</pre>
-  <p id="details"></p>
-  <a href="/checkout">Назад</a>
+<main>
+  <div class="brand">Skryon</div>
+  <h1 id="title">Проверяем оплату</h1>
+  <p id="lead">Подтверждаем платёж напрямую в ЮKassa. Обычно это занимает несколько секунд.</p>
+  <div class="code" id="code" hidden></div>
+  <div class="meta" id="meta"></div>
+  <div class="actions" id="actions" hidden>
+    <button type="button" id="copy">Скопировать код</button>
+    <a class="button" href="/">На главную</a>
+  </div>
+  <div class="status" id="status">Проверяем статус…</div>
+</main>
+<script>
+(() => {
+  const orderId = new URLSearchParams(location.search).get('order') || '';
+  const title = document.getElementById('title');
+  const lead = document.getElementById('lead');
+  const code = document.getElementById('code');
+  const meta = document.getElementById('meta');
+  const actions = document.getElementById('actions');
+  const status = document.getElementById('status');
+  const copy = document.getElementById('copy');
+  let attempts = 0;
+  let timer = null;
 
-  <script>
-    const params = new URLSearchParams(location.search);
-    const order = params.get('order');
-    const value = document.getElementById('value');
-    const details = document.getElementById('details');
+  function fail(message) {
+    title.textContent = 'Не удалось проверить оплату';
+    lead.textContent = message;
+    status.textContent = 'Если деньги списались, напишите на support@skryon.ru — код не потеряется.';
+    status.classList.add('error');
+  }
 
-    async function loadOrder() {
-      if (!order) {
-        value.textContent = 'Заказ не найден';
-        return;
-      }
-      try {
-        const response = await fetch('/api/checkout/order/' + encodeURIComponent(order));
-        const data = await response.json();
-        if (!data.ok) {
-          value.textContent = 'Данные не найдены';
+  async function load() {
+    if (!orderId) {
+      fail('В ссылке отсутствует номер заказа.');
+      return;
+    }
+    attempts += 1;
+    try {
+      const response = await fetch('/api/checkout/payment/' + encodeURIComponent(orderId), {
+        cache: 'no-store',
+        headers: {'Accept':'application/json'}
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        if (response.status === 404) {
+          fail('Заказ не найден.');
           return;
         }
-        value.textContent = data.code;
-        details.textContent = 'План: ' + data.plan + ', устройств: ' + data.maxDevices + ', действует до: ' + data.expiresAt;
-      } catch (error) {
-        value.textContent = 'Ошибка соединения';
+        throw new Error(data.reason || 'status_error');
+      }
+      if (data.status === 'succeeded' && data.code) {
+        clearTimeout(timer);
+        title.textContent = 'Оплата подтверждена';
+        lead.textContent = data.emailSent
+          ? 'Код уже отправлен на вашу электронную почту. Он также доступен ниже.'
+          : 'Код создан. Отправка письма выполняется автоматически.';
+        code.hidden = false;
+        code.textContent = data.code;
+        meta.textContent = data.planTitle + ' · ' + data.months + ' мес. · ' + data.amount + ' ₽';
+        actions.hidden = false;
+        status.textContent = data.emailSent ? 'Письмо отправлено от support@skryon.ru' : 'Письмо будет отправлено от support@skryon.ru';
+        return;
+      }
+      if (data.status === 'canceled') {
+        title.textContent = 'Платёж отменён';
+        lead.textContent = 'Код не создавался. Вы можете вернуться и попробовать оплатить ещё раз.';
+        status.textContent = '';
+        return;
+      }
+      title.textContent = 'Проверяем оплату';
+      lead.textContent = 'ЮKassa ещё обрабатывает платёж. Код будет создан только после подтверждения оплаты.';
+      status.textContent = 'Статус: ' + data.status;
+      if (attempts < 45) timer = setTimeout(load, 2000);
+      else fail('ЮKassa пока не вернула финальный статус платежа.');
+    } catch (error) {
+      if (attempts < 45) {
+        status.textContent = 'Связь нестабильна, повторяем проверку…';
+        timer = setTimeout(load, 2500);
+      } else {
+        fail('Не удалось получить статус заказа.');
       }
     }
-    loadOrder();
-  </script>
+  }
+
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(code.textContent.trim());
+      copy.textContent = 'Скопировано';
+      setTimeout(() => copy.textContent = 'Скопировать код', 1600);
+    } catch (_) {
+      code.focus?.();
+    }
+  });
+
+  load();
+})();
+</script>
 </body>
 </html>
