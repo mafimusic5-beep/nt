@@ -11,10 +11,12 @@ from typing import Deque, Dict, Optional
 
 from config import CHECKOUT_SECRET
 from device_recovery_routes_v2 import router as device_recovery_router
+from payment_routes import router as payment_router
 from storage import create_checkout_code, get_activation_code, get_checkout_order, renew_activation_code
 
 router = APIRouter()
 router.include_router(device_recovery_router)
+router.include_router(payment_router)
 WEB_DIR = Path(__file__).resolve().parent / 'web'
 PLANS = {
     'personal': {'title': 'Личный', 'devices': 1, 'days': 30},
@@ -200,13 +202,10 @@ def get_code(
     request: Request,
     x_checkout_secret: str = Header(default=''),
 ):
-    if not checkout_secret_valid(x_checkout_secret):
-        return checkout_auth_error()
-    if limited('checkout:' + remote_bucket_key(request)):
-        return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
-    if not plan_or_error(payload.plan):
-        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    return issue_code(payload.plan, payload.customer, months=payload.months)
+    return JSONResponse(
+        status_code=410,
+        content={'ok': False, 'reason': 'legacy_direct_issuance_disabled'},
+    )
 
 
 @router.post('/api/checkout/find-code')
@@ -225,34 +224,18 @@ def renew_code(
     request: Request,
     x_checkout_secret: str = Header(default=''),
 ):
-    if not checkout_secret_valid(x_checkout_secret):
-        return checkout_auth_error()
-    if limited('renew-code:' + remote_bucket_key(request)):
-        return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
-    if not plan_or_error(payload.plan):
-        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months)
-    if not result.get('ok'):
-        return renewal_error_response(result)
-    return result
+    return JSONResponse(
+        status_code=410,
+        content={'ok': False, 'reason': 'legacy_direct_issuance_disabled'},
+    )
 
 
 @router.post('/api/checkout/callback')
 def callback(payload: CheckoutCallbackRequest, x_checkout_secret: str = Header(default='')):
-    if not checkout_secret_valid(x_checkout_secret):
-        return checkout_auth_error()
-    if payload.status != 'paid':
-        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'not_paid'})
-    if not plan_or_error(payload.plan):
-        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    if payload.mode == 'renew':
-        if not payload.code:
-            return JSONResponse(status_code=400, content={'ok': False, 'reason': 'missing_code'})
-        result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months, payload.externalId)
-        if not result.get('ok'):
-            return renewal_error_response(result)
-        return result
-    return issue_code(payload.plan, payload.customer, payload.externalId, payload.months)
+    return JSONResponse(
+        status_code=410,
+        content={'ok': False, 'reason': 'legacy_callback_disabled'},
+    )
 
 
 @router.get('/api/checkout/order/{order_id}')
@@ -271,7 +254,5 @@ def order(order_id: str):
         'status': row['status'],
         'usageStarted': usage_started,
         'usedAt': row.get('used_at'),
-        # This is a technical eligibility flag for the payment/support flow.
-        # The final legal decision still belongs to the merchant policy.
         'refundEligible': not usage_started,
     }
