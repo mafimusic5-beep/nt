@@ -1,0 +1,93 @@
+name: Deploy YooKassa checkout
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'orchestrator/yookassa_checkout.py'
+      - 'orchestrator/payment_routes.py'
+      - 'orchestrator/checkout_routes.py'
+      - 'orchestrator/web/result.html'
+      - 'orchestrator/deploy/patch_checkout_yookassa.py'
+      - '.github/workflows/deploy-yookassa-checkout.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch-live-checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Discover VPS and patch checkout
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          host=''
+          port=''
+          seen=' '
+          for h in 31.70.76.155 "${VPS_HOST:-}" 82.146.49.10; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in "${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022; do
+              [[ "$p" =~ ^[0-9]+$ ]] || continue
+              key=" $h:$p "
+              [[ "$seen" != *"$key"* ]] || continue
+              seen+="$key"
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${VPS_USER:-root}@$h" true >/dev/null 2>&1; then
+                host="$h"; port="$p"; break 2
+              fi
+            done
+          done
+          [ -n "$host" ] || { echo 'No VPS endpoint accepted deploy key'; exit 1; }
+          remote="${VPS_USER:-root}@$host"
+          scp -4 -P "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new \
+            'orchestrator/deploy/patch_checkout_yookassa.py' \
+            "$remote:/tmp/patch_checkout_yookassa.py"
+
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$remote" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          # Do not expose the payment button until the new backend is deployed
+          # and the YooKassa secret is actually available to the service.
+          ready=0
+          for attempt in {1..40}; do
+            body="$(curl -fsS --max-time 4 http://127.0.0.1:8080/api/checkout/payment-ready 2>/dev/null || true)"
+            if printf '%s' "$body" | grep -Eq '"ready"[[:space:]]*:[[:space:]]*true'; then
+              ready=1
+              break
+            fi
+            sleep 3
+          done
+          [ "$ready" -eq 1 ] || {
+            echo 'YooKassa backend is not ready; live checkout was left unchanged.'
+            exit 21
+          }
+
+          python3 /tmp/patch_checkout_yookassa.py
+          rm -f /tmp/patch_checkout_yookassa.py
+          chown www-data:www-data /var/www/skryon.ru/html/checkout.html
+          chmod 644 /var/www/skryon.ru/html/checkout.html
+          nginx -t
+
+          curl -ksS --max-time 6 \
+            --resolve skryon.ru:443:127.0.0.1 \
+            https://skryon.ru/checkout \
+            | grep -q 'SKRYON_YOOKASSA_CHECKOUT_V1'
+          echo 'Live checkout YooKassa patch verified at origin.'
+          REMOTE
