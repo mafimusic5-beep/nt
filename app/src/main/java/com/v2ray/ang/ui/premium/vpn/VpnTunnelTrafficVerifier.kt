@@ -155,7 +155,7 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
 
     private companion object {
         const val MAX_ATTEMPTS = 8
-        const val RETRY_DELAY_MS = 750L
+        const val RETRY_DELAY_MS = 200L
         const val SOCKS_CONNECT_TIMEOUT_MS = 1_000
         const val CONNECT_TIMEOUT_MS = 2_500
         const val READ_TIMEOUT_MS = 2_500
