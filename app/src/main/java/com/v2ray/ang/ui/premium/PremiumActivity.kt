@@ -910,4 +910,3 @@ private fun CodeCharacterSlot(
     }
 }
 
-[executed on device: DESKTOP-ADACOPQ (93a90b8c-af5e-4344-a3fe-b40b98560821)]
