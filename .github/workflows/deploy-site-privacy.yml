@@ -1,0 +1,106 @@
+name: Deploy Skryon privacy page
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/privacy.html'
+      - '.github/workflows/deploy-site-privacy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted source
+        uses: actions/checkout@v4
+
+      - name: Validate privacy page
+        run: |
+          set -euo pipefail
+          test -s docs/privacy.html
+          grep -q 'Политика конфиденциальности Skryon' docs/privacy.html
+          grep -q '22 сентября 2026 года' docs/privacy.html
+          grep -q 'access: none' docs/privacy.html
+          grep -q 'dnsLog: false' docs/privacy.html
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Deploy privacy page atomically
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          host=''
+          port=''
+          for h in 31.70.76.155 "${VPS_HOST:-}" 82.146.49.10; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in "${VPS_PORT:-}" 22 8443 2022 2222 2200 22222 8022; do
+              [[ "$p" =~ ^[0-9]+$ ]] || continue
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${VPS_USER:-root}@$h" true >/dev/null 2>&1; then
+                host="$h"
+                port="$p"
+                break 2
+              fi
+            done
+          done
+          [ -n "$host" ] || { echo 'No VPS endpoint accepted deploy key'; exit 1; }
+
+          remote="${VPS_USER:-root}@$host"
+          remote_tmp="/tmp/skryon-privacy-${GITHUB_SHA}.html"
+          scp -4 -P "$port" -i ~/.ssh/id_ed25519 -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new \
+            docs/privacy.html "$remote:$remote_tmp"
+
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new "$remote" \
+            "REMOTE_TMP='$remote_tmp' bash -s" <<'REMOTE'
+          set -euo pipefail
+          target=/var/www/skryon.ru/html/privacy.html
+          incoming="$REMOTE_TMP"
+          backup_dir=/root/skryon-backups/privacy
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          test -s "$incoming"
+          grep -q 'Политика конфиденциальности Skryon' "$incoming"
+          grep -q '22 сентября 2026 года' "$incoming"
+          grep -q 'access: none' "$incoming"
+          grep -q 'dnsLog: false' "$incoming"
+
+          mkdir -p "$backup_dir"
+          if [ -f "$target" ]; then
+            cp -a "$target" "$backup_dir/privacy.html.$stamp"
+          fi
+
+          install -o www-data -g www-data -m 0644 "$incoming" "$target.new"
+          mv -f "$target.new" "$target"
+          rm -f "$incoming"
+          REMOTE
+
+      - name: Verify public privacy page
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            html="$(curl -fsSL --max-time 15 "https://skryon.ru/privacy.html?rev=$GITHUB_SHA" || true)"
+            if grep -q '22 сентября 2026 года' <<<"$html" \
+              && grep -q 'access: none' <<<"$html" \
+              && grep -q 'dnsLog: false' <<<"$html"; then
+              echo 'Public privacy page is current.'
+              exit 0
+            fi
+            sleep 5
+          done
+          echo '::error::Public privacy page did not update.'
+          exit 1
