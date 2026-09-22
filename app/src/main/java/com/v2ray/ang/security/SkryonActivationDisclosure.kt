@@ -30,7 +30,7 @@ object SkryonActivationDisclosure {
     private const val PREFERENCES = "skryon_activation_disclosure"
     // Bump the version when the disclosure changes materially.
     private const val ACCEPTED_VERSION = "accepted_version"
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val PRIVACY_URL = "https://skryon.ru/privacy.html"
     private val green = Color.rgb(0, 143, 91)
     private val openDialogs = mutableMapOf<Activity, Dialog>()
@@ -89,7 +89,8 @@ object SkryonActivationDisclosure {
                 "и служебные данные запроса: версию приложения, время, одноразовое значение и подпись."
         ), row(22))
         content.addView(textView(
-            "Эти данные нужны для проверки подписки, регистрации или восстановления установки " +
+            "Код доступа после активации также используется для аутентификации запросов к сервису. " +
+                "Данные нужны для проверки подписки, регистрации или восстановления установки " +
                 "и защиты доступа от злоупотреблений."
         ), row(22))
 
