@@ -73,6 +73,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.V2RayServiceManager
+import com.v2ray.ang.security.SkryonActivationDisclosure
 import com.v2ray.ang.security.SkryonVpnDisclosure
 import com.v2ray.ang.ui.premium.vpn.VpnConnectionDiagnosticsOverlay
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
@@ -113,6 +114,12 @@ class PremiumActivity : ComponentActivity() {
         setContent {
             EmeryTheme {
                 EmeryApp(
+                    requestActivationDisclosure = { onAccepted ->
+                        SkryonActivationDisclosure.showIfNeeded(
+                            activity = this,
+                            onAccepted = onAccepted,
+                        )
+                    },
                     requestVpnPermission = { onGranted ->
                         SkryonVpnDisclosure.showIfNeeded(
                             activity = this,
@@ -141,6 +148,7 @@ class PremiumActivity : ComponentActivity() {
 
 @Composable
 private fun EmeryApp(
+    requestActivationDisclosure: ((onAccepted: () -> Unit) -> Unit),
     requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
     startVpnService: (String) -> Boolean,
     stopVpnService: () -> Unit,
@@ -171,6 +179,7 @@ private fun EmeryApp(
             }
             composable(EmeryRoute.Activation.name) {
                 ActivationScreen(
+                    requestActivationDisclosure = requestActivationDisclosure,
                     onActivated = { code ->
                         val formattedCode = formatSkryonActivationCode(code)
                         val result = validateSkryonCode(context, code, formattedCode)
@@ -592,6 +601,7 @@ private fun SplashScreen(onFinish: () -> Unit) {
 
 @Composable
 private fun ActivationScreen(
+    requestActivationDisclosure: ((onAccepted: () -> Unit) -> Unit),
     onActivated: suspend (String) -> SkryonActivationResult,
 ) {
     var code by remember { mutableStateOf("") }
@@ -735,16 +745,18 @@ private fun ActivationScreen(
                         error = "Введите код полностью"
                         diagnostic = null
                     } else {
-                        scope.launch {
-                            isLoading = true
-                            error = ""
-                            diagnostic = null
-                            val result = onActivated(code)
-                            if (!result.ok) {
-                                error = result.error.ifBlank { "Ошибка активации" }
-                                diagnostic = result.diagnostic
+                        requestActivationDisclosure {
+                            scope.launch {
+                                isLoading = true
+                                error = ""
+                                diagnostic = null
+                                val result = onActivated(code)
+                                if (!result.ok) {
+                                    error = result.error.ifBlank { "Ошибка активации" }
+                                    diagnostic = result.diagnostic
+                                }
+                                isLoading = false
                             }
-                            isLoading = false
                         }
                     }
                 },
@@ -897,3 +909,5 @@ private fun CodeCharacterSlot(
         }
     }
 }
+
+[executed on device: DESKTOP-ADACOPQ (93a90b8c-af5e-4344-a3fe-b40b98560821)]
