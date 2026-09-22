@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    xmlns:tools="http://schemas.android.com/tools"\n    tools:ignore="ImpliedTouchscreenHardware,MissingLeanbackLauncher">
 
-    <uses-feature android:name="android.hardware.camera" tools:node="remove" />
-    <uses-feature android:name="android.hardware.camera.autofocus" tools:node="remove" />
-    <uses-feature android:name="android.hardware.camera.front" tools:node="remove" />
-    <uses-feature android:name="android.hardware.camera.flash" tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" tools:node="remove" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" tools:node="remove" />
     <uses-feature android:name="android.software.leanback" tools:node="remove" />
 
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:node="remove" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove" />
     <uses-permission android:name="android.permission.CAMERA" tools:node="remove" />
@@ -43,7 +43,7 @@
         <receiver android:name=".receiver.WidgetProvider" tools:node="remove" />
         <receiver android:name=".receiver.TaskerReceiver" tools:node="remove" />
         <service android:name=".service.QSTileService" tools:node="remove" />
-        <service android:name="androidx.camera.core.impl.MetadataHolderService" tools:node="remove" />
+        <service android:name="androidx.camera.core.impl.MetadataHolderService" tools:node="remove" tools:ignore="MissingClass" />
     </application>
 
 </manifest>
