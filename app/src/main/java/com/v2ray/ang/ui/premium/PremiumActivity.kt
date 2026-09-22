@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -649,7 +650,7 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.62f)
+                .requiredWidth(maxWidth * 1.62f)
                 .height(pantherHeight),
             contentScale = ContentScale.Fit,
         )
