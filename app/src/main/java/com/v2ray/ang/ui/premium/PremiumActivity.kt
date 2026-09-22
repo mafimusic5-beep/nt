@@ -649,7 +649,7 @@ private fun ActivationScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(x = pantherOffsetX, y = pantherTop)
-                .fillMaxWidth(1.62f)
+                .width(maxWidth * 1.62f)
                 .height(pantherHeight),
             contentScale = ContentScale.Fit,
         )
