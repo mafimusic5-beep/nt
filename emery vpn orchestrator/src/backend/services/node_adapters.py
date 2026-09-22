@@ -466,7 +466,7 @@ SHORT_ID=\"$(openssl rand -hex 8)\"
 mkdir -p /usr/local/etc/xray
 cat >/usr/local/etc/xray/config.json <<EOF
 {{
-  \"log\": {{\"loglevel\": \"warning\"}},
+  \"log\": {{\"access\": \"none\", \"dnsLog\": false, \"loglevel\": \"warning\"}},
   \"inbounds\": [
     {{
       \"listen\": \"0.0.0.0\",
