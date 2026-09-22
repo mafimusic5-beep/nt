@@ -9,6 +9,7 @@ import com.v2ray.ang.databinding.ActivityAccessKeyBinding
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.network.EmeryAuthClient
+import com.v2ray.ang.security.SkryonActivationDisclosure
 import com.v2ray.ang.security.SkryonDeviceRecoveryClient
 import com.v2ray.ang.ui.premium.PremiumActivity
 import com.v2ray.ang.util.AgentDebugNdjsonLogger
@@ -62,52 +63,57 @@ class AccessKeyActivity : BaseActivity() {
             return
         }
 
-        binding.buttonActivate.isEnabled = false
-        showLoading()
-        lifecycleScope.launch {
-            val recovery = SkryonDeviceRecoveryClient.recoverIfNeeded(this@AccessKeyActivity, key)
-            val result = if (recovery.isSuccess) {
-                EmeryAuthClient.verifyAccessKey(key)
-            } else {
-                Result.failure(recovery.exceptionOrNull() ?: IllegalStateException("device_recovery_failed"))
-            }
-            AgentDebugNdjsonLogger.log(
-                hypothesisId = "H1",
-                location = "AccessKeyActivity.kt:onActivateClicked",
-                message = "verify_access_key_result",
-                runId = "device-bound",
-                data = JSONObject()
-                    .put("success", result.isSuccess)
-                    .put("error", result.exceptionOrNull()?.message ?: ""),
-            )
-            result.fold(
-                onSuccess = { profile ->
-                    EmeryAccessManager.saveProfile(profile)
-                    val sync = EmeryVpnSync.syncProfileAndVpnConfig(profile.accessKey)
-                    hideLoading()
-                    binding.buttonActivate.isEnabled = true
-                    sync.fold(
-                        onSuccess = { openPremiumAndFinish() },
-                        onFailure = { e ->
-                            AgentDebugNdjsonLogger.log(
-                                hypothesisId = "H3",
-                                location = "AccessKeyActivity.kt:onActivateClicked",
-                                message = "sync_profile_vpn_failed",
-                                runId = "device-bound",
-                                data = JSONObject().put("error", e.message ?: ""),
+        SkryonActivationDisclosure.showIfNeeded(
+            activity = this,
+            onAccepted = {
+                binding.buttonActivate.isEnabled = false
+                showLoading()
+                lifecycleScope.launch {
+                    val recovery = SkryonDeviceRecoveryClient.recoverIfNeeded(this@AccessKeyActivity, key)
+                    val result = if (recovery.isSuccess) {
+                        EmeryAuthClient.verifyAccessKey(key)
+                    } else {
+                        Result.failure(recovery.exceptionOrNull() ?: IllegalStateException("device_recovery_failed"))
+                    }
+                    AgentDebugNdjsonLogger.log(
+                        hypothesisId = "H1",
+                        location = "AccessKeyActivity.kt:onActivateClicked",
+                        message = "verify_access_key_result",
+                        runId = "device-bound",
+                        data = JSONObject()
+                            .put("success", result.isSuccess)
+                            .put("error", result.exceptionOrNull()?.message ?: ""),
+                    )
+                    result.fold(
+                        onSuccess = { profile ->
+                            EmeryAccessManager.saveProfile(profile)
+                            val sync = EmeryVpnSync.syncProfileAndVpnConfig(profile.accessKey)
+                            hideLoading()
+                            binding.buttonActivate.isEnabled = true
+                            sync.fold(
+                                onSuccess = { openPremiumAndFinish() },
+                                onFailure = { e ->
+                                    AgentDebugNdjsonLogger.log(
+                                        hypothesisId = "H3",
+                                        location = "AccessKeyActivity.kt:onActivateClicked",
+                                        message = "sync_profile_vpn_failed",
+                                        runId = "device-bound",
+                                        data = JSONObject().put("error", e.message ?: ""),
+                                    )
+                                    binding.textError.setText(messageForError(e.message))
+                                    binding.textError.visibility = View.VISIBLE
+                                },
                             )
+                        },
+                        onFailure = { e ->
+                            hideLoading()
+                            binding.buttonActivate.isEnabled = true
                             binding.textError.setText(messageForError(e.message))
                             binding.textError.visibility = View.VISIBLE
                         },
                     )
-                },
-                onFailure = { e ->
-                    hideLoading()
-                    binding.buttonActivate.isEnabled = true
-                    binding.textError.setText(messageForError(e.message))
-                    binding.textError.visibility = View.VISIBLE
-                },
-            )
-        }
+                }
+            },
+        )
     }
 }
