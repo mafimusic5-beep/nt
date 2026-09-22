@@ -306,6 +306,17 @@ with open(path, "r", encoding="utf-8") as handle:
     original = handle.read()
 config = json.loads(original)
 
+# Privacy baseline: never emit per-connection Xray access logs or DNS query
+# logs on managed VPN nodes. Preserve any configured error-log destination,
+# but keep the error log at warning level so normal DNS lookups are not logged.
+existing_log = config.get("log")
+desired_log = dict(existing_log) if isinstance(existing_log, dict) else {}
+desired_log["access"] = "none"
+desired_log["dnsLog"] = False
+desired_log["loglevel"] = "warning"
+log_changed = existing_log != desired_log
+config["log"] = desired_log
+
 # Discover every active assignment inbound. Policies are grouped by inboundTag,
 # so Xray keeps a constant number of matchers/rules as the user count grows.
 managed_by_assignment = {}
@@ -476,7 +487,7 @@ if candidate_text == original and state_text == current_state_text:
     print(json.dumps({"ok": True, "assignment_id": assignment_id, "changed": False, "hot_reloaded": False}))
     raise SystemExit(0)
 
-static_changed = api_changed or inbounds_changed or outbounds_changed
+static_changed = api_changed or inbounds_changed or outbounds_changed or log_changed
 current_stat = os.stat(path, follow_symlinks=False)
 fd, candidate = tempfile.mkstemp(prefix=".emery-policy-", suffix=".json", dir=folder)
 routing_fd, routing_candidate = tempfile.mkstemp(prefix=".emery-routing-", suffix=".json", dir=folder)
