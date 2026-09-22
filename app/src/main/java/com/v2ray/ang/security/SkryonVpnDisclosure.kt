@@ -30,7 +30,7 @@ object SkryonVpnDisclosure {
     private const val PREFERENCES = "skryon_vpn_disclosure"
     // Bump the version when the disclosure changes materially.
     private const val ACCEPTED_VERSION = "accepted_version"
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val PRIVACY_URL = "https://skryon.ru/privacy.html"
     private val green = Color.rgb(0, 143, 91)
     private val openDialogs = mutableMapOf<Activity, Dialog>()
@@ -81,14 +81,16 @@ object SkryonVpnDisclosure {
             setPadding(dp(24), dp(28), dp(24), dp(20))
         }
         content.addView(textView(
-            "Skryon использует VPN, чтобы направлять интернет-трафик устройства через выбранный сервер."
+            "Skryon использует Android VpnService, чтобы направлять интернет-трафик устройства " +
+                "через выбранный VPN-сервер."
         ), row())
         content.addView(textView(
-            "Для работы доступа мы передаём на сервер технический идентификатор устройства, " +
-                "код активации и открытый ключ. Сервер также обрабатывает IP-адрес."
+            "Во время VPN-соединения сервер технически обрабатывает сетевые пакеты, IP-адрес " +
+                "и данные назначения, необходимые для маршрутизации и выбранной политики трафика."
         ), row(22))
         content.addView(textView(
-            "Эти данные нужны для подключения, проверки подписки и защиты доступа."
+            "VPN-трафик не используется для рекламы или продажи третьим лицам. " +
+                "В штатной конфигурации VPN-узлов Xray access-лог и отдельное логирование DNS-запросов отключены."
         ), row(22))
 
         val privacyLink = textView("Политика конфиденциальности").apply {
