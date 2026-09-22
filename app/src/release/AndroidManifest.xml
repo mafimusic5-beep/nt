@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    xmlns:tools="http://schemas.android.com/tools"\n    tools:ignore="ImpliedTouchscreenHardware,MissingClass,MissingLeanbackLauncher,QueryAllPackagesPermission,ScopedStorage,UnsupportedTvHardware">
 
     <uses-feature android:name="android.hardware.camera" tools:node="remove" />
     <uses-feature android:name="android.hardware.camera.autofocus" tools:node="remove" />
