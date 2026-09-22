@@ -30,7 +30,7 @@ object SkryonVpnDisclosure {
     private const val PREFERENCES = "skryon_vpn_disclosure"
     // Bump the version when the disclosure changes materially.
     private const val ACCEPTED_VERSION = "accepted_version"
-    private const val VERSION = 2
+    private const val VERSION = 3
     private const val PRIVACY_URL = "https://skryon.ru/privacy.html"
     private val green = Color.rgb(0, 143, 91)
     private val openDialogs = mutableMapOf<Activity, Dialog>()
@@ -89,8 +89,9 @@ object SkryonVpnDisclosure {
                 "и данные назначения, необходимые для маршрутизации и выбранной политики трафика."
         ), row(22))
         content.addView(textView(
-            "VPN-трафик не используется для рекламы или продажи третьим лицам. " +
-                "В штатной конфигурации VPN-узлов Xray access-лог и отдельное логирование DNS-запросов отключены."
+            "Эти данные используются для работы VPN, маршрутизации и защиты сервиса. " +
+                "Трафик проходит через выбранную VPN-инфраструктуру Skryon; данные не передаются " +
+                "рекламным сетям и не продаются третьим лицам."
         ), row(22))
 
         val privacyLink = textView("Политика конфиденциальности").apply {
