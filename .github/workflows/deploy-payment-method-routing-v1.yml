@@ -1,0 +1,168 @@
+name: Deploy YooKassa payment method routing v1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-payment-method-routing-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Patch live backend safely
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host='31.70.76.155'
+          port='8443'
+          opts=(-4 -p "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+
+          ssh "${opts[@]}" "$user@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          LIVE=/opt/nt/orchestrator
+          PY="$LIVE/.venv/bin/python"
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          backup="/root/skryon-payment-method-v1-$stamp"
+          mkdir -p "$backup"
+          cp -a "$LIVE/payment_routes.py" "$backup/payment_routes.py"
+          cp -a "$LIVE/yookassa_checkout.py" "$backup/yookassa_checkout.py"
+
+          rollback() {
+            echo 'ROLLBACK_PAYMENT_METHOD_ROUTING'
+            cp -a "$backup/payment_routes.py" "$LIVE/payment_routes.py"
+            cp -a "$backup/yookassa_checkout.py" "$LIVE/yookassa_checkout.py"
+            systemctl restart skryon-api.service || true
+          }
+          trap rollback ERR
+
+          "$PY" - <<'PY'
+          from pathlib import Path
+
+          live = Path('/opt/nt/orchestrator')
+          pp = live / 'payment_routes.py'
+          yp = live / 'yookassa_checkout.py'
+          ps = pp.read_text(encoding='utf-8')
+          ys = yp.read_text(encoding='utf-8')
+          marker = 'SKRYON_PAYMENT_METHOD_ROUTING_V1'
+
+          if marker not in ys:
+              anchor = '''def _amount_value(kopeks: int) -> str:\n    return f"{int(kopeks) / 100:.2f}"\n\n\n'''
+              helper = '''def _amount_value(kopeks: int) -> str:\n    return f"{int(kopeks) / 100:.2f}"\n\n\n# SKRYON_PAYMENT_METHOD_ROUTING_V1\nPAYMENT_METHOD_MAP = {\n    "card": "bank_card",\n    "bank_card": "bank_card",\n    "bankcard": "bank_card",\n    "bank-card": "bank_card",\n    "sbp": "sbp",\n    "sber": "sberbank",\n    "sberbank": "sberbank",\n    "sberpay": "sberbank",\n}\n\n\ndef normalize_payment_method(value: str) -> str:\n    raw = str(value or "card").strip().lower()\n    method = PAYMENT_METHOD_MAP.get(raw)\n    if not method:\n        raise ValueError("invalid_payment_method")\n    return method\n\n\n'''
+              if anchor not in ys:
+                  raise SystemExit('amount helper anchor missing')
+              ys = ys.replace(anchor, helper, 1)
+
+              old_sig = 'def create_yookassa_payment(order: Dict[str, Any]) -> Dict[str, Any]:'
+              new_sig = 'def create_yookassa_payment(order: Dict[str, Any], payment_method: str = "card") -> Dict[str, Any]:'
+              if old_sig not in ys:
+                  raise SystemExit('provider signature anchor missing')
+              ys = ys.replace(old_sig, new_sig, 1)
+
+              payload_anchor = '''        "metadata": {"order_id": str(order["order_id"])},\n    }\n\n    if autorenew_requested(str(order["order_id"])):\n'''
+              payload_new = '''        "metadata": {"order_id": str(order["order_id"])},\n    }\n    payload["payment_method_data"] = {"type": normalize_payment_method(payment_method)}\n\n    if autorenew_requested(str(order["order_id"])):\n'''
+              if payload_anchor not in ys:
+                  raise SystemExit('provider payload anchor missing')
+              ys = ys.replace(payload_anchor, payload_new, 1)
+              yp.write_text(ys, encoding='utf-8')
+
+          if 'paymentMethod: str' not in ps:
+              model_anchor = "    code: str = Field(default='', max_length=64)\n"
+              if model_anchor not in ps:
+                  raise SystemExit('request model anchor missing')
+              ps = ps.replace(
+                  model_anchor,
+                  model_anchor + "    paymentMethod: str = Field(default='card', max_length=24)\n",
+                  1,
+              )
+
+          if 'normalize_payment_method,' not in ps:
+              import_anchor = '    validate_months,\n'
+              if import_anchor not in ps:
+                  raise SystemExit('import anchor missing')
+              ps = ps.replace(import_anchor, import_anchor + '    normalize_payment_method,\n', 1)
+
+          validation_anchor = '        months = validate_months(payload.months)\n'
+          validation_line = '        payment_method = normalize_payment_method(payload.paymentMethod)\n'
+          if validation_line not in ps:
+              if validation_anchor not in ps:
+                  raise SystemExit('validation anchor missing')
+              ps = ps.replace(validation_anchor, validation_anchor + validation_line, 1)
+
+          old_call = '        provider = create_yookassa_payment(order)\n'
+          new_call = '        provider = create_yookassa_payment(order, payment_method)\n'
+          if new_call not in ps:
+              if old_call not in ps:
+                  raise SystemExit('provider call anchor missing')
+              ps = ps.replace(old_call, new_call, 1)
+
+          pp.write_text(ps, encoding='utf-8')
+          print('PAYMENT_METHOD_PATCH_APPLIED')
+          PY
+
+          "$PY" -m py_compile "$LIVE/payment_routes.py" "$LIVE/yookassa_checkout.py"
+
+          "$PY" - <<'PY'
+          import sys
+          sys.path.insert(0, '/opt/nt/orchestrator')
+          from yookassa_checkout import normalize_payment_method
+          expected = {
+              'card': 'bank_card',
+              'bank_card': 'bank_card',
+              'sbp': 'sbp',
+              'sber': 'sberbank',
+              'sberbank': 'sberbank',
+              'sberpay': 'sberbank',
+          }
+          for raw, want in expected.items():
+              got = normalize_payment_method(raw)
+              assert got == want, (raw, got, want)
+          try:
+              normalize_payment_method('definitely-invalid')
+          except ValueError as exc:
+              assert str(exc) == 'invalid_payment_method'
+          else:
+              raise AssertionError('invalid payment method accepted')
+          print('PAYMENT_METHOD_MAPPING_TEST_OK')
+          PY
+
+          systemctl restart skryon-api.service
+          sleep 2
+          systemctl is-active --quiet skryon-api.service
+          ready="$(curl -fsS http://127.0.0.1:8080/api/checkout/payment-ready)"
+          echo "$ready"
+          printf '%s' "$ready" | grep -q '"ready":true'
+          printf '%s' "$ready" | grep -q '"autorenew":true'
+
+          response="$(curl -sS -w '\nHTTP=%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"support@skryon.ru","plan":"personal","months":1,"personalDataConsent":true,"paymentMethod":"invalid-test-value","mode":"new"}' \
+            http://127.0.0.1:8080/api/checkout/payment)"
+          printf '%s\n' "$response"
+          printf '%s' "$response" | grep -q '"reason":"invalid_payment_method"'
+          printf '%s' "$response" | grep -q 'HTTP=400'
+
+          grep -q 'SKRYON_PAYMENT_METHOD_ROUTING_V1' "$LIVE/yookassa_checkout.py"
+          grep -q 'paymentMethod: str' "$LIVE/payment_routes.py"
+          grep -q 'payment_method_data' "$LIVE/yookassa_checkout.py"
+          grep -q 'create_yookassa_payment(order, payment_method)' "$LIVE/payment_routes.py"
+
+          trap - ERR
+          echo "PAYMENT_METHOD_ROUTING_V1_OK backup=$backup"
+          REMOTE
