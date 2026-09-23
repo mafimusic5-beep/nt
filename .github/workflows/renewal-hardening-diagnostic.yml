@@ -1,0 +1,88 @@
+name: Renewal hardening diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/renewal-hardening-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Inspect live API renewal code
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          hosts=(31.70.76.155 "${VPS_HOST:-}" 157.22.206.113 82.146.49.10)
+          ports=(8443 "${VPS_PORT:-}" 22 2022 2222 2200 22222 8022)
+          found=''
+          for h in "${hosts[@]}"; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in "${ports[@]}"; do
+              [[ "$p" =~ ^[0-9]+$ ]] || continue
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$user@$h" 'test -f /opt/nt/orchestrator/payment_routes.py && test -f /opt/nt/orchestrator/yookassa_checkout.py' >/dev/null 2>&1; then
+                found="$h:$p"; host="$h"; port="$p"; break 2
+              fi
+            done
+          done
+          [ -n "$found" ] || { echo 'API endpoint not found'; exit 1; }
+          echo "API_ENDPOINT=$found"
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$user@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo '=== PAYMENT ROUTES 35-150 ==='
+          nl -ba /opt/nt/orchestrator/payment_routes.py | sed -n '35,150p'
+          echo '=== YOOKASSA RENEW MARKERS ==='
+          grep -n -E 'CONSENT_VERSION|validate_renewal_target|def create_payment_order|target_code|mode|renew_activation_code|def sync_and_fulfill' /opt/nt/orchestrator/yookassa_checkout.py | head -120
+          echo '=== CHECKOUT ROUTES FIND/RENEW ==='
+          grep -n -E 'find-code|renew-code|def issue_renewal|public_code_row' /opt/nt/orchestrator/checkout_routes.py | head -80 || true
+          REMOTE
+
+      - name: Inspect live checkout renewal UI
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          hosts=(157.22.206.113 "${VPS_HOST:-}" 82.146.49.10 31.70.76.155)
+          ports=(22 "${VPS_PORT:-}" 8443 2022 2222 2200 22222 8022)
+          found=''
+          for h in "${hosts[@]}"; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in "${ports[@]}"; do
+              [[ "$p" =~ ^[0-9]+$ ]] || continue
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$user@$h" 'test -f /var/www/skryon.ru/html/checkout.html' >/dev/null 2>&1; then
+                found="$h:$p"; host="$h"; port="$p"; break 2
+              fi
+            done
+          done
+          [ -n "$found" ] || { echo 'Site endpoint not found'; exit 1; }
+          echo "SITE_ENDPOINT=$found"
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$user@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          f=/var/www/skryon.ru/html/checkout.html
+          echo '=== RENEW UI MARKERS ==='
+          grep -n -E 'SKRYON_RENEWAL_UI_WORKING_V1|Продлить подписку|sk-renew-check-new|find-code|verifiedRenewCode|mode: checkoutMode|code: renewalCode' "$f" | head -120
+          REMOTE
