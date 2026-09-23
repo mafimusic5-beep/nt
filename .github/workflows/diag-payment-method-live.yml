@@ -1,0 +1,46 @@
+name: Diagnose live payment method flow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diag-payment-method-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Inspect live payment code
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host='31.70.76.155'
+          port='8443'
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$user@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/nt/orchestrator
+          echo '=== REQUEST MODEL ==='
+          grep -nA18 -B3 'class CreatePaymentRequest' payment_routes.py || true
+          echo '=== ROUTE PAYMENT METHOD ==='
+          grep -nC5 'paymentMethod' payment_routes.py || true
+          echo '=== PROVIDER FUNCTION ==='
+          grep -nA95 -B5 'def create_yookassa_payment' yookassa_checkout.py | sed -n '1,115p'
+          echo '=== AUTORENEW HOOKS ==='
+          grep -nC4 -E 'save_payment_method|autorenew' yookassa_checkout.py payment_routes.py | head -140 || true
+          REMOTE
