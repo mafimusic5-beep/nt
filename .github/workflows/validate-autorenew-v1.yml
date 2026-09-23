@@ -1,0 +1,34 @@
+name: Validate autorenew v1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/validate-autorenew-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: |
+          python3 -m py_compile \
+            orchestrator/autorenew.py \
+            orchestrator/autorenew_worker.py \
+            tools/apply_autorenew_v1.py \
+            tools/patch_checkout_autorenew_ui.py
+      - name: Static security checks
+        run: |
+          set -euo pipefail
+          grep -q 'payment_method_id' orchestrator/autorenew.py
+          grep -q 'manage_token_hash' orchestrator/autorenew.py
+          grep -q 'payment_method_enc' orchestrator/autorenew.py
+          grep -q 'save_payment_method' tools/apply_autorenew_v1.py
+          grep -q 'SKRYON_AUTORENEW_UI_V1' tools/patch_checkout_autorenew_ui.py
+          ! grep -q '/api/checkout/find-code' tools/patch_checkout_autorenew_ui.py
+          echo AUTORENEW_STATIC_VALIDATION_OK
