@@ -1,0 +1,255 @@
+name: Skryon renewal hardening 2026-09-23
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/renewal-hardening-20260923.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Harden API renewal semantics
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host='31.70.76.155'
+          port=''
+          for p in 8443 22 2022 2222 2200 22222 8022; do
+            if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new "$user@$host" true >/dev/null 2>&1; then
+              port="$p"
+              break
+            fi
+          done
+          [ -n "$port" ] || { echo 'API VPS did not accept deploy key'; exit 1; }
+          echo "API endpoint: $host:$port"
+
+          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$user@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/nt/orchestrator
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a yookassa_checkout.py "yookassa_checkout.py.bak-plan-lock-$stamp"
+          cp -a payment_routes.py "payment_routes.py.bak-plan-lock-$stamp"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          yp = Path('/opt/nt/orchestrator/yookassa_checkout.py')
+          pp = Path('/opt/nt/orchestrator/payment_routes.py')
+          ys = yp.read_text(encoding='utf-8')
+          ps = pp.read_text(encoding='utf-8')
+
+          marker = 'SKRYON_RENEW_PLAN_LOCK_V1'
+          if marker not in ys:
+              if 'get_activation_code' not in ys or 'renew_activation_code' not in ys:
+                  raise SystemExit('renew storage imports are missing')
+
+              target_pattern = re.compile(
+                  r'def validate_renewal_target\(.*?\n(?=def amount_kopeks)',
+                  re.S,
+              )
+              target_new = '''# SKRYON_RENEW_PLAN_LOCK_V1\ndef resolve_renewal_target(code: str) -> Dict[str, Any]:\n    row = get_activation_code(code)\n    if not row or str(row.get("status") or "") == "banned":\n        raise ValueError("renew_code_invalid")\n\n    plan = str(row.get("plan") or "").strip()\n    selected = validate_plan(plan)\n\n    return {\n        "code": str(row["code"]),\n        "plan": plan,\n        "selected": selected,\n    }\n\n\ndef validate_renewal_target(\n    code: str,\n    plan: Optional[str] = None,\n    enforce_device_limit: bool = False,\n) -> str:\n    # Client-supplied plan is deliberately ignored for renewals.\n    return str(resolve_renewal_target(code)["code"])\n\n\n'''
+              ys, n = target_pattern.subn(target_new, ys, count=1)
+              if n != 1:
+                  raise SystemExit(f'validate_renewal_target patch count={n}')
+
+              create_pattern = re.compile(
+                  r'def create_payment_order\(.*?\n(?=def get_payment_order)',
+                  re.S,
+              )
+              create_new = '''def create_payment_order(\n    email: str,\n    plan: str,\n    months: int,\n    mode: str = "new",\n    target_code: str = "",\n) -> Dict[str, Any]:\n    ensure_payment_storage()\n\n    safe_email = validate_email(email)\n    period = validate_months(months)\n    safe_mode = str(mode or "new").strip().lower()\n    if safe_mode not in {"new", "renew"}:\n        raise ValueError("invalid_mode")\n\n    safe_target = ""\n    if safe_mode == "renew":\n        target = resolve_renewal_target(target_code)\n        safe_target = str(target["code"])\n        safe_plan = str(target["plan"])\n    else:\n        validate_plan(plan)\n        safe_plan = plan\n\n    order_id = secrets.token_urlsafe(24)\n    idempotence_key = secrets.token_hex(24)\n    now = _now_iso()\n\n    with _connect() as con:\n        con.execute(\n            """\n            INSERT INTO payment_orders(\n                order_id, status, email, plan, months, amount_kopeks,\n                mode, target_code, idempotence_key,\n                consent_version, consent_at, created_at\n            ) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            """,\n            (\n                order_id,\n                _encrypt_email(safe_email),\n                safe_plan,\n                period,\n                amount_kopeks(safe_plan, period),\n                safe_mode,\n                safe_target,\n                idempotence_key,\n                CONSENT_VERSION,\n                now,\n                now,\n            ),\n        )\n        con.commit()\n\n    return get_payment_order(order_id) or {}\n\n\n'''
+              ys, n = create_pattern.subn(create_new, ys, count=1)
+              if n != 1:
+                  raise SystemExit(f'create_payment_order patch count={n}')
+
+              yp.write_text(ys, encoding='utf-8')
+
+          route_pattern = re.compile(
+              r'@router\.post\("/api/checkout/payment"\)\ndef create_payment\(.*?\n(?=@router\.get\("/api/checkout/payment/\{order_id\}"\))',
+              re.S,
+          )
+          route_new = '''@router.post("/api/checkout/payment")\ndef create_payment(payload: CreatePaymentRequest, request: Request):\n    if _limited(request):\n        return JSONResponse(\n            status_code=429,\n            content={"ok": False, "reason": "too_many_attempts"},\n        )\n    if payload.personalDataConsent is not True:\n        return JSONResponse(\n            status_code=400,\n            content={"ok": False, "reason": "personal_data_consent_required"},\n        )\n\n    try:\n        email = validate_email(payload.email)\n        months = validate_months(payload.months)\n        mode = str(payload.mode or "new").strip().lower()\n        if mode not in {"new", "renew"}:\n            raise ValueError("invalid_mode")\n\n        if mode == "renew":\n            target_code = str(payload.code or "").strip()\n            if not target_code:\n                raise ValueError("renew_code_invalid")\n        else:\n            validate_plan(payload.plan)\n            target_code = ""\n    except (TypeError, ValueError) as exc:\n        return JSONResponse(\n            status_code=400,\n            content={"ok": False, "reason": str(exc)},\n        )\n\n    if not payment_ready():\n        return JSONResponse(\n            status_code=503,\n            content={"ok": False, "reason": "payment_not_configured"},\n        )\n\n    try:\n        order = create_payment_order(\n            email,\n            payload.plan,\n            months,\n            mode=mode,\n            target_code=target_code,\n        )\n    except (TypeError, ValueError) as exc:\n        reason = str(exc)\n        if reason in {\n            "renew_code_not_found",\n            "renew_code_banned",\n            "renew_device_limit_conflict",\n        }:\n            reason = "renew_code_invalid"\n        return JSONResponse(\n            status_code=400,\n            content={"ok": False, "reason": reason},\n        )\n\n    try:\n        provider = create_yookassa_payment(order)\n    except PaymentConfigurationError as exc:\n        mark_payment_failed(str(order["order_id"]), str(exc))\n        return JSONResponse(\n            status_code=503,\n            content={"ok": False, "reason": "payment_not_configured"},\n        )\n    except PaymentProviderError as exc:\n        mark_payment_failed(str(order["order_id"]), str(exc))\n        return JSONResponse(\n            status_code=502,\n            content={"ok": False, "reason": "payment_provider_unavailable"},\n        )\n\n    return {\n        "ok": True,\n        "orderId": str(order["order_id"]),\n        "confirmationUrl": provider["confirmation_url"],\n    }\n\n\n'''
+          ps, n = route_pattern.subn(route_new, ps, count=1)
+          if n != 1:
+              raise SystemExit(f'payment route patch count={n}')
+          if '# SKRYON_RENEW_ROUTE_LOCK_V1' not in ps:
+              ps = ps.replace(
+                  '@router.post("/api/checkout/payment")',
+                  '# SKRYON_RENEW_ROUTE_LOCK_V1\n@router.post("/api/checkout/payment")',
+                  1,
+              )
+          pp.write_text(ps, encoding='utf-8')
+          print('API_PATCH_OK')
+          PY
+
+          /opt/nt/orchestrator/.venv/bin/python -m py_compile \
+            /opt/nt/orchestrator/yookassa_checkout.py \
+            /opt/nt/orchestrator/payment_routes.py
+
+          /opt/nt/orchestrator/.venv/bin/python - <<'PY'
+          import sqlite3
+          db='/opt/nt/orchestrator/skryon.db'
+          con=sqlite3.connect(db)
+          cols={r[1] for r in con.execute('PRAGMA table_info(payment_orders)')}
+          con.close()
+          assert {'mode','target_code'} <= cols, cols
+          print('SCHEMA_OK')
+          PY
+
+          systemctl restart skryon-api.service
+          sleep 2
+          systemctl is-active --quiet skryon-api.service
+          curl -fsS http://127.0.0.1:8080/api/checkout/payment-ready
+          echo
+
+          fake="SKRYON-NOT-A-REAL-CODE-$(date +%s)"
+          body=$(printf '{"email":"support@skryon.ru","plan":"family","months":1,"personalDataConsent":true,"paymentMethod":"card","mode":"renew","code":"%s"}' "$fake")
+          response=$(curl -sS -w '\nHTTP=%{http_code}' -H 'Content-Type: application/json' -d "$body" http://127.0.0.1:8080/api/checkout/payment)
+          printf '%s\n' "$response"
+          grep -q '"reason":"renew_code_invalid"' <<<"$response"
+          grep -q 'HTTP=400' <<<"$response"
+          REMOTE
+
+      - name: Simplify public renewal UI
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          site_host=''
+          site_port=''
+          seen=' '
+          for h in 157.22.206.113 "${VPS_HOST:-}"; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in 22 8443 2022 2222 2200 22222 8022; do
+              key=" $h:$p "
+              [[ "$seen" != *"$key"* ]] || continue
+              seen+="$key"
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new "$user@$h" true >/dev/null 2>&1; then
+                site_host="$h"
+                site_port="$p"
+                break 2
+              fi
+            done
+          done
+          [ -n "$site_host" ] || { echo 'Site VPS did not accept deploy key'; exit 1; }
+          echo "Site endpoint: $site_host:$site_port"
+
+          ssh -4 -p "$site_port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$user@$site_host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          file=/var/www/skryon.ru/html/checkout.html
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$file" "$file.bak-renew-direct-$stamp"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('/var/www/skryon.ru/html/checkout.html')
+          s=p.read_text(encoding='utf-8')
+          if 'SKRYON_RENEW_DIRECT_V2' in s:
+              print('UI_ALREADY_PATCHED')
+              raise SystemExit(0)
+          if 'SKRYON_RENEWAL_UI_WORKING_V1' not in s:
+              raise SystemExit('expected renewal UI marker is missing')
+
+          s=s.replace(
+              "// SKRYON_RENEWAL_UI_WORKING_V1\n  let checkoutMode = 'new';\n  let verifiedRenewCode = '';",
+              "// SKRYON_RENEWAL_UI_WORKING_V1\n  // SKRYON_RENEW_DIRECT_V2\n  let checkoutMode = 'new';",
+              1,
+          )
+
+          panel_pattern=re.compile(
+              r"  renewUI\.innerHTML = `.*?`;\n\n  const emailBlock =",
+              re.S,
+          )
+          panel_new='''  renewUI.innerHTML = `\n    <div class="sk-renew-ui-title">Подписка</div>\n\n    <div class="sk-renew-ui-tabs">\n      <button type="button" class="sk-renew-ui-tab active" data-sk-mode="new">Новая подписка</button>\n      <button type="button" class="sk-renew-ui-tab" data-sk-mode="renew">Продлить подписку</button>\n    </div>\n\n    <div class="sk-renew-ui-panel" id="sk-renew-panel-new" hidden>\n      <input\n        id="sk-renew-code-new"\n        type="text"\n        autocomplete="off"\n        spellcheck="false"\n        placeholder="Введите код Skryon"\n      >\n      <div id="sk-renew-info-new" aria-live="polite">\n        Тариф определяется по вашему коду и при продлении не изменяется.\n      </div>\n    </div>\n  `;\n\n  const emailBlock ='''
+          s,n=panel_pattern.subn(panel_new,s,count=1)
+          if n != 1:
+              raise SystemExit(f'panel patch count={n}')
+
+          s=re.sub(
+              r"\n  const renewCheck =\n    renewUI\.querySelector\('#sk-renew-check-new'\);\n",
+              '\n',
+              s,
+              count=1,
+          )
+          s=re.sub(
+              r"\n  function resetVerifiedRenewCode\(\) \{.*?\n  renewInput\.addEventListener\(\n    'input',\n    resetVerifiedRenewCode\n  \);\n",
+              '\n',
+              s,
+              count=1,
+              flags=re.S,
+          )
+
+          old_mode="""        renewPanel.hidden =\n          checkoutMode !== 'renew';\n\n        resetVerifiedRenewCode();\n\n        if (checkoutMode === 'renew') {\n          renewInput.focus();\n        }"""
+          new_mode="""        renewPanel.hidden =\n          checkoutMode !== 'renew';\n\n        const planSection =\n          document.querySelector('#sk-plans')?.closest('.sk-section');\n\n        if (planSection) {\n          planSection.hidden = checkoutMode === 'renew';\n        }\n\n        renewInfo.textContent =\n          checkoutMode === 'renew'\n            ? 'Тариф определяется по вашему коду и при продлении не изменяется.'\n            : '';\n\n        if (checkoutMode === 'renew') {\n          renewInput.focus();\n          pay.textContent = 'Продлить подписку';\n        } else {\n          pay.textContent = 'Перейти к оплате';\n        }"""
+          if old_mode not in s:
+              raise SystemExit('mode switch anchor missing')
+          s=s.replace(old_mode,new_mode,1)
+
+          listener_pattern=re.compile(
+              r"\n  renewCheck\.addEventListener\('click', async \(\) => \{.*?\n  \}\);\n",
+              re.S,
+          )
+          s,n=listener_pattern.subn('\n',s,count=1)
+          if n != 1:
+              raise SystemExit(f'check listener patch count={n}')
+
+          old_validation="""    let renewalCode = '';\n\n    if (checkoutMode === 'renew') {\n      if (!verifiedRenewCode) {\n        renewInput.focus();\n\n        message(\n          'Сначала проверьте код Skryon.',\n          true\n        );\n\n        return;\n      }\n\n      renewalCode = verifiedRenewCode;\n    }"""
+          new_validation="""    let renewalCode = '';\n\n    if (checkoutMode === 'renew') {\n      renewalCode = renewInput.value.trim();\n\n      if (!renewalCode) {\n        renewInput.focus();\n        message('Введите код Skryon.', true);\n        return;\n      }\n    }"""
+          if old_validation not in s:
+              raise SystemExit('payment validation anchor missing')
+          s=s.replace(old_validation,new_validation,1)
+
+          s=s.replace(
+              "          invalid_months:\n            'Выберите срок 1, 3, 6 или 12 месяцев.',",
+              "          invalid_months:\n            'Выберите срок 1, 3, 6 или 12 месяцев.',\n          renew_code_invalid:\n            'Не удалось продлить этот код. Проверьте код и попробуйте ещё раз.',",
+              1,
+          )
+          s=s.replace(
+              "      pay.textContent = 'Перейти к оплате';\n      message(\n        e?.message || 'Ошибка соединения. Попробуйте ещё раз.',",
+              "      pay.textContent = checkoutMode === 'renew'\n        ? 'Продлить подписку'\n        : 'Перейти к оплате';\n      message(\n        e?.message || 'Ошибка соединения. Попробуйте ещё раз.',",
+              1,
+          )
+
+          p.write_text(s,encoding='utf-8')
+          print('UI_PATCH_OK')
+          PY
+
+          chown www-data:www-data "$file"
+          chmod 0644 "$file"
+          nginx -t
+          grep -q 'SKRYON_RENEW_DIRECT_V2' "$file"
+          ! grep -q 'id="sk-renew-check-new"' "$file"
+          grep -q 'Тариф определяется по вашему коду' "$file"
+          REMOTE
+
+      - name: Public verification
+        run: |
+          set -euo pipefail
+          html=$(curl -fsSL --max-time 15 "https://skryon.ru/checkout?renew-hardening=$(date +%s)")
+          grep -q 'SKRYON_RENEW_DIRECT_V2' <<<"$html"
+          ! grep -q 'id="sk-renew-check-new"' <<<"$html"
+          grep -q 'Тариф определяется по вашему коду' <<<"$html"
+          echo 'Renewal hardening verified publicly.'
