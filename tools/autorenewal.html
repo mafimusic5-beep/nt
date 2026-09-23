@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="index,follow">
+  <title>Автопродление Skryon — условия и отключение</title>
+  <meta name="description" content="Условия автопродления подписки Skryon, обработка платежных данных и отключение повторных списаний.">
+  <style>
+    :root{color-scheme:light dark;--bg:#f6f7f5;--card:#fff;--text:#151816;--muted:#66706a;--line:#dce2dd;--accent:#1f6f4a}
+    @media(prefers-color-scheme:dark){:root{--bg:#111512;--card:#171c18;--text:#f3f5f3;--muted:#aab4ad;--line:#2d3630;--accent:#83d9a9}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    main{max-width:820px;margin:0 auto;padding:40px 18px 72px}.card{background:var(--card);border:1px solid var(--line);border-radius:24px;padding:28px;box-shadow:0 12px 36px rgba(0,0,0,.05)}
+    h1{font-size:clamp(28px,5vw,42px);line-height:1.1;margin:0 0 14px}h2{margin-top:30px;font-size:21px}.lead{color:var(--muted);font-size:17px}
+    a{color:var(--accent)}ul{padding-left:22px}.manage{margin-top:30px;padding:22px;border:1px solid var(--line);border-radius:18px}.manage button{width:100%;padding:14px 18px;border:0;border-radius:14px;font-weight:700;font-size:16px;cursor:pointer}.status{margin-top:12px;color:var(--muted)}
+    .note{padding:14px 16px;background:color-mix(in srgb,var(--accent) 9%,transparent);border-radius:14px}.small{font-size:14px;color:var(--muted)}
+  </style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Автопродление Skryon</h1>
+    <p class="lead">Условия повторных платежей, обработка платежных данных и способ отключения автопродления.</p>
+
+    <h2>1. Как подключается</h2>
+    <p>Автопродление является дополнительной опцией и по умолчанию выключено. Оно подключается только когда пользователь самостоятельно отмечает соответствующую галочку при оплате и подтверждает условия повторных списаний.</p>
+
+    <h2>2. Как проходят повторные платежи</h2>
+    <ul>
+      <li>платежный способ сохраняется на стороне ЮKassa для последующих платежей;</li>
+      <li>Skryon не получает и не хранит полный номер банковской карты, срок действия или CVC/CVV;</li>
+      <li>Skryon хранит технический идентификатор сохраненного способа оплаты, параметры подписки и сведения о согласии;</li>
+      <li>период автопродления совпадает с выбранным при подключении периодом: 1, 3, 6 или 12 месяцев;</li>
+      <li>сумма повторного платежа фиксируется в момент подключения автопродления. Ее автоматическое увеличение без нового согласия пользователя не производится;</li>
+      <li>первая попытка повторного списания выполняется примерно за 24 часа до окончания оплаченного периода.</li>
+    </ul>
+
+    <h2>3. Если платеж не прошел</h2>
+    <p>Если ЮKassa отклонила повторный платеж, Skryon может выполнить до четырех попыток с интервалом около 6 часов. Подписка продлевается только после подтвержденного успешного платежа. Если платежи не проходят, автопродление приостанавливается, а пользователь может оплатить подписку вручную.</p>
+
+    <h2>4. Отключение</h2>
+    <p>Автопродление можно отключить в любой момент до следующего успешного списания. После отключения будущие автоматические списания прекращаются, а уже оплаченный период продолжает действовать до своего окончания.</p>
+    <p>Для самостоятельного отключения используется персональная защищенная ссылка, отправленная на email после подключения. Также можно обратиться в поддержку: <a href="mailto:support@skryon.ru">support@skryon.ru</a>.</p>
+
+    <h2>5. Платежные и персональные данные</h2>
+    <p>Для работы автопродления могут обрабатываться: email, технический идентификатор платежного способа ЮKassa, выбранный тариф и период, сумма платежа, дата и версия согласия, идентификаторы и статусы платежных операций. Эти данные используются для проведения платежей, управления подпиской, отправки уведомлений, предотвращения злоупотреблений и исполнения обязательных требований учета.</p>
+    <p>Полные реквизиты банковской карты обрабатываются платежной инфраструктурой ЮKassa и не передаются Skryon в полном виде. После отключения автопродления Skryon прекращает использование сохраненного платежного идентификатора для новых списаний; сведения об уже проведенных операциях могут храниться в объеме и в течение сроков, необходимых для учета, разрешения споров и соблюдения требований законодательства.</p>
+
+    <h2>6. Согласие</h2>
+    <p>Отмечая галочку автопродления, пользователь подтверждает, что ознакомился с этими условиями, разрешает сохранить платежный способ на стороне ЮKassa и поручает Skryon инициировать повторные платежи на описанных выше условиях. Skryon фиксирует дату и версию такого согласия.</p>
+
+    <p class="note"><strong>Важно:</strong> изменение периода, тарифа или суммы автопродления не применяется автоматически к уже подключенной подписке без нового согласия пользователя.</p>
+
+    <div class="manage" id="manage">
+      <h2 style="margin-top:0">Отключить автопродление</h2>
+      <p id="manageText">Откройте персональную ссылку из письма Skryon. VPN-код для отключения вводить не требуется.</p>
+      <button id="disableBtn" type="button" disabled>Отключить автопродление</button>
+      <div class="status" id="status" aria-live="polite"></div>
+    </div>
+
+    <p class="small">Редакция условий: 23 сентября 2026 года. Контакт: support@skryon.ru.</p>
+  </div>
+</main>
+<script>
+(() => {
+  const button = document.getElementById('disableBtn');
+  const status = document.getElementById('status');
+  const text = document.getElementById('manageText');
+  const params = new URLSearchParams(location.hash.startsWith('#') ? location.hash.slice(1) : '');
+  const token = params.get('token') || '';
+  if (token.length >= 32) {
+    button.disabled = false;
+    text.textContent = 'Персональная ссылка распознана. Нажмите кнопку ниже, чтобы прекратить будущие автоматические списания.';
+  }
+  button.addEventListener('click', async () => {
+    if (!token || button.disabled) return;
+    button.disabled = true;
+    status.textContent = 'Отключаем…';
+    try {
+      const response = await fetch('/api/checkout/autorenew/disable', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({token})
+      });
+      if (!response.ok) throw new Error('request_failed');
+      status.textContent = 'Готово. Запрос на отключение принят. Будущие автоматические списания прекращены.';
+      history.replaceState(null, '', location.pathname);
+    } catch (e) {
+      button.disabled = false;
+      status.textContent = 'Не удалось выполнить запрос. Попробуйте ещё раз или напишите на support@skryon.ru.';
+    }
+  });
+})();
+</script>
+</body>
+</html>
