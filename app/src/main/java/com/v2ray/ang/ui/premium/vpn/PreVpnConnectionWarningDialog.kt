@@ -88,9 +88,9 @@ private data class ConnectionWarningCopy(
 private fun PreVpnConnectionQuality.warningCopy(): ConnectionWarningCopy? = when (this) {
     PreVpnConnectionQuality.Critical -> ConnectionWarningCopy(
         title = "Слабая связь",
-        status = "КРИТИЧЕСКОЕ",
+        status = "НИЗКАЯ СКОРОСТЬ",
         description =
-            "Интернет работает нестабильно ещё до включения VPN. Подключение может быть медленным или не запуститься.",
+            "Измеренная скорость интернета до включения VPN ниже 1 МБ/с. VPN может работать медленно или нестабильно.",
         statusColor = Color(0xFFC25B18),
         canContinue = true,
     )
