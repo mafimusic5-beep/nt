@@ -1,0 +1,59 @@
+name: Deploy YooKassa autorenew v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-autorenew-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure backend SSH key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Install autorenew safely
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host=31.70.76.155
+          port=8443
+          opts=(-4 -p "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+
+          ok=0
+          for i in 1 2 3 4 5; do
+            if ssh "${opts[@]}" "$user@$host" 'echo SSH_OK'; then
+              ok=1
+              break
+            fi
+            sleep 3
+          done
+          [[ "$ok" == 1 ]]
+
+          ssh "${opts[@]}" "$user@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/mafimusic5-beep/nt/main/tools/install_autorenew_live_v1.sh -o /tmp/install_autorenew_live_v1.sh
+          bash /tmp/install_autorenew_live_v1.sh
+          echo '=== SERVICE ==='
+          systemctl is-active skryon-api.service
+          echo '=== TIMER ==='
+          systemctl is-active skryon-autorenew.timer
+          systemctl list-timers skryon-autorenew.timer --no-pager
+          echo '=== READY ==='
+          curl -fsS http://127.0.0.1:8080/api/checkout/payment-ready
+          echo
+          REMOTE
