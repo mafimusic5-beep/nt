@@ -1,0 +1,306 @@
+name: Harden live subscription renewal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/renewal-hardening-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harden-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure deploy key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Harden production renewal API
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host=31.70.76.155
+          port=8443
+          ssh_opts=(-4 -p "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+          ssh "${ssh_opts[@]}" "$user@$host" 'test -f /opt/nt/orchestrator/payment_routes.py && test -f /opt/nt/orchestrator/yookassa_checkout.py && test -f /opt/nt/orchestrator/checkout_routes.py'
+
+          ssh "${ssh_opts[@]}" "$user@$host" 'bash -s' <<'REMOTE'
+          set -Eeuo pipefail
+          root=/opt/nt/orchestrator
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          backup=/root/skryon-renew-hardening-$stamp
+          stage=$(mktemp -d /tmp/skryon-renew-hardening.XXXXXX)
+          mkdir -p "$backup"
+          trap 'rm -rf "$stage"' EXIT
+
+          cp -a "$root/payment_routes.py" "$backup/"
+          cp -a "$root/yookassa_checkout.py" "$backup/"
+          cp -a "$root/checkout_routes.py" "$backup/"
+
+          /opt/nt/orchestrator/.venv/bin/python - "$root/skryon.db" "$backup/skryon.db" <<'PY'
+          import sqlite3, sys
+          src = sqlite3.connect(sys.argv[1])
+          dst = sqlite3.connect(sys.argv[2])
+          src.backup(dst)
+          dst.close(); src.close()
+          print('DB_BACKUP_OK')
+          PY
+
+          cp "$root/payment_routes.py" "$stage/payment_routes.py"
+          cp "$root/yookassa_checkout.py" "$stage/yookassa_checkout.py"
+          cp "$root/checkout_routes.py" "$stage/checkout_routes.py"
+
+          python3 - "$stage" <<'PY'
+          from pathlib import Path
+          import re, sys
+
+          stage = Path(sys.argv[1])
+          pp = stage / 'payment_routes.py'
+          yp = stage / 'yookassa_checkout.py'
+          cp = stage / 'checkout_routes.py'
+          ps = pp.read_text(encoding='utf-8')
+          ys = yp.read_text(encoding='utf-8')
+          cs = cp.read_text(encoding='utf-8')
+
+          if 'CONSENT_VERSION = "2026-09-23-v2"' not in ys:
+              raise SystemExit('Unexpected consent version; refusing live patch')
+
+          if 'from storage import get_activation_code' not in ps:
+              anchor = 'router = APIRouter()'
+              if ps.count(anchor) != 1:
+                  raise SystemExit('payment_routes router anchor mismatch')
+              ps = ps.replace(anchor, 'from storage import get_activation_code\n\n' + anchor, 1)
+
+          old_validation = '''    try:
+              email = validate_email(payload.email)
+              validate_plan(payload.plan)
+              months = validate_months(payload.months)
+
+              mode = str(payload.mode or "new").strip().lower()
+              if mode not in {"new", "renew"}:
+                  raise ValueError("invalid_mode")
+
+              target_code = ""
+              if mode == "renew":
+                  target_code = validate_renewal_target(
+                      payload.code,
+                      payload.plan,
+                  )
+          except (TypeError, ValueError) as exc:
+              return JSONResponse(
+                  status_code=400,
+                  content={"ok": False, "reason": str(exc)},
+              )'''
+
+          new_validation = '''    try:
+              email = validate_email(payload.email)
+              months = validate_months(payload.months)
+
+              mode = str(payload.mode or "new").strip().lower()
+              if mode not in {"new", "renew"}:
+                  raise ValueError("invalid_mode")
+
+              effective_plan = str(payload.plan or "").strip()
+              target_code = ""
+
+              if mode == "renew":
+                  row = get_activation_code(str(payload.code or "").strip())
+                  if not row or str(row.get("status") or "").lower() == "banned":
+                      raise ValueError("renew_code_invalid")
+                  effective_plan = str(row.get("plan") or "").strip()
+                  validate_plan(effective_plan)
+                  try:
+                      target_code = validate_renewal_target(
+                          str(row.get("code") or payload.code),
+                          effective_plan,
+                      )
+                  except (TypeError, ValueError):
+                      raise ValueError("renew_code_invalid")
+              else:
+                  validate_plan(effective_plan)
+          except (TypeError, ValueError) as exc:
+              reason = "renew_code_invalid" if str(payload.mode or "").strip().lower() == "renew" else str(exc)
+              return JSONResponse(
+                  status_code=400,
+                  content={"ok": False, "reason": reason},
+              )'''
+
+          if ps.count(old_validation) != 1:
+              raise SystemExit(f'payment validation anchor mismatch: {ps.count(old_validation)}')
+          ps = ps.replace(old_validation, new_validation, 1)
+
+          old_order = '''    order = create_payment_order(
+              email,
+              payload.plan,
+              months,
+              mode=mode,
+              target_code=target_code,
+          )'''
+          new_order = '''    try:
+              order = create_payment_order(
+                  email,
+                  effective_plan,
+                  months,
+                  mode=mode,
+                  target_code=target_code,
+              )
+          except (TypeError, ValueError) as exc:
+              reason = "renew_code_invalid" if mode == "renew" else str(exc)
+              return JSONResponse(
+                  status_code=400,
+                  content={"ok": False, "reason": reason},
+              )'''
+          if ps.count(old_order) != 1:
+              raise SystemExit(f'payment order anchor mismatch: {ps.count(old_order)}')
+          ps = ps.replace(old_order, new_order, 1)
+
+          old_validator = re.search(
+              r'def validate_renewal_target\(code: str, plan: str\) -> str:\n.*?(?=\n\ndef amount_kopeks)',
+              ys,
+              flags=re.S,
+          )
+          if not old_validator:
+              raise SystemExit('renewal validator block not found')
+          new_validator = '''def validate_renewal_target(code: str, plan: str) -> str:
+              row = get_activation_code(code)
+              if not row:
+                  raise ValueError("renew_code_not_found")
+              if str(row.get("status") or "").lower() == "banned":
+                  raise ValueError("renew_code_banned")
+
+              current_plan = str(row.get("plan") or "").strip()
+              if not current_plan or current_plan != str(plan or "").strip():
+                  raise ValueError("renew_plan_mismatch")
+
+              selected = validate_plan(current_plan)
+              used_devices = int(row.get("used_devices") or 0)
+              if used_devices > int(selected["devices"]):
+                  raise ValueError("renew_device_limit_conflict")
+
+              return str(row["code"])'''
+          ys = ys[:old_validator.start()] + new_validator + ys[old_validator.end():]
+
+          issue_match = re.search(
+              r'def issue_renewal\(code: str, plan: str, customer: str, months: int = 1, external_id: Optional\[str\] = None\) -> dict:\n.*?(?=\n\ndef renewal_error_response)',
+              cs,
+              flags=re.S,
+          )
+          if not issue_match:
+              raise SystemExit('checkout issue_renewal block not found')
+          new_issue = '''def issue_renewal(code: str, plan: str, customer: str, months: int = 1, external_id: Optional[str] = None) -> dict:
+              current = get_activation_code(code)
+              if not current:
+                  return {'ok': False, 'reason': 'not_found'}
+              if current.get('status') == 'banned':
+                  return {'ok': False, 'reason': 'banned'}
+
+              effective_plan = str(current.get('plan') or '').strip()
+              selected = PLANS.get(effective_plan)
+              if not selected:
+                  return {'ok': False, 'reason': 'invalid_current_plan'}
+
+              used_devices = int(current.get('used_devices') or 0)
+              if used_devices > selected['devices']:
+                  return {
+                      'ok': False,
+                      'reason': 'device_limit_conflict',
+                      'usedDevices': used_devices,
+                      'maxDevices': selected['devices'],
+                  }
+
+              selected_months = safe_months(months)
+              days = selected['days'] * selected_months
+              order = renew_activation_code(code, effective_plan, selected['devices'], days, customer.strip(), external_id)
+              if not order:
+                  return {'ok': False, 'reason': 'not_found'}
+              return {
+                  'ok': True,
+                  'orderId': order['external_id'],
+                  'code': order['code'],
+                  'plan': effective_plan,
+                  'planTitle': selected['title'],
+                  'months': selected_months,
+                  'days': days,
+                  'maxDevices': order['max_devices'],
+                  'expiresAt': order['expires_at'],
+                  'redirectUrl': '/checkout/code?order=' + order['external_id'],
+              }'''
+          cs = cs[:issue_match.start()] + new_issue + cs[issue_match.end():]
+
+          find_match = re.search(
+              r"@router\.post\('/api/checkout/find-code'\)\ndef find_code\(payload: CodeLookupRequest, request: Request\):\n.*?(?=\n\n@router\.post\('/api/checkout/renew-code'\))",
+              cs,
+              flags=re.S,
+          )
+          if not find_match:
+              raise SystemExit('find-code route block not found')
+          new_find = '''@router.post('/api/checkout/find-code')
+          def find_code(payload: CodeLookupRequest, request: Request):
+              if limited('find-code:' + remote_bucket_key(request)):
+                  return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
+              return JSONResponse(status_code=404, content={'ok': False, 'reason': 'not_available'})'''
+          cs = cs[:find_match.start()] + new_find + cs[find_match.end():]
+
+          pp.write_text(ps, encoding='utf-8')
+          yp.write_text(ys, encoding='utf-8')
+          cp.write_text(cs, encoding='utf-8')
+          print('PATCH_BUILD_OK')
+          PY
+
+          /opt/nt/orchestrator/.venv/bin/python -m py_compile \
+            "$stage/payment_routes.py" \
+            "$stage/yookassa_checkout.py" \
+            "$stage/checkout_routes.py"
+          echo PY_COMPILE_OK
+
+          grep -q 'renew_code_invalid' "$stage/payment_routes.py"
+          grep -q 'current_plan != str(plan' "$stage/yookassa_checkout.py"
+          grep -q "reason': 'not_available'" "$stage/checkout_routes.py"
+          grep -q "effective_plan = str(current.get('plan')" "$stage/checkout_routes.py"
+          echo PATCH_ASSERTIONS_OK
+
+          cp "$stage/payment_routes.py" "$root/payment_routes.py"
+          cp "$stage/yookassa_checkout.py" "$root/yookassa_checkout.py"
+          cp "$stage/checkout_routes.py" "$root/checkout_routes.py"
+
+          if ! systemctl restart skryon-api.service; then
+            cp "$backup/payment_routes.py" "$root/payment_routes.py"
+            cp "$backup/yookassa_checkout.py" "$root/yookassa_checkout.py"
+            cp "$backup/checkout_routes.py" "$root/checkout_routes.py"
+            systemctl restart skryon-api.service || true
+            echo 'API restart failed; code rolled back' >&2
+            exit 1
+          fi
+
+          sleep 2
+          systemctl is-active --quiet skryon-api.service
+          curl -fsS http://127.0.0.1:8080/api/checkout/payment-ready
+          echo
+
+          fake="SKRYON-NOT-A-REAL-CODE-$RANDOM"
+          body=$(printf '{"email":"renewal-smoke@example.invalid","plan":"family","months":1,"personalDataConsent":true,"paymentMethod":"card","mode":"renew","code":"%s"}' "$fake")
+          response=$(curl -sS -w '\nHTTP=%{http_code}' -H 'Content-Type: application/json' -d "$body" http://127.0.0.1:8080/api/checkout/payment)
+          printf '%s\n' "$response"
+          grep -q '"reason":"renew_code_invalid"' <<<"$response"
+          grep -q 'HTTP=400' <<<"$response"
+
+          lookup=$(curl -sS -w '\nHTTP=%{http_code}' -H 'Content-Type: application/json' -d "{\"code\":\"$fake\"}" http://127.0.0.1:8080/api/checkout/find-code)
+          printf '%s\n' "$lookup"
+          grep -q '"reason":"not_available"' <<<"$lookup"
+          grep -q 'HTTP=404' <<<"$lookup"
+
+          grep -q 'CONSENT_VERSION = "2026-09-23-v2"' "$root/yookassa_checkout.py"
+          echo LIVE_RENEWAL_HARDENING_OK
+          echo "BACKUP=$backup"
+          REMOTE
