@@ -86,3 +86,5 @@ jobs:
           echo '=== RENEW UI MARKERS ==='
           grep -n -E 'SKRYON_RENEWAL_UI_WORKING_V1|Продлить подписку|sk-renew-check-new|find-code|verifiedRenewCode|mode: checkoutMode|code: renewalCode' "$f" | head -120
           REMOTE
+
+# trigger: 2026-09-23T18:48+03:00
