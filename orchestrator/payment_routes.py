@@ -39,9 +39,11 @@ _attempts: Dict[str, Deque[float]] = defaultdict(deque)
 
 class CreatePaymentRequest(BaseModel):
     email: str = Field(min_length=3, max_length=254)
-    plan: str = Field(min_length=1, max_length=32)
+    plan: str = Field(default='', max_length=32)
     months: int = Field(ge=1, le=12)
     personalDataConsent: bool = False
+    mode: str = Field(default='new', max_length=16)
+    code: str = Field(default='', max_length=64)
 
 
 def _source_ip(request: Request) -> str:
@@ -79,6 +81,7 @@ def payment_configuration_status() -> dict:
     return {"ok": True, "ready": payment_ready()}
 
 
+# SKRYON_RENEW_PAYMENT_LOCK_V1
 @router.post("/api/checkout/payment")
 def create_payment(payload: CreatePaymentRequest, request: Request):
     if _limited(request):
@@ -93,8 +96,17 @@ def create_payment(payload: CreatePaymentRequest, request: Request):
         )
     try:
         email = validate_email(payload.email)
-        validate_plan(payload.plan)
         months = validate_months(payload.months)
+        mode = str(payload.mode or "new").strip().lower()
+        if mode not in {"new", "renew"}:
+            raise ValueError("invalid_mode")
+        if mode == "renew":
+            target_code = str(payload.code or "").strip()
+            if not target_code:
+                raise ValueError("renew_code_invalid")
+        else:
+            validate_plan(payload.plan)
+            target_code = ""
     except (TypeError, ValueError) as exc:
         return JSONResponse(
             status_code=400,
@@ -106,7 +118,21 @@ def create_payment(payload: CreatePaymentRequest, request: Request):
             content={"ok": False, "reason": "payment_not_configured"},
         )
 
-    order = create_payment_order(email, payload.plan, months)
+    try:
+        order = create_payment_order(
+            email,
+            payload.plan,
+            months,
+            mode=mode,
+            target_code=target_code,
+        )
+    except (TypeError, ValueError) as exc:
+        reason = "renew_code_invalid" if mode == "renew" else str(exc)
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "reason": reason},
+        )
+
     try:
         provider = create_yookassa_payment(order)
     except PaymentConfigurationError as exc:

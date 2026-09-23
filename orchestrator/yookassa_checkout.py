@@ -17,7 +17,12 @@ import httpx
 from cryptography.fernet import Fernet, InvalidToken
 
 from config import DATABASE_PATH, _shared_emery_value
-from storage import create_checkout_code, get_checkout_order
+from storage import (
+    create_checkout_code,
+    get_activation_code,
+    get_checkout_order,
+    renew_activation_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +140,19 @@ def validate_months(months: int) -> int:
     return value
 
 
+# SKRYON_RENEW_FULFILLMENT_V1
+def resolve_renewal_target(code: str) -> Dict[str, Any]:
+    row = get_activation_code(code)
+    if not row or str(row.get("status") or "").lower() == "banned":
+        raise ValueError("renew_code_invalid")
+    plan = str(row.get("plan") or "").strip()
+    selected = validate_plan(plan)
+    used_devices = int(row.get("used_devices") or 0)
+    if used_devices > int(selected["devices"]):
+        raise ValueError("renew_code_invalid")
+    return {"code": str(row["code"]), "plan": plan, "selected": selected}
+
+
 def amount_kopeks(plan: str, months: int) -> int:
     selected = validate_plan(plan)
     period = validate_months(months)
@@ -159,6 +177,8 @@ def ensure_payment_storage() -> None:
                 plan TEXT NOT NULL,
                 months INTEGER NOT NULL,
                 amount_kopeks INTEGER NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'new',
+                target_code TEXT NOT NULL DEFAULT '',
                 code TEXT,
                 idempotence_key TEXT NOT NULL UNIQUE,
                 consent_version TEXT NOT NULL,
@@ -177,6 +197,10 @@ def ensure_payment_storage() -> None:
         }
         if "fulfilled_at" not in columns:
             con.execute("ALTER TABLE payment_orders ADD COLUMN fulfilled_at TEXT")
+        if "mode" not in columns:
+            con.execute("ALTER TABLE payment_orders ADD COLUMN mode TEXT NOT NULL DEFAULT 'new'")
+        if "target_code" not in columns:
+            con.execute("ALTER TABLE payment_orders ADD COLUMN target_code TEXT NOT NULL DEFAULT ''")
         for row in con.execute(
             "SELECT order_id,email FROM payment_orders WHERE email<>''"
         ).fetchall():
@@ -197,11 +221,29 @@ def ensure_payment_storage() -> None:
         con.commit()
 
 
-def create_payment_order(email: str, plan: str, months: int) -> Dict[str, Any]:
+def create_payment_order(
+    email: str,
+    plan: str,
+    months: int,
+    mode: str = "new",
+    target_code: str = "",
+) -> Dict[str, Any]:
     ensure_payment_storage()
     safe_email = validate_email(email)
-    validate_plan(plan)
     period = validate_months(months)
+    safe_mode = str(mode or "new").strip().lower()
+    if safe_mode not in {"new", "renew"}:
+        raise ValueError("invalid_mode")
+
+    safe_target = ""
+    if safe_mode == "renew":
+        target = resolve_renewal_target(target_code)
+        safe_target = str(target["code"])
+        safe_plan = str(target["plan"])
+    else:
+        validate_plan(plan)
+        safe_plan = plan
+
     order_id = secrets.token_urlsafe(24)
     idempotence_key = secrets.token_hex(24)
     now = _now_iso()
@@ -210,15 +252,18 @@ def create_payment_order(email: str, plan: str, months: int) -> Dict[str, Any]:
             """
             INSERT INTO payment_orders(
                 order_id, status, email, plan, months, amount_kopeks,
-                idempotence_key, consent_version, consent_at, created_at
-            ) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+                mode, target_code, idempotence_key,
+                consent_version, consent_at, created_at
+            ) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 order_id,
                 _encrypt_email(safe_email),
-                plan,
+                safe_plan,
                 period,
-                amount_kopeks(plan, period),
+                amount_kopeks(safe_plan, period),
+                safe_mode,
+                safe_target,
                 idempotence_key,
                 CONSENT_VERSION,
                 now,
@@ -545,13 +590,29 @@ def sync_and_fulfill(order_id: str) -> Dict[str, Any]:
             raise KeyError("order_not_found")
         if not current.get("code"):
             selected = validate_plan(str(current["plan"]))
-            issued = create_checkout_code(
-                str(current["plan"]),
-                int(selected["devices"]),
-                30 * int(current["months"]),
-                "",
-                order_id,
-            )
+            mode = str(current.get("mode") or "new").strip().lower()
+            if mode == "renew":
+                target = resolve_renewal_target(str(current.get("target_code") or ""))
+                if str(target["plan"]) != str(current["plan"]):
+                    raise PaymentVerificationError("renew_plan_changed")
+                issued = renew_activation_code(
+                    str(target["code"]),
+                    str(current["plan"]),
+                    int(selected["devices"]),
+                    30 * int(current["months"]),
+                    "",
+                    order_id,
+                )
+                if not issued:
+                    raise PaymentVerificationError("renew_target_missing")
+            else:
+                issued = create_checkout_code(
+                    str(current["plan"]),
+                    int(selected["devices"]),
+                    30 * int(current["months"]),
+                    "",
+                    order_id,
+                )
             _update_order(
                 order_id,
                 status="succeeded",
@@ -565,6 +626,7 @@ def sync_and_fulfill(order_id: str) -> Dict[str, Any]:
                 status="succeeded",
                 paid_at=current.get("paid_at") or _now_iso(),
             )
+
 
     fulfilled = get_payment_order(order_id)
     if not fulfilled:

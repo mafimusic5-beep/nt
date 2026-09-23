@@ -41,8 +41,10 @@ class CodeLookupRequest(BaseModel):
     code: str = Field(min_length=3, max_length=64)
 
 
-class RenewCodeRequest(CheckoutRequest):
+class RenewCodeRequest(BaseModel):
     code: str = Field(min_length=3, max_length=64)
+    customer: str = Field(default='', max_length=128)
+    months: int = Field(default=1, ge=MIN_MONTHS, le=MAX_MONTHS)
 
 
 class CheckoutCallbackRequest(BaseModel):
@@ -132,13 +134,19 @@ def issue_code(plan: str, customer: str, external_id: Optional[str] = None, mont
     }
 
 
+# SKRYON_RENEW_SERVER_PLAN_V1
 def issue_renewal(code: str, plan: str, customer: str, months: int = 1, external_id: Optional[str] = None) -> dict:
-    selected = PLANS[plan]
+    # The client-supplied plan is intentionally ignored for renewals.
     current = get_activation_code(code)
     if not current:
         return {'ok': False, 'reason': 'not_found'}
     if current.get('status') == 'banned':
         return {'ok': False, 'reason': 'banned'}
+
+    effective_plan = str(current.get('plan') or '').strip()
+    selected = PLANS.get(effective_plan)
+    if not selected:
+        return {'ok': False, 'reason': 'invalid_current_plan'}
 
     used_devices = int(current.get('used_devices') or 0)
     if used_devices > selected['devices']:
@@ -151,14 +159,21 @@ def issue_renewal(code: str, plan: str, customer: str, months: int = 1, external
 
     selected_months = safe_months(months)
     days = selected['days'] * selected_months
-    order = renew_activation_code(code, plan, selected['devices'], days, customer.strip(), external_id)
+    order = renew_activation_code(
+        code,
+        effective_plan,
+        selected['devices'],
+        days,
+        customer.strip(),
+        external_id,
+    )
     if not order:
         return {'ok': False, 'reason': 'not_found'}
     return {
         'ok': True,
         'orderId': order['external_id'],
         'code': order['code'],
-        'plan': plan,
+        'plan': effective_plan,
         'planTitle': selected['title'],
         'months': selected_months,
         'days': days,
@@ -215,10 +230,8 @@ def get_code(
 def find_code(payload: CodeLookupRequest, request: Request):
     if limited('find-code:' + remote_bucket_key(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
-    row = get_activation_code(payload.code)
-    if not row:
-        return JSONResponse(status_code=404, content={'ok': False, 'reason': 'not_found'})
-    return public_code_row(row)
+    # Never disclose whether a supplied activation code exists.
+    return JSONResponse(status_code=404, content={'ok': False, 'reason': 'not_available'})
 
 
 @router.post('/api/checkout/renew-code')
@@ -231,9 +244,7 @@ def renew_code(
         return checkout_auth_error()
     if limited('renew-code:' + remote_bucket_key(request)):
         return JSONResponse(status_code=429, content={'ok': False, 'reason': 'too_many_attempts'})
-    if not plan_or_error(payload.plan):
-        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
-    result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months)
+    result = issue_renewal(payload.code, '', payload.customer, payload.months)
     if not result.get('ok'):
         return renewal_error_response(result)
     return result
@@ -245,15 +256,15 @@ def callback(payload: CheckoutCallbackRequest, x_checkout_secret: str = Header(d
         return checkout_auth_error()
     if payload.status != 'paid':
         return JSONResponse(status_code=400, content={'ok': False, 'reason': 'not_paid'})
-    if not plan_or_error(payload.plan):
-        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
     if payload.mode == 'renew':
         if not payload.code:
             return JSONResponse(status_code=400, content={'ok': False, 'reason': 'missing_code'})
-        result = issue_renewal(payload.code, payload.plan, payload.customer, payload.months, payload.externalId)
+        result = issue_renewal(payload.code, '', payload.customer, payload.months, payload.externalId)
         if not result.get('ok'):
             return renewal_error_response(result)
         return result
+    if not plan_or_error(payload.plan):
+        return JSONResponse(status_code=400, content={'ok': False, 'reason': 'bad_plan'})
     return issue_code(payload.plan, payload.customer, payload.externalId, payload.months)
 
 
