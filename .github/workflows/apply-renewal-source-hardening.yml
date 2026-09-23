@@ -1,0 +1,78 @@
+name: Apply renewal source hardening
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-renewal-source-hardening.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply surgical renewal patch
+        run: |
+          set -euo pipefail
+          python3 tools/apply_renewal_hardening.py
+          python3 -m py_compile \
+            orchestrator/checkout_routes.py \
+            orchestrator/payment_routes.py \
+            orchestrator/yookassa_checkout.py
+          python3 tools/apply_renewal_hardening.py
+          git diff --check
+
+      - name: Verify security invariants
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          checkout = Path('orchestrator/checkout_routes.py').read_text(encoding='utf-8')
+          payments = Path('orchestrator/payment_routes.py').read_text(encoding='utf-8')
+          yookassa = Path('orchestrator/yookassa_checkout.py').read_text(encoding='utf-8')
+
+          find = checkout.split("@router.post('/api/checkout/find-code')", 1)[1].split("@router.post('/api/checkout/renew-code')", 1)[0]
+          assert 'get_activation_code(' not in find
+          assert "reason': 'not_available'" in find
+
+          renew = checkout.split("def issue_renewal(", 1)[1].split('def renewal_error_response', 1)[0]
+          assert "effective_plan = str(current.get('plan')" in renew
+          assert 'renew_activation_code(' in renew
+
+          assert 'mode: str' in payments and 'code: str' in payments
+          assert 'mode=mode' in payments and 'target_code=target_code' in payments
+
+          assert 'mode TEXT NOT NULL' in yookassa
+          assert 'target_code TEXT NOT NULL' in yookassa
+          assert 'resolve_renewal_target(target_code)' in yookassa
+          assert 'issued = renew_activation_code(' in yookassa
+          assert 'renew_plan_changed' in yookassa
+          print('RENEWAL_SECURITY_INVARIANTS_OK')
+          PY
+
+      - name: Commit patched source
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- \
+            orchestrator/checkout_routes.py \
+            orchestrator/payment_routes.py \
+            orchestrator/yookassa_checkout.py; then
+            echo 'Source already hardened'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            orchestrator/checkout_routes.py \
+            orchestrator/payment_routes.py \
+            orchestrator/yookassa_checkout.py
+          git commit -m 'Lock renewal plan to existing activation code'
+          git push origin HEAD:main
