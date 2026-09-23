@@ -1,76 +1,93 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="robots" content="index,follow" />
-  <title>Автопродление Skryon — условия и отключение</title>
-  <meta name="description" content="Условия автопродления подписки Skryon, обработка платежных данных и отключение повторных списаний." />
-  <style>
-    :root { color-scheme: light; --bg:#f6f7f9; --card:#fff; --text:#111318; --muted:#646b75; --line:#e3e6ea; }
-    * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
-    main { width:min(920px,calc(100% - 32px)); margin:48px auto; background:var(--card); border:1px solid var(--line); border-radius:24px; padding:40px; box-shadow:0 12px 40px rgba(0,0,0,.05); }
-    h1 { margin:0 0 8px; font-size:34px; line-height:1.15; }
-    h2 { margin:34px 0 10px; font-size:21px; }
-    p, li { color:#252a31; }
-    .muted { color:var(--muted); }
-    .note { padding:16px 18px; border:1px solid var(--line); border-radius:16px; background:#fafbfc; }
-    a { color:inherit; text-decoration-thickness:1px; text-underline-offset:3px; }
-    ul { padding-left:22px; }
-    footer { margin-top:36px; padding-top:22px; border-top:1px solid var(--line); color:var(--muted); }
-    .note button { margin-top:6px; padding:11px 16px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--text); font:inherit; font-weight:600; cursor:pointer; }
-    .note button:disabled { cursor:default; opacity:.45; }
-    .status { margin-top:10px; color:var(--muted); }
-    @media (max-width:640px) { main { margin:16px auto; padding:24px 20px; border-radius:18px; } h1 { font-size:28px; } }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="index,follow">
+<title>Автопродление Skryon — условия и отключение</title>
+<meta name="description" content="Условия автопродления подписки Skryon, повторных платежей и отключения автопродления.">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:#fbfbf8;color:#111312;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.header{display:flex;justify-content:flex-end;padding:26px clamp(22px,5vw,70px)}
+.brand{color:#111312;text-decoration:none;font-size:20px;font-weight:600}
+main{width:min(850px,calc(100% - 44px));margin:80px auto 120px}
+.label{margin-bottom:24px;color:#858986;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase}
+h1{margin:0 0 50px;font-size:clamp(43px,7vw,76px);line-height:.98;letter-spacing:-.045em;font-weight:300}
+.text{max-width:720px}
+h2{margin:58px 0 20px;color:#111312;font-size:24px;line-height:1.25;letter-spacing:-.025em;font-weight:500}
+h3{margin:34px 0 14px;color:#111312;font-size:18px;line-height:1.35;font-weight:500}
+p{margin:0 0 24px;color:#505552;font-size:17px;line-height:1.75}
+ul{margin:0 0 28px;padding-left:20px;color:#505552;font-size:17px;line-height:1.75}
+li{margin:7px 0}
+strong{color:#111312;font-weight:600}
+a{color:#111312}
+.note{margin:38px 0;padding:24px 0;border-top:1px solid #d7dad8;border-bottom:1px solid #d7dad8}
+.note p{margin:0;color:#343936}
+.links{margin-top:60px;border-top:1px solid #d7dad8}
+.links a{display:flex;justify-content:space-between;align-items:center;padding:22px 0;border-bottom:1px solid #d7dad8;color:#111312;text-decoration:none;font-size:16px}
+.links a:after{content:"↗";color:#858986}
+.meta{margin-top:18px;color:#858986;font-size:14px;line-height:1.7}
+.manage{margin-top:38px;padding:24px 0;border-top:1px solid #d7dad8;border-bottom:1px solid #d7dad8}
+.manage h2{margin:0 0 20px}
+.manage button{width:100%;padding:18px 0;border:0;border-top:1px solid #111312;border-bottom:1px solid #111312;background:transparent;color:#111312;font:inherit;font-size:16px;font-weight:600;text-align:left;cursor:pointer}
+.manage button:after{content:"→";float:right;color:#858986}
+.manage button:disabled{cursor:default;opacity:.42}
+.status{margin-top:18px;color:#858986;font-size:14px;line-height:1.7}
+@media(max-width:720px){.header{padding:20px 22px}main{margin-top:55px;margin-bottom:80px}p,ul{font-size:16px}h2{margin-top:48px}}
+</style>
 </head>
 <body>
+<header class="header"><a class="brand" href="/">Skryon</a></header>
 <main>
-  <h1>Автопродление Skryon</h1>
-  <p class="muted">Редакция условий: 23 сентября 2026 года</p>
+<div class="label">Документы</div>
+<h1>Автопродление<br>подписки</h1>
+<div class="text">
+<p>Настоящие условия описывают подключение, проведение и отключение автоматического продления подписки Skryon.</p>
+<div class="meta">Редакция условий: 23 сентября 2026 года</div>
 
-  <p>Настоящие условия описывают подключение, проведение и отключение автоматического продления подписки Skryon.</p>
+<h2>1. Как подключается автопродление</h2>
+<p>Автопродление является дополнительной опцией и по умолчанию выключено. Оно подключается только тогда, когда пользователь самостоятельно отмечает соответствующую галочку при оплате и подтверждает условия повторных списаний.</p>
 
-  <h2>1. Как подключается</h2>
-  <p>Автопродление является дополнительной опцией и по умолчанию выключено. Оно подключается только когда пользователь самостоятельно отмечает соответствующую галочку при оплате и подтверждает условия повторных списаний.</p>
+<h2>2. Как проходят повторные платежи</h2>
+<ul>
+<li>платёжный способ сохраняется на стороне ЮKassa для последующих платежей;</li>
+<li>Skryon не получает и не хранит полный номер банковской карты, срок действия или CVC/CVV;</li>
+<li>Skryon хранит технический идентификатор сохранённого способа оплаты, параметры подписки и сведения о согласии;</li>
+<li>период автопродления совпадает с выбранным при подключении периодом: 1, 3, 6 или 12 месяцев;</li>
+<li>сумма повторного платежа фиксируется в момент подключения автопродления и не увеличивается автоматически без нового согласия пользователя;</li>
+<li>первая попытка повторного списания выполняется примерно за 24 часа до окончания оплаченного периода.</li>
+</ul>
 
-  <h2>2. Как проходят повторные платежи</h2>
-  <ul>
-    <li>платёжный способ сохраняется на стороне ЮKassa для последующих платежей;</li>
-    <li>Skryon не получает и не хранит полный номер банковской карты, срок действия или CVC/CVV;</li>
-    <li>Skryon хранит технический идентификатор сохранённого способа оплаты, параметры подписки и сведения о согласии;</li>
-    <li>период автопродления совпадает с выбранным при подключении периодом: 1, 3, 6 или 12 месяцев;</li>
-    <li>сумма повторного платежа фиксируется в момент подключения автопродления и не увеличивается автоматически без нового согласия пользователя;</li>
-    <li>первая попытка повторного списания выполняется примерно за 24 часа до окончания оплаченного периода.</li>
-  </ul>
+<h2>3. Если платёж не прошёл</h2>
+<p>Если ЮKassa отклонила повторный платёж, Skryon может выполнить до четырёх попыток с интервалом около 6 часов. Подписка продлевается только после подтверждённого успешного платежа. Если платежи не проходят, автопродление приостанавливается, а пользователь может оплатить подписку вручную.</p>
 
-  <h2>3. Если платёж не прошёл</h2>
-  <p>Если ЮKassa отклонила повторный платёж, Skryon может выполнить до четырёх попыток с интервалом около 6 часов. Подписка продлевается только после подтверждённого успешного платежа. Если платежи не проходят, автопродление приостанавливается, а пользователь может оплатить подписку вручную.</p>
+<h2>4. Отключение автопродления</h2>
+<p>Автопродление можно отключить в любой момент до следующего успешного списания. После отключения будущие автоматические списания прекращаются, а уже оплаченный период продолжает действовать до своего окончания.</p>
+<p>Для самостоятельного отключения используется персональная защищённая ссылка, отправленная на email после подключения. Также можно обратиться в поддержку: <a href="mailto:support@skryon.ru">support@skryon.ru</a>.</p>
 
-  <h2>4. Отключение</h2>
-  <p>Автопродление можно отключить в любой момент до следующего успешного списания. После отключения будущие автоматические списания прекращаются, а уже оплаченный период продолжает действовать до своего окончания.</p>
-  <p>Для самостоятельного отключения используется персональная защищённая ссылка, отправленная на email после подключения. Также можно обратиться в поддержку: <a href="mailto:support@skryon.ru">support@skryon.ru</a>.</p>
+<h2>5. Платёжные и персональные данные</h2>
+<p>Для работы автопродления могут обрабатываться email, технический идентификатор платёжного способа ЮKassa, выбранный тариф и период, сумма платежа, дата и версия согласия, идентификаторы и статусы платёжных операций.</p>
+<p>Полные реквизиты банковской карты обрабатываются платёжной инфраструктурой ЮKassa и не передаются Skryon в полном виде. После отключения автопродления сохранённый платёжный идентификатор больше не используется Skryon для новых автоматических списаний.</p>
 
-  <h2>5. Платёжные и персональные данные</h2>
-  <p>Для работы автопродления могут обрабатываться: email, технический идентификатор платёжного способа ЮKassa, выбранный тариф и период, сумма платежа, дата и версия согласия, идентификаторы и статусы платёжных операций. Эти данные используются для проведения платежей, управления подпиской, отправки уведомлений, предотвращения злоупотреблений и исполнения обязательных требований учёта.</p>
-  <p>Полные реквизиты банковской карты обрабатываются платёжной инфраструктурой ЮKassa и не передаются Skryon в полном виде. После отключения автопродления Skryon прекращает использование сохранённого платёжного идентификатора для новых списаний; сведения об уже проведённых операциях могут храниться в объёме и в течение сроков, необходимых для учёта, разрешения споров и соблюдения требований законодательства.</p>
+<h2>6. Согласие</h2>
+<p>Отмечая галочку автопродления, пользователь подтверждает, что ознакомился с этими условиями, разрешает сохранить платёжный способ на стороне ЮKassa и поручает Skryon инициировать повторные платежи на описанных выше условиях.</p>
 
-  <h2>6. Согласие</h2>
-  <p>Отмечая галочку автопродления, пользователь подтверждает, что ознакомился с этими условиями, разрешает сохранить платёжный способ на стороне ЮKassa и поручает Skryon инициировать повторные платежи на описанных выше условиях. Skryon фиксирует дату и версию такого согласия.</p>
+<div class="note"><p><strong>Важно:</strong> изменение периода, тарифа или суммы автопродления не применяется автоматически к уже подключённой подписке без нового согласия пользователя.</p></div>
 
-  <div class="note">
-    <p><strong>Важно:</strong> изменение периода, тарифа или суммы автопродления не применяется автоматически к уже подключённой подписке без нового согласия пользователя.</p>
-  </div>
+<div class="manage" id="manage">
+<h2>Отключить автопродление</h2>
+<p id="manageText">Откройте персональную ссылку из письма Skryon. VPN-код для отключения вводить не требуется.</p>
+<button id="disableBtn" type="button" disabled>Отключить автопродление</button>
+<div class="status" id="status" aria-live="polite"></div>
+</div>
 
-  <h2>7. Управление автопродлением</h2>
-  <div class="note" id="manage">
-    <p id="manageText">Откройте персональную ссылку из письма Skryon. VPN-код для отключения вводить не требуется.</p>
-    <button id="disableBtn" type="button" disabled>Отключить автопродление</button>
-    <div class="status" id="status" aria-live="polite"></div>
-  </div>
-
-  <footer>Контакт: <a href="mailto:support@skryon.ru">support@skryon.ru</a></footer>
+<div class="links">
+<a href="/privacy.html">Политика конфиденциальности</a>
+<a href="/offer.html">Публичная оферта</a>
+</div>
+<div class="meta">Контакт: <a href="mailto:support@skryon.ru">support@skryon.ru</a></div>
+</div>
 </main>
 <script>
 (() => {
@@ -94,7 +111,7 @@
         body: JSON.stringify({token})
       });
       if (!response.ok) throw new Error('request_failed');
-      status.textContent = 'Готово. Запрос на отключение принят. Будущие автоматические списания прекращены.';
+      status.textContent = 'Готово. Будущие автоматические списания прекращены.';
       history.replaceState(null, '', location.pathname);
     } catch (e) {
       button.disabled = false;
