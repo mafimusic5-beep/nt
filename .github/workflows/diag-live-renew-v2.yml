@@ -1,0 +1,43 @@
+name: Inspect live renewal backend shape v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diag-live-renew-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+      - name: Print only renewal-related live snippets
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          ssh -4 -p 8443 -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$user@31.70.76.155" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/nt/orchestrator
+          echo '=== storage imports ==='
+          grep -n -A8 -B2 '^from storage import' yookassa_checkout.py || true
+          echo '=== renewal validator ==='
+          grep -n -A35 -B3 '^def validate_renewal_target' yookassa_checkout.py || true
+          echo '=== create_payment_order ==='
+          grep -n -A70 -B3 '^def create_payment_order' yookassa_checkout.py || true
+          echo '=== fulfillment area ==='
+          grep -n -A90 -B12 'create_checkout_code' yookassa_checkout.py | tail -140 || true
+          echo '=== markers ==='
+          grep -n 'SKRYON_RENEW_' checkout_routes.py payment_routes.py yookassa_checkout.py || true
+          REMOTE
