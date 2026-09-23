@@ -1,0 +1,79 @@
+name: Enable YooKassa autorenew live v1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/enable-autorenew-live-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Enable autorenew feature flag safely
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host='31.70.76.155'
+          port='8443'
+          opts=(-4 -p "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+
+          ssh "${opts[@]}" "$user@$host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          backup="/root/skryon-autorenew-enable-$stamp"
+          mkdir -p "$backup"
+
+          for svc in skryon-api.service skryon-autorenew.service; do
+            drop="/etc/systemd/system/${svc}.d"
+            mkdir -p "$drop"
+            if [ -f "$drop/20-autorenew.conf" ]; then
+              cp -a "$drop/20-autorenew.conf" "$backup/${svc}.20-autorenew.conf"
+            fi
+            cat >"$drop/20-autorenew.conf" <<'EOF'
+          [Service]
+          Environment=YOOKASSA_AUTORENEW_ENABLED=1
+          EOF
+          done
+
+          systemctl daemon-reload
+          systemctl restart skryon-api.service
+          systemctl is-active --quiet skryon-api.service
+          systemctl is-active --quiet skryon-autorenew.timer
+
+          ready=''
+          for _ in $(seq 1 20); do
+            ready="$(curl -fsS http://127.0.0.1:8080/api/checkout/payment-ready 2>/dev/null || true)"
+            if printf '%s' "$ready" | grep -q '"autorenew":true'; then
+              break
+            fi
+            sleep 1
+          done
+          printf '%s\n' "$ready"
+          printf '%s' "$ready" | grep -q '"ok":true'
+          printf '%s' "$ready" | grep -q '"ready":true'
+          printf '%s' "$ready" | grep -q '"autorenew":true'
+
+          # Run worker once. It must succeed without creating a charge unless a subscription is due.
+          systemctl start skryon-autorenew.service
+          systemctl is-failed --quiet skryon-autorenew.service && exit 1 || true
+
+          echo "AUTORENEW_LIVE_ENABLED backup=$backup"
+          echo 'CHECKBOX_DEFAULT_REMAINS_CLIENT_SIDE_FALSE'
+          REMOTE
