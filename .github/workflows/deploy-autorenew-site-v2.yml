@@ -1,0 +1,62 @@
+name: Deploy checkout autorenew UI v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-autorenew-site-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Deploy site UI safely
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          site_host=''
+          site_port=''
+          seen=' '
+          for h in 157.22.206.113 "${VPS_HOST:-}"; do
+            [ -n "$h" ] || continue
+            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
+            for p in 22 8443 2022 2222 2200 22222 8022; do
+              key=" $h:$p "
+              [[ "$seen" != *"$key"* ]] || continue
+              seen+="$key"
+              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=7 -o StrictHostKeyChecking=accept-new "$user@$h" true >/dev/null 2>&1; then
+                site_host="$h"
+                site_port="$p"
+                break 2
+              fi
+            done
+          done
+          [ -n "$site_host" ] || { echo 'Site VPS did not accept deploy key'; exit 1; }
+          echo "Site endpoint: $site_host:$site_port"
+
+          ssh -4 -p "$site_port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$user@$site_host" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/mafimusic5-beep/nt/main/tools/install_autorenew_site_v1.sh -o /tmp/install_autorenew_site_v1.sh
+          bash /tmp/install_autorenew_site_v1.sh
+          echo '=== VERIFY ==='
+          grep -nE 'SKRYON_AUTORENEW_UI_V2|sk-email-label-v2|Автопродление подписки' /var/www/skryon.ru/html/checkout.html | head -20
+          echo '=== OLD LOOKUP ==='
+          grep -n '/api/checkout/find-code' /var/www/skryon.ru/html/checkout.html && exit 82 || echo 'OLD_LOOKUP_NOT_FOUND'
+          REMOTE
