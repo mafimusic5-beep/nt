@@ -1,0 +1,206 @@
+name: Deploy YooKassa autorenew v1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-autorenew-v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure backend SSH key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Deploy autorenew safely
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host=31.70.76.155
+          port=8443
+          opts=(-4 -p "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+          scpopts=(-4 -P "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+
+          ssh "${opts[@]}" "$user@$host" true
+          scp "${scpopts[@]}" \
+            orchestrator/autorenew.py \
+            orchestrator/autorenew_worker.py \
+            tools/apply_autorenew_v1.py \
+            "$user@$host:/tmp/"
+
+          ssh "${opts[@]}" "$user@$host" 'bash -s' <<'REMOTE'
+          set -Eeuo pipefail
+          live=/opt/nt/orchestrator
+          venv="$live/.venv/bin/python"
+          stage=$(mktemp -d /tmp/skryon-autorenew-stage.XXXXXX)
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          backup="/root/skryon-autorenew-v1-$stamp"
+          applied=0
+
+          cleanup() {
+            rm -rf "$stage"
+            rm -f /tmp/autorenew.py /tmp/autorenew_worker.py /tmp/apply_autorenew_v1.py
+          }
+          rollback() {
+            rc=$?
+            trap - ERR
+            if [[ "$applied" == 1 ]]; then
+              echo "ROLLBACK: restoring autorenew backend from $backup" >&2
+              cp -a "$backup/payment_routes.py" "$live/payment_routes.py"
+              cp -a "$backup/yookassa_checkout.py" "$live/yookassa_checkout.py"
+              if [[ -f "$backup/autorenew.py" ]]; then cp -a "$backup/autorenew.py" "$live/autorenew.py"; else rm -f "$live/autorenew.py"; fi
+              if [[ -f "$backup/autorenew_worker.py" ]]; then cp -a "$backup/autorenew_worker.py" "$live/autorenew_worker.py"; else rm -f "$live/autorenew_worker.py"; fi
+              if [[ -f "$backup/skryon.db" ]]; then cp -a "$backup/skryon.db" "$live/skryon.db"; fi
+              if [[ -f "$backup/skryon-autorenew.service" ]]; then
+                cp -a "$backup/skryon-autorenew.service" /etc/systemd/system/skryon-autorenew.service
+              else
+                rm -f /etc/systemd/system/skryon-autorenew.service
+              fi
+              if [[ -f "$backup/skryon-autorenew.timer" ]]; then
+                cp -a "$backup/skryon-autorenew.timer" /etc/systemd/system/skryon-autorenew.timer
+              else
+                rm -f /etc/systemd/system/skryon-autorenew.timer
+              fi
+              systemctl daemon-reload || true
+              systemctl disable --now skryon-autorenew.timer 2>/dev/null || true
+              systemctl restart skryon-api.service || true
+            fi
+            cleanup
+            exit "$rc"
+          }
+          trap rollback ERR
+          trap cleanup EXIT
+
+          test -f "$live/payment_routes.py"
+          test -f "$live/yookassa_checkout.py"
+          test -x "$venv"
+          mkdir -p "$stage" "$backup"
+
+          cp -a "$live/payment_routes.py" "$stage/payment_routes.py"
+          cp -a "$live/yookassa_checkout.py" "$stage/yookassa_checkout.py"
+          cp /tmp/autorenew.py "$stage/autorenew.py"
+          cp /tmp/autorenew_worker.py "$stage/autorenew_worker.py"
+          cp /tmp/apply_autorenew_v1.py "$stage/apply_autorenew_v1.py"
+
+          before_methods=$(grep -c 'paymentMethod' "$live/payment_routes.py" || true)
+          python3 "$stage/apply_autorenew_v1.py" "$stage"
+          python3 -m py_compile \
+            "$stage/payment_routes.py" \
+            "$stage/yookassa_checkout.py" \
+            "$stage/autorenew.py" \
+            "$stage/autorenew_worker.py"
+          after_methods=$(grep -c 'paymentMethod' "$stage/payment_routes.py" || true)
+          [[ "$before_methods" == "$after_methods" ]]
+
+          cp -a "$live/payment_routes.py" "$backup/payment_routes.py"
+          cp -a "$live/yookassa_checkout.py" "$backup/yookassa_checkout.py"
+          [[ -f "$live/autorenew.py" ]] && cp -a "$live/autorenew.py" "$backup/autorenew.py" || true
+          [[ -f "$live/autorenew_worker.py" ]] && cp -a "$live/autorenew_worker.py" "$backup/autorenew_worker.py" || true
+          [[ -f /etc/systemd/system/skryon-autorenew.service ]] && cp -a /etc/systemd/system/skryon-autorenew.service "$backup/skryon-autorenew.service" || true
+          [[ -f /etc/systemd/system/skryon-autorenew.timer ]] && cp -a /etc/systemd/system/skryon-autorenew.timer "$backup/skryon-autorenew.timer" || true
+          if [[ -f "$live/skryon.db" ]]; then
+            "$venv" - "$live/skryon.db" "$backup/skryon.db" <<'PY'
+          import sqlite3, sys
+          src = sqlite3.connect(sys.argv[1])
+          dst = sqlite3.connect(sys.argv[2])
+          src.backup(dst)
+          dst.close(); src.close()
+          print('DB_BACKUP_OK')
+          PY
+          fi
+
+          cp "$stage/payment_routes.py" "$live/payment_routes.py"
+          cp "$stage/yookassa_checkout.py" "$live/yookassa_checkout.py"
+          cp "$stage/autorenew.py" "$live/autorenew.py"
+          cp "$stage/autorenew_worker.py" "$live/autorenew_worker.py"
+          chmod 0644 "$live/autorenew.py" "$live/autorenew_worker.py"
+          applied=1
+
+          cat >/etc/systemd/system/skryon-autorenew.service <<'UNIT'
+          [Unit]
+          Description=Skryon YooKassa autorenew worker
+          After=network-online.target skryon-api.service
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          User=root
+          WorkingDirectory=/opt/nt/orchestrator
+          ExecStart=/opt/nt/orchestrator/.venv/bin/python /opt/nt/orchestrator/autorenew_worker.py
+          Nice=10
+          UNIT
+
+          cat >/etc/systemd/system/skryon-autorenew.timer <<'UNIT'
+          [Unit]
+          Description=Run Skryon autorenew worker hourly
+
+          [Timer]
+          OnBootSec=10min
+          OnUnitActiveSec=1h
+          RandomizedDelaySec=5min
+          Persistent=true
+          Unit=skryon-autorenew.service
+
+          [Install]
+          WantedBy=timers.target
+          UNIT
+
+          cd "$live"
+          "$venv" -m py_compile payment_routes.py yookassa_checkout.py autorenew.py autorenew_worker.py
+          "$venv" -c "from autorenew import ensure_autorenew_storage; ensure_autorenew_storage(); print('AUTORENEW_SCHEMA_OK')"
+
+          systemctl daemon-reload
+          systemctl enable --now skryon-autorenew.timer
+          systemctl restart skryon-api.service
+          systemctl is-active --quiet skryon-api.service
+          systemctl is-active --quiet skryon-autorenew.timer
+
+          ready=0
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/api/checkout/payment-ready >/tmp/skryon-payment-ready.json 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [[ "$ready" == 1 ]]
+
+          echo '=== payment-ready ==='
+          cat /tmp/skryon-payment-ready.json
+          echo
+          grep -q '"autorenew"' /tmp/skryon-payment-ready.json
+
+          echo '=== generic disable invalid token ==='
+          disable=$(curl -fsS -X POST http://127.0.0.1:8080/api/checkout/autorenew/disable \
+            -H 'Content-Type: application/json' \
+            --data '{"token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}')
+          echo "$disable"
+          [[ "$disable" == *'"ok":true'* ]]
+
+          echo '=== worker dry run / feature gate ==='
+          "$venv" autorenew_worker.py
+
+          grep -q 'SKRYON_AUTORENEW_ROUTES_V1' payment_routes.py
+          grep -q 'SKRYON_AUTORENEW_YOOKASSA_V1' yookassa_checkout.py
+          grep -q 'save_payment_method' yookassa_checkout.py
+
+          echo "BACKEND_AUTORENEW_V1_OK backup=$backup"
+          applied=0
+          REMOTE
