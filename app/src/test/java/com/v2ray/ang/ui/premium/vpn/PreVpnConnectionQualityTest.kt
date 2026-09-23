@@ -49,7 +49,7 @@ class PreVpnConnectionQualityTest {
             classifyPreVpnConnection(
                 snapshot(
                     isValidated = false,
-                    downstreamBandwidthKbps = 5_790,
+                    downstreamBandwidthKbps = 12_000,
                 ),
             ),
         )
@@ -64,34 +64,32 @@ class PreVpnConnectionQualityTest {
     }
 
     @Test
-    fun `reported bandwidth below half a megabit marks the connection critical`() {
+    fun `bandwidth below one megabyte per second marks the connection critical`() {
         assertEquals(
             PreVpnConnectionQuality.Critical,
             classifyPreVpnConnection(
                 snapshot(
-                    downstreamBandwidthKbps = 499,
+                    downstreamBandwidthKbps = 7_999,
                 ),
             ),
         )
     }
 
     @Test
-    fun `half a megabit triggers a critical warning`() {
-        assertEquals(
-            PreVpnConnectionQuality.Critical,
-            classifyPreVpnConnection(
-                snapshot(
-                    downstreamBandwidthKbps = 500,
-                ),
-            ),
-        )
-    }
-
-    @Test
-    fun `bandwidth above half a megabit does not trigger a critical warning`() {
+    fun `exactly one megabyte per second does not warn`() {
         val quality = classifyPreVpnConnection(
             snapshot(
-                downstreamBandwidthKbps = 501,
+                downstreamBandwidthKbps = 8_000,
+            ),
+        )
+        assertFalse(quality.shouldWarn)
+    }
+
+    @Test
+    fun `bandwidth above one megabyte per second does not warn`() {
+        val quality = classifyPreVpnConnection(
+            snapshot(
+                downstreamBandwidthKbps = 8_001,
             ),
         )
         assertFalse(quality.shouldWarn)
@@ -103,13 +101,13 @@ class PreVpnConnectionQualityTest {
     }
 
     @Test
-    fun `bandwidth below half a megabit warns independently of Android validation`() {
+    fun `bandwidth below one megabyte per second warns independently of Android validation`() {
         assertEquals(
             PreVpnConnectionQuality.Critical,
             classifyPreVpnConnection(
                 snapshot(
                     isValidated = false,
-                    downstreamBandwidthKbps = 499,
+                    downstreamBandwidthKbps = 7_999,
                 ),
             ),
         )
