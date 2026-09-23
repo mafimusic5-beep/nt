@@ -1,0 +1,41 @@
+name: Inspect renewal resolver and fulfillment v3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diag-live-renew-v3.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+      - name: Inspect targeted live ranges
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          ssh -4 -p 8443 -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$user@31.70.76.155" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/nt/orchestrator
+          echo '=== yookassa 130-170 ==='
+          sed -n '130,170p' yookassa_checkout.py
+          echo '=== yookassa 615-662 ==='
+          sed -n '615,662p' yookassa_checkout.py
+          echo '=== payment 1-150 ==='
+          sed -n '1,150p' payment_routes.py
+          echo '=== checkout renewal routes ==='
+          grep -n -A45 -B3 "api/checkout/find-code" checkout_routes.py || true
+          REMOTE
