@@ -19,11 +19,9 @@
     a { color:inherit; text-decoration-thickness:1px; text-underline-offset:3px; }
     ul { padding-left:22px; }
     footer { margin-top:36px; padding-top:22px; border-top:1px solid var(--line); color:var(--muted); }
-    .manage { margin-top:34px; padding:20px; border:1px solid var(--line); border-radius:16px; background:#fafbfc; }
-    .manage h2 { margin-top:0; }
-    .manage button { width:100%; margin-top:6px; padding:13px 16px; border:1px solid #111318; border-radius:12px; background:#111318; color:#fff; font:inherit; font-weight:650; cursor:pointer; }
-    .manage button:disabled { cursor:default; opacity:.45; }
-    .status { margin-top:12px; color:var(--muted); }
+    .note button { margin-top:6px; padding:11px 16px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--text); font:inherit; font-weight:600; cursor:pointer; }
+    .note button:disabled { cursor:default; opacity:.45; }
+    .status { margin-top:10px; color:var(--muted); }
     @media (max-width:640px) { main { margin:16px auto; padding:24px 20px; border-radius:18px; } h1 { font-size:28px; } }
   </style>
 </head>
@@ -65,8 +63,8 @@
     <p><strong>Важно:</strong> изменение периода, тарифа или суммы автопродления не применяется автоматически к уже подключённой подписке без нового согласия пользователя.</p>
   </div>
 
-  <div class="manage" id="manage">
-    <h2>Отключить автопродление</h2>
+  <h2>7. Управление автопродлением</h2>
+  <div class="note" id="manage">
     <p id="manageText">Откройте персональную ссылку из письма Skryon. VPN-код для отключения вводить не требуется.</p>
     <button id="disableBtn" type="button" disabled>Отключить автопродление</button>
     <div class="status" id="status" aria-live="polite"></div>
