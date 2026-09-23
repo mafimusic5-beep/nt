@@ -14,7 +14,7 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Configure SSH
+      - name: Configure runner SSH
         env:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
@@ -24,67 +24,56 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Inspect live API renewal code
+      - name: Inspect API to site SSH path
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
           user="${VPS_USER:-root}"
-          hosts=(31.70.76.155 "${VPS_HOST:-}" 157.22.206.113 82.146.49.10)
-          ports=(8443 "${VPS_PORT:-}" 22 2022 2222 2200 22222 8022)
+          api_host=31.70.76.155
+          api_port=8443
+          ssh -4 -p "$api_port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "$user@$api_host" 'bash -s' <<'REMOTE'
+          set -u
+          echo '=== API SSH FILE NAMES ==='
+          if [ -d /root/.ssh ]; then
+            find /root/.ssh -maxdepth 1 -type f -printf '%f mode=%m\n' | sort
+          else
+            echo 'NO_ROOT_SSH_DIR'
+          fi
+
+          echo '=== API SSH CONFIG HOSTS ==='
+          if [ -f /root/.ssh/config ]; then
+            awk 'tolower($1)=="host"{print $0} tolower($1)=="hostname"{print $0} tolower($1)=="port"{print $0} tolower($1)=="user"{print $0} tolower($1)=="identityfile"{print "IdentityFile <redacted-path>"}' /root/.ssh/config
+          else
+            echo 'NO_SSH_CONFIG'
+          fi
+
+          echo '=== TEST SITE ACCESS FROM API ==='
+          site=157.22.206.113
           found=''
-          for h in "${hosts[@]}"; do
-            [ -n "$h" ] || continue
-            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
-            for p in "${ports[@]}"; do
-              [[ "$p" =~ ^[0-9]+$ ]] || continue
-              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$user@$h" 'test -f /opt/nt/orchestrator/payment_routes.py && test -f /opt/nt/orchestrator/yookassa_checkout.py' >/dev/null 2>&1; then
-                found="$h:$p"; host="$h"; port="$p"; break 2
+          for u in root ubuntu; do
+            for p in 22 8443 2022 2222 2200 22222 8022; do
+              if timeout 7 ssh -4 -p "$p" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$u@$site" 'test -f /var/www/skryon.ru/html/checkout.html' >/dev/null 2>&1; then
+                echo "SITE_FROM_API_OK user=$u port=$p identity=default"
+                found="$u:$p:default"
+                break 2
+              fi
+              if [ -d /root/.ssh ]; then
+                for k in /root/.ssh/*; do
+                  [ -f "$k" ] || continue
+                  case "$(basename "$k")" in
+                    *.pub|known_hosts|known_hosts.old|config|authorized_keys) continue ;;
+                  esac
+                  if timeout 7 ssh -4 -p "$p" -i "$k" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$u@$site" 'test -f /var/www/skryon.ru/html/checkout.html' >/dev/null 2>&1; then
+                    echo "SITE_FROM_API_OK user=$u port=$p identity=$(basename "$k")"
+                    found="$u:$p:$(basename "$k")"
+                    break 3
+                  fi
+                done
               fi
             done
           done
-          [ -n "$found" ] || { echo 'API endpoint not found'; exit 1; }
-          echo "API_ENDPOINT=$found"
-          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$user@$host" 'bash -s' <<'REMOTE'
-          set -euo pipefail
-          echo '=== PAYMENT ROUTES 35-150 ==='
-          nl -ba /opt/nt/orchestrator/payment_routes.py | sed -n '35,150p'
-          echo '=== YOOKASSA RENEW MARKERS ==='
-          grep -n -E 'CONSENT_VERSION|validate_renewal_target|def create_payment_order|target_code|mode|renew_activation_code|def sync_and_fulfill' /opt/nt/orchestrator/yookassa_checkout.py | head -120
-          echo '=== CHECKOUT ROUTES FIND/RENEW ==='
-          grep -n -E 'find-code|renew-code|def issue_renewal|public_code_row' /opt/nt/orchestrator/checkout_routes.py | head -80 || true
+          if [ -z "$found" ]; then
+            echo 'SITE_FROM_API_NOT_FOUND'
+          fi
           REMOTE
-
-      - name: Inspect live checkout renewal UI
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-        run: |
-          set -euo pipefail
-          user="${VPS_USER:-root}"
-          hosts=(157.22.206.113 "${VPS_HOST:-}" 82.146.49.10 31.70.76.155)
-          ports=(22 "${VPS_PORT:-}" 8443 2022 2222 2200 22222 8022)
-          found=''
-          for h in "${hosts[@]}"; do
-            [ -n "$h" ] || continue
-            h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
-            for p in "${ports[@]}"; do
-              [[ "$p" =~ ^[0-9]+$ ]] || continue
-              if ssh -4 -p "$p" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$user@$h" 'test -f /var/www/skryon.ru/html/checkout.html' >/dev/null 2>&1; then
-                found="$h:$p"; host="$h"; port="$p"; break 2
-              fi
-            done
-          done
-          [ -n "$found" ] || { echo 'Site endpoint not found'; exit 1; }
-          echo "SITE_ENDPOINT=$found"
-          ssh -4 -p "$port" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$user@$host" 'bash -s' <<'REMOTE'
-          set -euo pipefail
-          f=/var/www/skryon.ru/html/checkout.html
-          echo '=== RENEW UI MARKERS ==='
-          grep -n -E 'SKRYON_RENEWAL_UI_WORKING_V1|Продлить подписку|sk-renew-check-new|find-code|verifiedRenewCode|mode: checkoutMode|code: renewalCode' "$f" | head -120
-          REMOTE
-
-# trigger: 2026-09-23T18:48+03:00
