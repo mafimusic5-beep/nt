@@ -1,86 +1,86 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re
 import shutil
 import sys
 from datetime import datetime, timezone
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else "/var/www/skryon.ru/html")
-marker = "SKRYON_AUTORENEW_PRIVACY_V1"
+stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-patterns = (
-    "privacy*.html",
-    "policy*.html",
-    "politic*.html",
-    "confidential*.html",
-    "personal-data*.html",
-    "personal_data*.html",
-)
+PRIVACY_MARKER = "SKRYON_AUTORENEW_PRIVACY_V2"
+OFFER_MARKER = "SKRYON_AUTORENEW_OFFER_V2"
 
-candidates = []
-for pattern in patterns:
-    candidates.extend(root.glob(pattern))
+privacy = root / "privacy.html"
+offer = root / "offer.html"
 
-# Also inspect small HTML files whose visible title clearly says this is a privacy policy.
-for path in root.glob("*.html"):
-    if path in candidates:
-        continue
-    try:
-        if path.stat().st_size > 500_000:
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        continue
-    head = text[:15_000].lower()
-    if "политика конфиденциальности" in head or "обработк" in head and "персональн" in head:
-        candidates.append(path)
+for path in (privacy, offer):
+    if not path.is_file():
+        raise SystemExit(f"required legal page missing: {path}; nothing changed")
 
-unique = []
-seen = set()
-for path in candidates:
-    resolved = str(path.resolve())
-    if resolved not in seen and path.is_file():
-        unique.append(path)
-        seen.add(resolved)
-
-if not unique:
-    print("NO_EXISTING_PRIVACY_FILE: dedicated /autorenewal terms will be used")
-    raise SystemExit(0)
-if len(unique) > 1:
-    print("MULTIPLE_PRIVACY_FILES_SKIP:")
-    for path in unique:
-        print(path)
-    raise SystemExit(0)
-
-path = unique[0]
-s = path.read_text(encoding="utf-8")
-if marker in s:
-    print(f"AUTORENEW_PRIVACY_ALREADY_PATCHED file={path}")
-    raise SystemExit(0)
-
-section = f'''
-<section id="autorenew-privacy" data-skryon-marker="{marker}">
+privacy_section = f'''
+<section id="autorenew-privacy" data-skryon-marker="{PRIVACY_MARKER}">
   <h2>Автопродление и платежные данные</h2>
-  <p>Автопродление является дополнительной опцией и подключается только по явному выбору пользователя. Для проведения повторных платежей могут обрабатываться адрес электронной почты, технический идентификатор сохраненного способа оплаты ЮKassa, тариф, период, сумма платежа, дата и версия согласия, а также идентификаторы и статусы платежных операций.</p>
-  <p>Полные реквизиты банковской карты, включая полный номер карты и CVC/CVV, обрабатываются платежной инфраструктурой ЮKassa и не хранятся Skryon. Технический идентификатор способа оплаты используется исключительно для инициирования согласованных повторных платежей и управления автопродлением.</p>
-  <p>Пользователь может отключить автопродление до следующего успешного списания через персональную ссылку управления или обратившись в поддержку. После отключения технический идентификатор перестает использоваться для новых автоматических списаний. Сведения о совершенных платежах и согласии могут храниться в объеме и в течение сроков, необходимых для учета, разрешения споров и соблюдения обязательных требований.</p>
+  <p>Автопродление является дополнительной опцией и подключается только по явному выбору пользователя. Для работы автопродления могут обрабатываться адрес электронной почты, технический идентификатор сохраненного способа оплаты ЮKassa, выбранный тариф и период, сумма платежа, дата и версия согласия, а также идентификаторы и статусы платежных операций.</p>
+  <p>Полные реквизиты банковской карты, включая полный номер карты и CVC/CVV, обрабатываются платежной инфраструктурой ЮKassa и не хранятся Skryon. Skryon использует технический идентификатор сохраненного способа оплаты для инициирования согласованных повторных платежей и управления автопродлением.</p>
+  <p>Пользователь может отключить автопродление до следующего успешного списания через персональную защищенную ссылку управления либо обратившись в поддержку. После отключения сохраненный платежный идентификатор не используется Skryon для новых автоматических списаний. Сведения об уже проведенных платежах и зафиксированном согласии могут сохраняться в объеме и в течение сроков, необходимых для учета, разрешения споров и исполнения обязательных требований.</p>
   <p><a href="/autorenewal">Условия автопродления Skryon</a>.</p>
 </section>
 '''
 
-stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-backup = path.with_name(path.name + f".bak-autorenew-privacy-{stamp}")
-shutil.copy2(path, backup)
+offer_section = f'''
+<section id="autorenew-offer" data-skryon-marker="{OFFER_MARKER}">
+  <h2>Автоматическое продление подписки</h2>
+  <p>Автопродление не подключается автоматически. Пользователь подключает его отдельно, отмечая соответствующую галочку при оплате и подтверждая условия повторных списаний.</p>
+  <p>При подключении автопродления платежный способ сохраняется на стороне ЮKassa. Период следующего продления соответствует периоду, выбранному при подключении автопродления: 1, 3, 6 или 12 месяцев. Сумма повторного платежа фиксируется в момент подключения автопродления и не увеличивается автоматически без нового согласия пользователя.</p>
+  <p>Первая попытка повторного списания может выполняться примерно за 24 часа до окончания оплаченного периода. Если платеж отклонен, Skryon может выполнить до четырех повторных попыток с интервалом около 6 часов. Подписка продлевается только после подтвержденного успешного платежа.</p>
+  <p>Пользователь вправе отключить автопродление в любой момент до следующего успешного списания через персональную защищенную ссылку управления или через поддержку. Отключение автопродления не прекращает уже оплаченный период подписки.</p>
+  <p>Подробные условия: <a href="/autorenewal">Автопродление Skryon</a>.</p>
+</section>
+'''
 
-if "</main>" in s:
-    s = s.replace("</main>", section + "\n</main>", 1)
-elif "</body>" in s:
-    s = s.replace("</body>", section + "\n</body>", 1)
-else:
-    raise SystemExit(f"privacy page has no safe insertion anchor; backup={backup}; nothing written")
 
-if marker not in s or "/autorenewal" not in s:
-    raise SystemExit(f"privacy validation failed; backup={backup}; nothing written")
+def prepare(path: Path, marker: str, section: str):
+    source = path.read_text(encoding="utf-8")
+    if marker in source:
+        return source, False
+    if "</main>" in source:
+        updated = source.replace("</main>", section + "\n</main>", 1)
+    elif "</body>" in source:
+        updated = source.replace("</body>", section + "\n</body>", 1)
+    else:
+        raise SystemExit(f"safe insertion anchor missing in {path}; nothing changed")
+    if marker not in updated or "/autorenewal" not in updated:
+        raise SystemExit(f"validation failed for {path}; nothing changed")
+    return updated, True
 
-path.write_text(s, encoding="utf-8")
-print(f"AUTORENEW_PRIVACY_PATCH_OK file={path} backup={backup}")
+privacy_new, privacy_change = prepare(privacy, PRIVACY_MARKER, privacy_section)
+offer_new, offer_change = prepare(offer, OFFER_MARKER, offer_section)
+
+if not privacy_change and not offer_change:
+    print("AUTORENEW_LEGAL_ALREADY_PATCHED")
+    raise SystemExit(0)
+
+backups = {}
+try:
+    for path, changed in ((privacy, privacy_change), (offer, offer_change)):
+        if not changed:
+            continue
+        backup = path.with_name(path.name + f".bak-autorenew-legal-{stamp}")
+        shutil.copy2(path, backup)
+        backups[path] = backup
+
+    if privacy_change:
+        privacy.write_text(privacy_new, encoding="utf-8")
+    if offer_change:
+        offer.write_text(offer_new, encoding="utf-8")
+except Exception:
+    for path, backup in backups.items():
+        try:
+            shutil.copy2(backup, path)
+        except Exception:
+            pass
+    raise
+
+print(f"AUTORENEW_LEGAL_V2_OK privacy={privacy} offer={offer}")
+for path, backup in backups.items():
+    print(f"BACKUP {path.name}={backup}")
