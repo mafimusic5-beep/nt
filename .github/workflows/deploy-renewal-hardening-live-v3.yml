@@ -1,0 +1,135 @@
+name: Deploy renewal hardening live v3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-renewal-hardening-live-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patch source
+        uses: actions/checkout@v4
+
+      - name: Configure backend SSH key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Patch live backend safely
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          user="${VPS_USER:-root}"
+          host=31.70.76.155
+          port=8443
+          opts=(-4 -p "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+          scpopts=(-4 -P "$port" -i ~/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+
+          ssh "${opts[@]}" "$user@$host" true
+          scp "${scpopts[@]}" tools/apply_renewal_hardening.py tools/apply_live_renewal_v2_compat.py "$user@$host:/tmp/"
+
+          ssh "${opts[@]}" "$user@$host" 'bash -s' <<'REMOTE'
+          set -Eeuo pipefail
+          live=/opt/nt/orchestrator
+          venv="$live/.venv/bin/python"
+          stage=$(mktemp -d /tmp/skryon-renew-v3-stage.XXXXXX)
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          backup="/root/skryon-renew-v3-$stamp"
+          applied=0
+
+          cleanup() {
+            rm -rf "$stage"
+            rm -f /tmp/apply_renewal_hardening.py /tmp/apply_live_renewal_v2_compat.py
+          }
+          rollback() {
+            rc=$?
+            trap - ERR
+            if [[ "$applied" == 1 ]]; then
+              echo "ROLLBACK: restoring backend files from $backup" >&2
+              cp -a "$backup/checkout_routes.py" "$live/checkout_routes.py"
+              cp -a "$backup/payment_routes.py" "$live/payment_routes.py"
+              cp -a "$backup/yookassa_checkout.py" "$live/yookassa_checkout.py"
+              systemctl restart skryon-api.service || true
+            fi
+            cleanup
+            exit "$rc"
+          }
+          trap rollback ERR
+          trap cleanup EXIT
+
+          test -f "$live/checkout_routes.py"
+          test -f "$live/payment_routes.py"
+          test -f "$live/yookassa_checkout.py"
+          test -x "$venv"
+
+          mkdir -p "$stage/orchestrator" "$stage/tools" "$backup"
+          cp -a "$live/checkout_routes.py" "$stage/orchestrator/checkout_routes.py"
+          cp -a "$live/payment_routes.py" "$stage/orchestrator/payment_routes.py"
+          cp -a "$live/yookassa_checkout.py" "$stage/orchestrator/yookassa_checkout.py"
+          cp /tmp/apply_renewal_hardening.py "$stage/tools/apply_renewal_hardening.py"
+          cp /tmp/apply_live_renewal_v2_compat.py "$stage/tools/apply_live_renewal_v2_compat.py"
+
+          python3 "$stage/tools/apply_live_renewal_v2_compat.py"
+          python3 -m py_compile \
+            "$stage/orchestrator/checkout_routes.py" \
+            "$stage/orchestrator/payment_routes.py" \
+            "$stage/orchestrator/yookassa_checkout.py"
+
+          cp -a "$live/checkout_routes.py" "$backup/checkout_routes.py"
+          cp -a "$live/payment_routes.py" "$backup/payment_routes.py"
+          cp -a "$live/yookassa_checkout.py" "$backup/yookassa_checkout.py"
+          if [[ -f "$live/skryon.db" ]]; then
+            "$venv" - "$live/skryon.db" "$backup/skryon.db" <<'PY'
+          import sqlite3, sys
+          src = sqlite3.connect(sys.argv[1])
+          dst = sqlite3.connect(sys.argv[2])
+          src.backup(dst)
+          dst.close(); src.close()
+          print('DB_BACKUP_OK')
+          PY
+          fi
+
+          cp "$stage/orchestrator/checkout_routes.py" "$live/checkout_routes.py"
+          cp "$stage/orchestrator/payment_routes.py" "$live/payment_routes.py"
+          cp "$stage/orchestrator/yookassa_checkout.py" "$live/yookassa_checkout.py"
+          applied=1
+
+          cd "$live"
+          "$venv" -m py_compile checkout_routes.py payment_routes.py yookassa_checkout.py
+          "$venv" -c "from yookassa_checkout import ensure_payment_storage; ensure_payment_storage(); print('PAYMENT_SCHEMA_OK')"
+
+          systemctl restart skryon-api.service
+          systemctl is-active --quiet skryon-api.service
+
+          echo '=== payment-ready ==='
+          curl -fsS http://127.0.0.1:8080/api/checkout/payment-ready
+          echo
+
+          echo '=== public lookup fake-code ==='
+          curl -sS -X POST http://127.0.0.1:8080/api/checkout/find-code \
+            -H 'Content-Type: application/json' \
+            --data '{"code":"SKRYON-DEFINITELY-NOT-REAL"}'
+          echo
+
+          echo '=== renewal without plan fake-code ==='
+          curl -sS -X POST http://127.0.0.1:8080/api/checkout/payment \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"test@example.com","months":1,"personalDataConsent":true,"mode":"renew","code":"SKRYON-DEFINITELY-NOT-REAL"}'
+          echo
+
+          echo "BACKEND_RENEWAL_HARDENING_OK backup=$backup"
+          applied=0
+          REMOTE
