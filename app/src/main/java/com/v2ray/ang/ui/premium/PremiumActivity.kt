@@ -1,5 +1,6 @@
 package com.v2ray.ang.ui.premium
 
+import android.app.Activity
 import android.graphics.Color as AndroidColor
 import android.net.VpnService
 import android.os.Bundle
@@ -114,12 +115,6 @@ class PremiumActivity : ComponentActivity() {
         setContent {
             EmeryTheme {
                 EmeryApp(
-                    requestActivationDisclosure = { onAccepted ->
-                        SkryonActivationDisclosure.showIfNeeded(
-                            activity = this,
-                            onAccepted = onAccepted,
-                        )
-                    },
                     requestVpnPermission = { onGranted ->
                         SkryonVpnDisclosure.showIfNeeded(
                             activity = this,
@@ -148,7 +143,6 @@ class PremiumActivity : ComponentActivity() {
 
 @Composable
 private fun EmeryApp(
-    requestActivationDisclosure: ((onAccepted: () -> Unit) -> Unit),
     requestVpnPermission: ((onGranted: () -> Unit) -> Unit),
     startVpnService: (String) -> Boolean,
     stopVpnService: () -> Unit,
@@ -179,7 +173,6 @@ private fun EmeryApp(
             }
             composable(EmeryRoute.Activation.name) {
                 ActivationScreen(
-                    requestActivationDisclosure = requestActivationDisclosure,
                     onActivated = { code ->
                         val formattedCode = formatSkryonActivationCode(code)
                         val result = validateSkryonCode(context, code, formattedCode)
@@ -223,19 +216,21 @@ private fun EmeryApp(
                         },
                     )
                 } else {
-                    RegionalPolicyOnboardingScreen(
-                        initialMode = RegionalPolicyManager.readMode(),
-                        onContinue = { mode ->
-                            val result = RegionalPolicyManager.apply(context, mode)
-                            if (result.isSuccess) {
-                                MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
-                                navController.navigate(EmeryRoute.Home.name) {
-                                    popUpTo(EmeryRoute.RegionalPolicy.name) { inclusive = true }
+                    ActivationDisclosureGate {
+                        RegionalPolicyOnboardingScreen(
+                            initialMode = RegionalPolicyManager.readMode(),
+                            onContinue = { mode ->
+                                val result = RegionalPolicyManager.apply(context, mode)
+                                if (result.isSuccess) {
+                                    MmkvManager.encodeSettings(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
+                                    navController.navigate(EmeryRoute.Home.name) {
+                                        popUpTo(EmeryRoute.RegionalPolicy.name) { inclusive = true }
+                                    }
                                 }
-                            }
-                            result
-                        },
-                    )
+                                result
+                            },
+                        )
+                    }
                 }
             }
             composable(EmeryRoute.Home.name) {
@@ -274,6 +269,37 @@ private fun savedActivationCode(): String {
 
 private fun regionalPolicyPending(): Boolean {
     return MmkvManager.decodeSettingsBool(AppConfig.PREF_REGIONAL_POLICY_PENDING, false)
+}
+
+@Composable
+private fun ActivationDisclosureGate(
+    content: @Composable () -> Unit,
+) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    var accepted by remember { mutableStateOf(false) }
+
+    LaunchedEffect(activity) {
+        if (activity == null) {
+            accepted = true
+            return@LaunchedEffect
+        }
+        SkryonActivationDisclosure.showIfNeeded(
+            activity = activity,
+            onAccepted = { accepted = true },
+            onDeclined = { activity.finish() },
+        )
+    }
+
+    if (accepted) {
+        content()
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White),
+        )
+    }
 }
 
 @Composable
@@ -601,7 +627,6 @@ private fun SplashScreen(onFinish: () -> Unit) {
 
 @Composable
 private fun ActivationScreen(
-    requestActivationDisclosure: ((onAccepted: () -> Unit) -> Unit),
     onActivated: suspend (String) -> SkryonActivationResult,
 ) {
     var code by remember { mutableStateOf("") }
@@ -745,18 +770,16 @@ private fun ActivationScreen(
                         error = "Введите код полностью"
                         diagnostic = null
                     } else {
-                        requestActivationDisclosure {
-                            scope.launch {
-                                isLoading = true
-                                error = ""
-                                diagnostic = null
-                                val result = onActivated(code)
-                                if (!result.ok) {
-                                    error = result.error.ifBlank { "Ошибка активации" }
-                                    diagnostic = result.diagnostic
-                                }
-                                isLoading = false
+                        scope.launch {
+                            isLoading = true
+                            error = ""
+                            diagnostic = null
+                            val result = onActivated(code)
+                            if (!result.ok) {
+                                error = result.error.ifBlank { "Ошибка активации" }
+                                diagnostic = result.diagnostic
                             }
+                            isLoading = false
                         }
                     }
                 },
@@ -909,4 +932,3 @@ private fun CodeCharacterSlot(
         }
     }
 }
-
