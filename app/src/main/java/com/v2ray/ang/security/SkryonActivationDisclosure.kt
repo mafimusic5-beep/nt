@@ -31,7 +31,7 @@ object SkryonActivationDisclosure {
     private const val PREFERENCES = "skryon_activation_disclosure"
     // Bump the version when the disclosure changes materially.
     private const val ACCEPTED_VERSION = "accepted_version"
-    private const val VERSION = 2
+    private const val VERSION = 3
     private const val PRIVACY_URL = "https://skryon.ru/privacy.html"
     private val green = Color.rgb(0, 143, 91)
     private val openDialogs = mutableMapOf<Activity, Dialog>()
