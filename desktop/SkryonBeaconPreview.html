@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skryon — оригинальный Android StatusBeacon на ПК</title>
+<style>
+  :root { font-family: system-ui, "Segoe UI", sans-serif; color: #111319; background: #fff; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+  main { text-align: center; width: min(100% - 32px, 440px); }
+  h1 { font-size: 24px; margin: 0 0 12px; }
+  p { color: #7d828d; font-size: 14px; line-height: 1.5; }
+  canvas { display: block; margin: 24px auto; width: 104px; height: 104px; }
+  .states { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+  button { border: 1px solid #e7ecef; border-radius: 12px; padding: 10px 12px; background: #fff; cursor: pointer; color: #111319; }
+  button[aria-pressed="true"] { border-color: #6bc652; background: #eaf6e3; }
+  small { color: #7d828d; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Skryon VPN</h1>
+  <p>Точная геометрия и анимация Android StatusBeacon. Это визуальный прототип, без подключения к VPN.</p>
+  <canvas id="beacon" width="104" height="104" aria-label="Индикатор состояния VPN"></canvas>
+  <div class="states" role="group" aria-label="Состояние подключения">
+    <button data-state="disconnected" aria-pressed="true">Выключено</button>
+    <button data-state="connecting" aria-pressed="false">Подключение</button>
+    <button data-state="connected" aria-pressed="false">Подключено</button>
+  </div>
+  <p id="status" aria-live="polite">Защита выключена</p>
+  <small>Android: 104dp, ядро 34dp; без глянца и градиентов.</small>
+</main>
+<script>
+(() => {
+  "use strict";
+  const canvas = document.getElementById("beacon");
+  const ctx = canvas.getContext("2d");
+  const states = {
+    disconnected: { core: "#6BC652", intensity: 0.62, ripple: 3200, pulse: 1800, glow: 2100, rings: 3, label: "Защита выключена" },
+    connecting: { core: "#6BC652", intensity: 1.0, ripple: 1150, pulse: 700, glow: 780, rings: 4, label: "Включаем защиту" },
+    connected: { core: "#2F9E44", intensity: 0.86, ripple: 2300, pulse: 1250, glow: 1450, rings: 3, label: "Всё в порядке" }
+  };
+  let state = "disconnected";
+  let startedAt = performance.now();
+  const size = 104, outer = size / 2, coreRadius = 34 / 2;
+  const buttons = [...document.querySelectorAll("[data-state]")];
+
+  // Compose FastOutSlowInEasing: cubic-bezier(0.4, 0, 0.2, 1).
+  function bezier(t, p1, p2) {
+    const inv = 1 - t;
+    return 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t;
+  }
+  function ease(x) {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 22; i++) {
+      const t = (lo + hi) / 2;
+      if (bezier(t, 0.4, 0.2) < x) lo = t;
+      else hi = t;
+    }
+    return bezier((lo + hi) / 2, 0, 1);
+  }
+  function reverseProgress(ms, duration) {
+    let p = (ms % (duration * 2)) / duration;
+    if (p > 1) p = 2 - p;
+    return ease(p);
+  }
+  function rgba(hex, alpha) {
+    const h = hex.slice(1);
+    return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${alpha})`;
+  }
+  function circle(radius, color, alpha) {
+    ctx.beginPath();
+    ctx.arc(outer, outer, radius, 0, Math.PI * 2);
+    ctx.fillStyle = rgba(color, alpha);
+    ctx.fill();
+  }
+  function strokeCircle(radius, color, alpha, width) {
+    ctx.beginPath();
+    ctx.arc(outer, outer, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = rgba(color, alpha);
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+  function resize() {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function render(now) {
+    const s = states[state], ms = now - startedAt;
+    ctx.clearRect(0, 0, size, size);
+    const phase = (ms % s.ripple) / s.ripple;
+    const pulse = 0.96 + 0.08 * reverseProgress(ms, s.pulse);
+    const glow = 0.7 + 0.3 * reverseProgress(ms, s.glow);
+    circle(outer * 0.96, s.core, 0.035 * glow * s.intensity);
+    circle(outer * 0.70 * pulse, s.core, 0.07 * glow * s.intensity);
+    circle(outer * 0.48 * pulse, s.core, 0.11 * glow * s.intensity);
+    for (let i = 0; i < s.rings; i++) {
+      const p = (phase + i / s.rings) % 1;
+      const radius = coreRadius * 1.25 + (outer * 0.92 - coreRadius * 1.25) * p;
+      const alpha = (1 - p) ** 2 * 0.17 * s.intensity;
+      strokeCircle(radius, s.core, alpha, 1.15 + (1 - p) * 0.85);
+    }
+    const r = coreRadius * pulse;
+    circle(r * 1.30, s.core, (0.14 + 0.05 * glow) * s.intensity);
+    circle(r, s.core, 1);
+    circle(r * 0.12, "#FFFFFF", 0.88);
+    requestAnimationFrame(render);
+  }
+  buttons.forEach(button => button.addEventListener("click", () => {
+    state = button.dataset.state;
+    startedAt = performance.now();
+    buttons.forEach(b => b.setAttribute("aria-pressed", String(b === button)));
+    document.getElementById("status").textContent = states[state].label;
+  }));
+  window.addEventListener("resize", resize);
+  resize();
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
