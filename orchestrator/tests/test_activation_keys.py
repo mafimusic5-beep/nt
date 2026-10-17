@@ -123,6 +123,7 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         nonce: str | None = None,
         timestamp: str | None = None,
         path: str = '/api/activate',
+        platform: str = 'android',
     ):
         key = private_key or self.new_private_key()
         resolved_nonce = nonce or uuid.uuid4().hex
@@ -145,7 +146,7 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
             nonce=resolved_nonce,
             signature_base64=self.sign(key, canonical),
             signature_algorithm='SHA256withECDSA',
-            platform='android',
+            platform=platform,
             app_version='test',
         )
 
@@ -225,6 +226,31 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         device_auth.release_vpn_session(code, device_ids[0], sessions[0]['session_id'])
         replacement = device_auth.acquire_vpn_session(code, device_ids[-1])
         self.assertEqual(limit, replacement['active_connections'])
+
+    def test_windows_registration_keeps_correct_platform_metadata(self) -> None:
+        windows_code = self.create_code('personal', 1)
+        windows = self.register(
+            code=windows_code,
+            device_id='windows-installation',
+            device_name='Windows-устройство',
+            path='/api/device/register',
+            platform='windows',
+        )
+        self.assertTrue(windows['device_registered'])
+        self.assertEqual('windows', windows['devices'][0]['platform'])
+        with sqlite3.connect(self.db_path) as con:
+            row = con.execute(
+                'SELECT platform FROM code_devices WHERE code = ? AND device_id = ?',
+                (windows_code, 'windows-installation'),
+            ).fetchone()
+        self.assertEqual('windows', row[0])
+
+        android = self.register(
+            code=self.create_code('personal', 1),
+            device_id='android-installation',
+            platform='android',
+        )
+        self.assertEqual('android', android['devices'][0]['platform'])
 
     def test_tariff_limits_are_exact(self) -> None:
         self.assert_concurrency_limit('personal', 1)
