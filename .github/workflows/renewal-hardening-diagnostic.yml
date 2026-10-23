@@ -1,10 +1,6 @@
 name: Renewal hardening diagnostics
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/renewal-hardening-diagnostic.yml'
   workflow_dispatch:
 
 permissions:
@@ -49,7 +45,7 @@ jobs:
           fi
 
           echo '=== TEST SITE ACCESS FROM API ==='
-          site=157.22.206.113
+          site=31.70.117.82
           found=''
           for u in root ubuntu; do
             for p in 22 8443 2022 2222 2200 22222 8022; do
