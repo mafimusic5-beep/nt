@@ -1,10 +1,6 @@
 name: Deploy checkout autorenew UI v2
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/deploy-autorenew-site-v2.yml'
   workflow_dispatch:
 
 permissions:
