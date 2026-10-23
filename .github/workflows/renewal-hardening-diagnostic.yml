@@ -1,10 +1,6 @@
 name: Renewal hardening diagnostics
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/renewal-hardening-diagnostic.yml'
   workflow_dispatch:
 
 permissions:
