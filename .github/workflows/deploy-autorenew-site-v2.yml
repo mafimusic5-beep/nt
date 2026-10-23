@@ -34,7 +34,8 @@ jobs:
           site_host=''
           site_port=''
           seen=' '
-          for h in 157.22.206.113 "${VPS_HOST:-}"; do
+          # Pin deployment to IONOS: never fall back to the retired FirstVDS VPS.
+          for h in 31.70.117.82; do
             [ -n "$h" ] || continue
             h="${h#http://}"; h="${h#https://}"; h="${h%%/*}"; h="${h%%:*}"
             for p in 22 8443 2022 2222 2200 22222 8022; do
