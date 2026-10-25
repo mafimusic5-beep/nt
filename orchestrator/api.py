@@ -23,6 +23,11 @@ from config import (
     MIN_SUPPORTED_APP_VERSION_CODE,
     SERVER_POOL_SYNC_URL,
 )
+from client_version_policy import (
+    optional_lease_version,
+    public_listing_disabled,
+    signed_version,
+)
 from device_auth import (
     DeviceAuthError,
     acquire_vpn_session,
@@ -227,8 +232,7 @@ def health() -> dict:
     return {'ok': True}
 
 
-@app.get('/api/vpn/servers')
-def vpn_servers():
+def _public_pool_server_list():
     upstream = f"{SERVER_POOL_SYNC_URL.rstrip('/')}/api/v1/vpn/servers"
     try:
         with urlopen(upstream, timeout=5.0) as response:
@@ -243,6 +247,41 @@ def vpn_servers():
             status_code=503,
             content={'ok': False, 'reason': 'server_list_unavailable'},
         )
+
+
+@app.get('/api/vpn/servers')
+def vpn_servers():
+    # Only unprivileged city/status metadata is available here during the
+    # Android/Windows rollout. This switch MUST be enabled once both clients
+    # use /api/vpn/servers/authorized.
+    if public_listing_disabled():
+        return JSONResponse(
+            status_code=403,
+            content={'ok': False, 'reason': 'authenticated_server_list_required'},
+        )
+    return _public_pool_server_list()
+
+
+@app.get('/api/vpn/servers/authorized')
+def vpn_servers_authorized(request: Request):
+    """Only issue the node catalogue to a current, registered subscription."""
+    try:
+        version = signed_version(request)
+        authenticate_registered_device(
+            raw_code=_bearer_code(request),
+            method='GET',
+            path=request.url.path,
+            device_id=_header(request, 'x-emery-device-id'),
+            timestamp=_header(request, 'x-emery-timestamp'),
+            nonce=_header(request, 'x-emery-nonce'),
+            signature_base64=_header(request, 'x-emery-signature'),
+            signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+            app_version_code=version,
+        )
+    except DeviceAuthError as error:
+        return _auth_error(error)
+    return _public_pool_server_list()
+
 
 @app.post('/api/device-gate/authorize')
 @app.post('/internal/device-gate/authorize')
@@ -342,6 +381,7 @@ def vpn_session_acquire(payload: VpnSessionAcquireRequest, request: Request):
             nonce=_header(request, 'x-emery-nonce'),
             signature_base64=_header(request, 'x-emery-signature'),
             signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+            app_version_code=optional_lease_version(request),
         )
         lease = acquire_vpn_session(raw_code, device_id)
     except DeviceAuthError as error:
@@ -415,6 +455,7 @@ def vpn_session_heartbeat(payload: VpnSessionControlRequest, request: Request):
             nonce=_header(request, 'x-emery-nonce'),
             signature_base64=_header(request, 'x-emery-signature'),
             signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+            app_version_code=optional_lease_version(request),
         )
         return heartbeat_vpn_session(raw_code, device_id, payload.session_id)
     except DeviceAuthError as error:
@@ -435,6 +476,7 @@ def vpn_session_release(payload: VpnSessionControlRequest, request: Request):
             nonce=_header(request, 'x-emery-nonce'),
             signature_base64=_header(request, 'x-emery-signature'),
             signature_algorithm=_header(request, 'x-emery-signature-algorithm'),
+            app_version_code=optional_lease_version(request),
         )
         released = release_vpn_session(raw_code, device_id, payload.session_id)
     except DeviceAuthError as error:
