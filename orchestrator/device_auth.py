@@ -284,17 +284,23 @@ def _request_canonical(
     device_id: str,
     timestamp: str,
     nonce: str,
+    app_version_code: Optional[int] = None,
 ) -> str:
-    return '\n'.join(
-        (
-            f'method={method.strip().upper()}',
-            f'path={path}',
-            f'device_id={device_id}',
-            f'timestamp={timestamp}',
-            f'nonce={nonce}',
-            f'auth_sha256={_auth_hash(raw_code)}',
-        )
-    )
+    # Protocol v2 additionally signs the client version. An unauthenticated
+    # version header by itself is never evidence of the requested version.
+    fields = [
+        f'method={method.strip().upper()}',
+        f'path={path}',
+        f'device_id={device_id}',
+        f'timestamp={timestamp}',
+        f'nonce={nonce}',
+        f'auth_sha256={_auth_hash(raw_code)}',
+    ]
+    if app_version_code is not None:
+        if not isinstance(app_version_code, int) or app_version_code < 1:
+            raise DeviceAuthError('client_proof_upgrade_required', 426)
+        fields.append(f'app_version_code={app_version_code}')
+    return '\n'.join(fields)
 
 
 def _gateway_canonical(
@@ -724,6 +730,7 @@ def authenticate_registered_device(
     signature_base64: str,
     signature_algorithm: str,
     device_name: Optional[str] = None,
+    app_version_code: Optional[int] = None,
 ) -> Dict[str, Any]:
     safe_device_id = device_id.strip()[:128]
     if not safe_device_id:
@@ -754,6 +761,7 @@ def authenticate_registered_device(
                 device_id=safe_device_id,
                 timestamp=timestamp,
                 nonce=nonce,
+                app_version_code=app_version_code,
             )
         else:
             signed_name = device_name.strip().replace('\n', ' ').replace('\r', ' ')[:80]
