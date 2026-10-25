@@ -51,6 +51,21 @@ class SignedCatalogPolicyTests(unittest.TestCase):
             }))
         self.assertEqual('upgrade_required', caught.exception.reason)
 
+    def test_restrict_to_server_approved_release_codes(self):
+        headers = {
+            'X-Skryon-Proof-Version': '2',
+            'X-Skryon-App-Version-Code': '20261027',
+        }
+        with patch.dict(os.environ, {
+            'SKRYON_WINDOWS_APPROVED_VERSION_CODES': '20261026',
+        }):
+            with self.assertRaises(DeviceAuthError):
+                signed_version(request(headers))
+        with patch.dict(os.environ, {
+            'SKRYON_WINDOWS_APPROVED_VERSION_CODES': '20261026,20261027',
+        }):
+            self.assertEqual(signed_version(request(headers)), 20261027)
+
     def test_reject_malformed_version(self):
         for v in ('-1', 'hello', '20261026.1', '９９９９', '1' * 50):
             with self.subTest(version=v):
