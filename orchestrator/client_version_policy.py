@@ -45,12 +45,12 @@ def optional_lease_version(request: Request) -> int | None:
     Enable SKRYON_REQUIRE_VERSIONED_LEASES=1 ONLY after all supported clients
     have shipped v2. Any partial v2 header always fails closed.
     """
-    if (
-        request.headers.get(PROOF_VERSION_HEADER) is not None
-        or request.headers.get(APP_VERSION_HEADER) is not None
-        or os.getenv("SKRYON_REQUIRE_VERSIONED_LEASES", "0") == "1"
-    ):
+    protocol = request.headers.get(PROOF_VERSION_HEADER)
+    if protocol is not None or os.getenv("SKRYON_REQUIRE_VERSIONED_LEASES", "0") == "1":
         return signed_version(request)
+    # Existing Android clients legitimately advertise a build version header
+    # while signing protocol v1. Do not reject or elevate those unsigned
+    # version claims until the coordinated v2-only rollout is enabled.
     return None
 
 
