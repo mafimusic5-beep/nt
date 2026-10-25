@@ -75,6 +75,11 @@ class SignedCatalogPolicyTests(unittest.TestCase):
 
     def test_legacy_leases_switch_to_strict_only_after_rollout(self):
         self.assertIsNone(optional_lease_version(request()))
+        # Android v1 sends the version header without including it in its
+        # device signature. Until the app upgrades, this remains supported.
+        self.assertIsNone(optional_lease_version(request({
+            'X-Skryon-App-Version-Code': '100',
+        })))
         with patch.dict(os.environ, {'SKRYON_REQUIRE_VERSIONED_LEASES': '1'}):
             with self.assertRaises(DeviceAuthError):
                 optional_lease_version(request())
