@@ -42,7 +42,9 @@ the server refusing VPN use without a currently authorized session.
    nginx proxy changes the backend. Back up the backend and data before rollout.
 2. Default environment: `SKRYON_WINDOWS_MIN_VERSION_CODE=20261026`,
    `SKRYON_REQUIRE_VERSIONED_LEASES=0`,
-   `SKRYON_PUBLIC_SERVER_LIST_DISABLED=0`. Deploy backend FIRST and smoke
+   `SKRYON_PUBLIC_SERVER_LIST_DISABLED=0`, and
+   `SKRYON_WINDOWS_APPROVED_VERSION_CODES=20261026` (update the allowlist
+   before shipping each new build). Deploy backend FIRST and smoke
    test both Android v1 and Windows v2 against the API.
 3. Distribute the new **official signed** Windows binary from an authenticated
    update channel. Current Windows build is not code-signed yet; obtain a
