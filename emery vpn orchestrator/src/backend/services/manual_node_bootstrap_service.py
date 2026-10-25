@@ -10,6 +10,7 @@ from src.backend.services.manual_isp_egress_service import (
     ManualIspEgressService,
 )
 from src.backend.services.node_adapters import FirstVdsBillManagerProvisioningService
+from src.backend.services.reality_probe import reality_probe_shell
 from src.common.config import settings
 from src.common.models import VpnNode
 
@@ -98,16 +99,20 @@ class ManualNodeBootstrapService:
                     "XRAY_UUID",
                     "XRAY_PUBLIC_KEY",
                     "XRAY_SHORT_ID",
+                    "XRAY_REALITY_VERIFIED",
                     "WG_PUBLIC_KEY",
                     "WG_ADDRESS",
                 }:
                     values[key] = value.strip()
 
-            required = {"XRAY_UUID", "XRAY_PUBLIC_KEY", "XRAY_SHORT_ID"}
+            required = {"XRAY_UUID", "XRAY_PUBLIC_KEY", "XRAY_SHORT_ID", "XRAY_REALITY_VERIFIED"}
             if egress_plan is not None:
                 required.update({"WG_PUBLIC_KEY", "WG_ADDRESS"})
             if not all(values.get(key) for key in required):
                 return {"status": "failed", "detail": "bootstrap_values_missing"}
+
+            if values.get("XRAY_REALITY_VERIFIED") != "1":
+                return {"status": "failed", "detail": "reality_probe_not_verified"}
 
             if egress_plan is not None:
                 if values.get("WG_ADDRESS") != egress_plan.client_ip:
@@ -333,6 +338,7 @@ printf 'WG_ADDRESS=%s\n' \"$WG_ADDR\"
             separators=(",", ":"),
         )
         hostname_json = json.dumps(neutral_hostname)
+        reality_preflight = reality_probe_shell()
         reality_dest_json = json.dumps(f"{server_name}:443")
         server_name_json = json.dumps(server_name)
 
@@ -356,6 +362,8 @@ KEYS=\"$(xray x25519)\"
 PRIVATE_KEY=\"$(printf '%s\n' \"$KEYS\" | awk -F': *' '/^Private[Kk]ey:/{{print $2; exit}}')\"
 PUBLIC_KEY=\"$(printf '%s\n' \"$KEYS\" | awk -F': *' '/^Public key:/{{print $2; exit}} /^Password( \\(PublicKey\\))?:/{{print $2; exit}}')\"
 SHORT_ID=\"$(openssl rand -hex 8)\"
+XRAY_LISTEN_PORT={int(port)}
+REALITY_SNI={shlex.quote(server_name)}
 [[ -n \"$PRIVATE_KEY\" && -n \"$PUBLIC_KEY\" && -n \"$SHORT_ID\" ]]
 {egress_setup}
 mkdir -p /usr/local/etc/xray
@@ -398,6 +406,7 @@ xray run -test -config /usr/local/etc/xray/config.json
 systemctl enable xray >/dev/null 2>&1 || true
 systemctl restart xray
 systemctl is-active xray >/dev/null 2>&1
+{reality_preflight}
 printf 'XRAY_UUID=%s\n' \"$UUID\"
 printf 'XRAY_PUBLIC_KEY=%s\n' \"$PUBLIC_KEY\"
 printf 'XRAY_SHORT_ID=%s\n' \"$SHORT_ID\"
