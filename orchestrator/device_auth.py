@@ -585,6 +585,9 @@ def register_device(
         signature_algorithm,
     )
     safe_device_name = _public_device_name(signed_device_name)
+    safe_platform = platform.strip().lower()
+    if safe_platform not in ('android', 'windows'):
+        raise DeviceAuthError('unsupported_client_platform', 400)
 
     con = _connect()
     try:
@@ -651,7 +654,7 @@ def register_device(
                     safe_device_name,
                     public_key_base64,
                     fingerprint,
-                    'android',
+                    safe_platform,
                     app_version.strip()[:32],
                     current_time,
                     current_time,
@@ -683,7 +686,7 @@ def register_device(
                     safe_device_name,
                     public_key_base64,
                     fingerprint,
-                    'android',
+                    safe_platform,
                     app_version.strip()[:32],
                     current_time,
                     current_time,
