@@ -61,8 +61,8 @@ the server refusing VPN use without a currently authorized session.
 
 ## Verification targets
 
-* Unauthenticated or unsigned call to the authenticated server list: 401.
-* Missing v2/version or outdated version: 426.
+* Missing v2/version or outdated version: 426 (fail closed).
+* With a supported v2 claim, absent/invalid bearer or signature: 401/403.
 * Signature for a different version/path: 401; replayed nonce: 401.
 * Valid registered active device on the current version: receives node *metadata*.
 * Wrong or expired subscription, revoked device, stolen code: no server list or
