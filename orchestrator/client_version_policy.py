@@ -36,6 +36,16 @@ def signed_version(request: Request) -> int:
     version = int(raw)
     if version < _minimum_version():
         raise DeviceAuthError("upgrade_required", 426)
+    # Optional release allowlist: set approved codes BEFORE distributing a
+    # newer build. The client-supplied version remains a claim, not attestation.
+    releases = os.getenv("SKRYON_WINDOWS_APPROVED_VERSION_CODES", "").strip()
+    if releases:
+        try:
+            approved = {int(x.strip()) for x in releases.split(",") if x.strip()}
+        except ValueError:
+            raise RuntimeError("Invalid SKRYON_WINDOWS_APPROVED_VERSION_CODES")
+        if version not in approved:
+            raise DeviceAuthError("upgrade_required", 426)
     return version
 
 
