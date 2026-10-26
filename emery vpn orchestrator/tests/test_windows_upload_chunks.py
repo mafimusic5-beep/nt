@@ -112,3 +112,31 @@ def test_cancel_user_does_not_delete_other_user(tmp_path, monkeypatch):
     assert chunks.cancel_parts(4) == 1
     assert chunks.cancel_parts(4) == 0
     assert chunks.part_dir(5, chunks.parse(name)).exists()
+
+
+def test_reconstruct_real_105mb_inno_installer_if_present(tmp_path, monkeypatch):
+    import os
+    original = os.getenv("SKRYON_TEST_PE_INSTALLER", "")
+    if not original:
+        pytest.skip("Production installer fixture not configured")
+    source = Path(original)
+    if not source.is_file():
+        pytest.skip("Installer fixture missing")
+    monkeypatch.setenv("SKRYON_WINDOWS_RELEASE_DIR", str(tmp_path / "staging"))
+    digest = store._sha256(source)
+    total = (source.stat().st_size + chunks.PART_BYTES - 1) // chunks.PART_BYTES
+    assert 2 <= total <= chunks.MAX_PARTS
+    received = 0
+    with source.open("rb") as stream:
+        for i in range(1, total + 1):
+            name = f"SkryonSetup-1.0.0.exe.{digest}.part{i:03d}of{total:03d}.skpart"
+            piece = tmp_path / f"upload_{i}.part"
+            payload = stream.read(chunks.PART_BYTES)
+            piece.write_bytes(payload)
+            received, count, row = chunks.add_part(piece, name, len(payload), 42)
+            assert received == i
+            assert count == total
+    assert row is not None
+    assert row["version"] == "1.0.0"
+    assert row["sha256"] == digest
+    assert row["size"] == source.stat().st_size
