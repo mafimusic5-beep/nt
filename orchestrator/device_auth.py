@@ -284,17 +284,23 @@ def _request_canonical(
     device_id: str,
     timestamp: str,
     nonce: str,
+    app_version_code: Optional[int] = None,
 ) -> str:
-    return '\n'.join(
-        (
-            f'method={method.strip().upper()}',
-            f'path={path}',
-            f'device_id={device_id}',
-            f'timestamp={timestamp}',
-            f'nonce={nonce}',
-            f'auth_sha256={_auth_hash(raw_code)}',
-        )
-    )
+    # Protocol v2 additionally signs the client version. An unauthenticated
+    # version header by itself is never evidence of the requested version.
+    fields = [
+        f'method={method.strip().upper()}',
+        f'path={path}',
+        f'device_id={device_id}',
+        f'timestamp={timestamp}',
+        f'nonce={nonce}',
+        f'auth_sha256={_auth_hash(raw_code)}',
+    ]
+    if app_version_code is not None:
+        if not isinstance(app_version_code, int) or app_version_code < 1:
+            raise DeviceAuthError('client_proof_upgrade_required', 426)
+        fields.append(f'app_version_code={app_version_code}')
+    return '\n'.join(fields)
 
 
 def _gateway_canonical(
@@ -579,6 +585,9 @@ def register_device(
         signature_algorithm,
     )
     safe_device_name = _public_device_name(signed_device_name)
+    safe_platform = platform.strip().lower()
+    if safe_platform not in ('android', 'windows'):
+        raise DeviceAuthError('unsupported_client_platform', 400)
 
     con = _connect()
     try:
@@ -645,7 +654,7 @@ def register_device(
                     safe_device_name,
                     public_key_base64,
                     fingerprint,
-                    'android',
+                    safe_platform,
                     app_version.strip()[:32],
                     current_time,
                     current_time,
@@ -677,7 +686,7 @@ def register_device(
                     safe_device_name,
                     public_key_base64,
                     fingerprint,
-                    'android',
+                    safe_platform,
                     app_version.strip()[:32],
                     current_time,
                     current_time,
@@ -724,6 +733,7 @@ def authenticate_registered_device(
     signature_base64: str,
     signature_algorithm: str,
     device_name: Optional[str] = None,
+    app_version_code: Optional[int] = None,
 ) -> Dict[str, Any]:
     safe_device_id = device_id.strip()[:128]
     if not safe_device_id:
@@ -754,6 +764,7 @@ def authenticate_registered_device(
                 device_id=safe_device_id,
                 timestamp=timestamp,
                 nonce=nonce,
+                app_version_code=app_version_code,
             )
         else:
             signed_name = device_name.strip().replace('\n', ' ').replace('\r', ' ')[:80]
