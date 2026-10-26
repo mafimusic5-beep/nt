@@ -28,14 +28,26 @@ source_modern="$source_tree/emery vpn orchestrator"
 for item in "${items[@]}"; do
   [[ -f "$source_modern/$item" ]] || { echo "MISSING_STAGE_FILE: $item"; exit 84; }
 done
-# Refuse overwriting production's uncommitted modifications to critical files.
+# Protect live-specific hotfixes. main.py and keyboards.py will be patched
+# surgically after copying to a temporary rehearsal directory.
 for item in "${items[@]}"; do
+  if [[ "$item" == "src/bot/main.py" || "$item" == "src/bot/ui/keyboards.py" ]]; then
+    continue
+  fi
   if [[ -e "$modern/$item" ]] && ! git -C "$live" diff --quiet -- "emery vpn orchestrator/$item"; then
-    echo "LIVE_MODIFIED_FILE_REQUIRES_REVIEW: $item"
-    exit 85
+    echo "LIVE_MODIFIED_FILE_REQUIRES_REVIEW: $item"; exit 85
   fi
 done
 "$runtime" -m compileall -q "$source_modern/src/bot"
+patcher="$source_modern/deploy/patch_admin_menu_live.py"
+[[ -f "$patcher" ]] || { echo 'MISSING_SAFE_PATCHER'; exit 86; }
+preview="$(mktemp -d)"
+mkdir -p "$preview/src/bot/ui"
+cp -p "$modern/src/bot/main.py" "$preview/src/bot/main.py"
+cp -p "$modern/src/bot/ui/keyboards.py" "$preview/src/bot/ui/keyboards.py"
+"$runtime" "$patcher" "$preview"
+"$runtime" -m py_compile "$preview/src/bot/main.py" "$preview/src/bot/ui/keyboards.py"
+rm -rf "$preview"
 mkdir -p "$backup"
 for item in "${items[@]}"; do
   mkdir -p "$backup/$(dirname "$item")"
@@ -64,9 +76,13 @@ trap rollback ERR
 "$runtime" -m pip install -q 'pefile==2024.8.26'
 changed=1
 for item in "${items[@]}"; do
+  if [[ "$item" == "src/bot/main.py" || "$item" == "src/bot/ui/keyboards.py" ]]; then
+    continue
+  fi
   mkdir -p "$modern/$(dirname "$item")"
   install -m 0644 "$source_modern/$item" "$modern/$item"
 done
+"$runtime" "$patcher" "$modern"
 cd "$modern"
 "$runtime" -m compileall -q src/bot
 "$runtime" -c 'from src.bot.handlers.windows_releases import router; from src.bot.handlers.admin_guided import router as a; from src.bot.ui.keyboards import admin_menu_keyboard; from src.bot.main import main; assert any(b.callback_data == "admin_releases" for row in admin_menu_keyboard().inline_keyboard for b in row)'
