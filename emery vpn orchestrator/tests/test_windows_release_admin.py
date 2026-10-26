@@ -1,6 +1,7 @@
 """Release safeguards run without Telegram, SSH keys or production endpoints."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -73,8 +74,7 @@ def test_missing_publish_config_fails_closed(monkeypatch):
     assert issues and any("ключ" in issue.lower() for issue in issues)
 
 
-@pytest.mark.asyncio
-async def test_cannot_publish_unsigned_binary(tmp_path, monkeypatch):
+def test_cannot_publish_unsigned_binary(tmp_path, monkeypatch):
     monkeypatch.setenv("SKRYON_WINDOWS_RELEASE_DIR", str(tmp_path))
     exe = tmp_path / "unsigned.exe"
     exe.write_bytes(b"MZ" + b"0" * 150000)
@@ -88,4 +88,4 @@ async def test_cannot_publish_unsigned_binary(tmp_path, monkeypatch):
     }
     store._atomic_json(tmp_path / "state.json", state)
     with pytest.raises(store.ReleaseError, match="неподписанный"):
-        await store.publish(digest, 42)
+        asyncio.run(store.publish(digest, 42))
