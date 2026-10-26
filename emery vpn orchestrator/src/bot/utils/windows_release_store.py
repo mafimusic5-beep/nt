@@ -73,14 +73,33 @@ def _pe_version(file: Path) -> str:
     try:
         if not pe.is_exe() or not pe.VS_FIXEDFILEINFO:
             raise ReleaseError("Нет корректных метаданных версии Windows.")
+        # Inno Setup usually keeps human-readable ProductVersion in
+        # StringFileInfo; VS_FIXEDFILEINFO ProductVersion may be 0.0.0.0.
+        for group in getattr(pe, "FileInfo", []):
+            for table in group:
+                if getattr(table, "Key", b"") != b"StringFileInfo":
+                    continue
+                for strings in getattr(table, "StringTable", []):
+                    raw = strings.entries.get(b"ProductVersion") or strings.entries.get(b"FileVersion")
+                    if not raw:
+                        continue
+                    version_text = raw.decode("utf-8", "replace").strip()
+                    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?", version_text)
+                    if not match:
+                        continue
+                    if match.group(4) and int(match.group(4)) != 0:
+                        raise ReleaseError("Ожидается версия X.Y.Z.")
+                    version = ".".join(str(int(x)) for x in match.groups()[:3])
+                    if VERSION_RE.fullmatch(version):
+                        return version
         fixed = pe.VS_FIXEDFILEINFO[0]
         product = tuple((
             fixed.ProductVersionMS >> 16, fixed.ProductVersionMS & 65535,
             fixed.ProductVersionLS >> 16, fixed.ProductVersionLS & 65535
         ))
         version = f"{product[0]}.{product[1]}.{product[2]}"
-        if not VERSION_RE.fullmatch(version):
-            raise ReleaseError("Некорректная версия в установщике.")
+        if not VERSION_RE.fullmatch(version) or product == (0, 0, 0):
+            raise ReleaseError("В установщике нет метаданных версии.")
         return version
     finally:
         pe.close()
