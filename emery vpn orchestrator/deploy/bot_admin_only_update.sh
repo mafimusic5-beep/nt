@@ -62,11 +62,11 @@ rollback() {
 trap rollback ERR
 # Compatible PE parsing is only used when uploading a release file.
 "$runtime" -m pip install -q 'pefile==2024.8.26'
+changed=1
 for item in "${items[@]}"; do
   mkdir -p "$modern/$(dirname "$item")"
   install -m 0644 "$source_modern/$item" "$modern/$item"
 done
-changed=1
 cd "$modern"
 "$runtime" -m compileall -q src/bot
 "$runtime" -c 'from src.bot.handlers.windows_releases import router; from src.bot.handlers.admin_guided import router as a; from src.bot.ui.keyboards import admin_menu_keyboard; from src.bot.main import main; assert any(b.callback_data == "admin_releases" for row in admin_menu_keyboard().inline_keyboard for b in row)'
