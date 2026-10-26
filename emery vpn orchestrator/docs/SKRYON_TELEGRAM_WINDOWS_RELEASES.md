@@ -24,25 +24,39 @@ clear assignment slots with explicit confirmations, stats, keys and search.
 
 Non-admins cannot access these callbacks or upload binaries.
 
-## Large files: local Telegram Bot API server is REQUIRED
+## Большие Windows EXE прямо в чате Telegram: без API ID / API Hash
 
-Cloud `getFile` is limited to 20 MB download, while Skryon Windows is 105+ MB.
-The production bot must be switched to a LOCAL Bot API server
-(`telegram-bot-api` with `--local`) before owner-uploaded EXEs will work.
+Обычный Telegram Bot API позволяет скачивать части файлов не более 20 MB.
+Сборка Skryon сейчас весит около 105 MB. Решение: нарезать оригинальный
+`SkryonSetup-1.0.0.exe` на файлы **по 18 MiB**, используя PowerShell-скрипт
+`Documents/Skryon.Windows/tools/Prepare-Telegram-Release.ps1` на Windows ПК
+разработчика, затем отправить **все .skpart части как документы** в личный чат
+владельца с действующим ботом.
 
-1. Create `api_id` and `api_hash` in the official Telegram developer portal.
-   Treat them as secrets. **Do not put them in code, GitHub or chat.**
-2. Provision a service `telegram-bot-api` on the SAME bot host, bound to
-   127.0.0.1:8081, with a private work directory and an unprivileged account.
-   Launch with `--api-id=... --api-hash=... --http-port=8081 --local`.
-   Never expose this local API endpoint to the public Internet.
-3. Move the existing bot token from the cloud endpoint to the local API using
-   the officially documented `logOut` operation; use a controlled maintenance
-   window to avoid long-polling conflicts. Stop the old bot first. Restart it
-   with `SKRYON_TELEGRAM_LOCAL_API_URL=http://127.0.0.1:8081`.
-   If the first file upload fails, do NOT enable mandatory updates.
-4. Ensure bot process can read the absolute `file_path` supplied by the local
-   API server, or configure both to use a shared, private file directory.
+- Кнопка **👑 Админ → 📦 Релизы Windows → 📥 Загрузить** объясняет процесс.
+- Можно отправить части в любом порядке, за один раз или по отдельности.
+- Бот скачивает каждую часть через обычный `getFile`, сохраняет её в
+  закрытую папку, сообщает прогресс N/M, продолжает после перезапуска.
+- После последней части собирает EXE побайтово, сверяет полный SHA-256 из
+  строгого имени части, проверяет фактические PE-метаданные версии и
+  выводит карточку сборки.
+- Повторную часть с несовпадающими байтами бот не примет, а при ошибке
+  итогового хеша забракует весь набор.
+- Незаконченные части можно удалить кнопкой «Сбросить незавершённые части».
+- Для EXE до 18 MiB допускается обычная единая загрузка.
+- В стандартном режиме **никакие Telegram API ID и Hash не нужны**, и
+  не надо менять polling действующего бота.
+
+### Тестирование реальной сборки
+
+В изолированной тестовой среде реальный установщик 1.0.0 (~105 MB)
+был собран из шести частей, прошёл SHA-256, PE ProductVersion и запись
+в очередь проверки. 22 теста отдельных релизных модулей пройдены.
+
+**Важно:** загрузка и публикация являются РАЗНЫМИ действиями.
+Система публикации по-прежнему требует Authenticode, подписанный
+ECDSA-манифест, правильный ключ издателя и ограниченный SFTP.
+Обход проверок не разрешён.
 
 ## Secure release publisher requirements
 
