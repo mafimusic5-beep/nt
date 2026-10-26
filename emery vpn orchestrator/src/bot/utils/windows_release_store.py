@@ -176,6 +176,12 @@ def _current_key_matches_client() -> bool:
 
 def publishing_readiness() -> list[str]:
     problems = []
+    # The regular Telegram cloud API cannot download a ~105 MB .exe sent as
+    # a document. Do not advertise one-click publishing until this is ready.
+    if os.environ.get("SKRYON_TELEGRAM_LOCAL_API_URL", "").strip() != "http://127.0.0.1:8081":
+        problems.append("Для EXE свыше 20 МБ нужен локальный Telegram Bot API")
+    if shutil.which("osslsigncode") is None:
+        problems.append("Не установлен проверяющий подпись Windows osslsigncode")
     if not _current_key_matches_client():
         problems.append("Подписывающий ключ не совпадает с ключом Windows-клиента")
     if not os.environ.get("SKRYON_RELEASE_SFTP_HOST", ""):
