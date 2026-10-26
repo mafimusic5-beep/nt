@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import ErrorEvent
 
 from src.bot.handlers.admin import router as admin_router
+from src.bot.handlers.admin_guided import router as admin_guided_router
 from src.bot.handlers.admin_codes import router as admin_codes_router
 from src.bot.handlers.admin_node_delete import router as admin_node_delete_router
 from src.bot.handlers.admin_slots import router as admin_slots_router
@@ -77,6 +78,7 @@ async def run() -> None:
     dp.include_router(compat_commands_router)
     # Release callbacks must precede the admin_ wildcard router.
     dp.include_router(windows_releases_router)
+    dp.include_router(admin_guided_router)
     dp.include_router(admin_router)
     # Make command updates independent tasks explicitly. Long-running admin
     # operations (notably VPS provisioning) must never serialize all Telegram
