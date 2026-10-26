@@ -88,7 +88,8 @@ async def release_command(message: Message) -> None:
     if not _authorized(message.from_user.id if message.from_user else None, message.chat.type):
         await message.answer("Админ-функции доступны только в личном чате владельца.")
         return
-    await message.answer(*_status())
+    text, keyboard = _status()
+    await message.answer(text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data == "admin_releases")
@@ -98,9 +99,11 @@ async def release_menu(callback: CallbackQuery) -> None:
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
     try:
-        await callback.message.edit_text(*_status())
+        text, keyboard = _status()
+        await callback.message.edit_text(text, reply_markup=keyboard)
     except Exception:
-        await callback.message.answer(*_status())
+        text, keyboard = _status()
+        await callback.message.answer(text, reply_markup=keyboard)
     await callback.answer()
 
 
@@ -194,7 +197,8 @@ async def pending(callback: CallbackQuery) -> None:
     if not _authorized(callback.from_user.id, callback.message.chat.type):
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
-    await callback.message.edit_text(*_pending())
+    text, keyboard = _pending()
+    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
 
@@ -325,5 +329,6 @@ async def status(callback: CallbackQuery) -> None:
     if not _authorized(callback.from_user.id, callback.message.chat.type):
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
-    await callback.message.edit_text(*_status())
+    text, keyboard = _status()
+    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
