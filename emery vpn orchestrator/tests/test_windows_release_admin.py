@@ -130,9 +130,9 @@ def test_legacy_live_bot_module_keeps_commands_and_admin_entry(monkeypatch):
     assert callable(module.main)
 
 
-def test_large_installer_requires_local_telegram_bot_api(monkeypatch):
+def test_cloud_telegram_chunk_workflow_without_local_api(monkeypatch):
     monkeypatch.delenv("SKRYON_TELEGRAM_LOCAL_API_URL", raising=False)
-    assert any("Telegram Bot API" in reason for reason in store.publishing_readiness())
+    assert not any("локальный Telegram Bot API" in reason for reason in store.publishing_readiness())
 
 
 def test_release_admin_migration_scripts_are_safe_to_parse():
