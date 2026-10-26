@@ -97,3 +97,19 @@ def test_real_installer_pe_version_if_present():
     if not installer:
         pytest.skip("No test Windows installer on this environment")
     assert store._pe_version(Path(installer)) == "1.0.0"
+
+
+def test_admin_router_modules_and_panel_import_without_secrets():
+    from src.bot.handlers.windows_releases import router as release_router, _status
+    from src.bot.handlers.admin_guided import router as guided_router
+    from src.bot.ui.keyboards import admin_menu_keyboard
+    from src.bot import main
+    assert release_router.name == "windows_releases"
+    assert guided_router.name == "admin_guided"
+    text, markup = _status()
+    assert "Windows-релизы" in text
+    callbacks = [button.callback_data
+                 for row in admin_menu_keyboard().inline_keyboard
+                 for button in row]
+    assert "admin_releases" in callbacks
+    assert "admin_node_tools" in callbacks
