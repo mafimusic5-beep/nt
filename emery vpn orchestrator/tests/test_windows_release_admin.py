@@ -113,3 +113,18 @@ def test_admin_router_modules_and_panel_import_without_secrets():
                  for button in row]
     assert "admin_releases" in callbacks
     assert "admin_node_tools" in callbacks
+
+
+def test_legacy_live_bot_module_keeps_commands_and_admin_entry(monkeypatch):
+    import importlib.util
+    root = Path(__file__).resolve().parents[2]
+    legacy_path = root / "orchestrator" / "tg_admin.py"
+    assert legacy_path.exists()
+    monkeypatch.syspath_prepend(str(legacy_path.parent))
+    spec = importlib.util.spec_from_file_location("skryon_live_tg_admin_test", legacy_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    assert callable(module.start_cmd)
+    assert callable(module.addconfig_cmd)
+    assert callable(module.main)
