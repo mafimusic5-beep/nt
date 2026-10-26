@@ -5,6 +5,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -89,3 +90,10 @@ def test_cannot_publish_unsigned_binary(tmp_path, monkeypatch):
     store._atomic_json(tmp_path / "state.json", state)
     with pytest.raises(store.ReleaseError, match="неподписанный"):
         asyncio.run(store.publish(digest, 42))
+
+
+def test_real_installer_pe_version_if_present():
+    installer = os.environ.get("SKRYON_TEST_PE_INSTALLER", "")
+    if not installer:
+        pytest.skip("No test Windows installer on this environment")
+    assert store._pe_version(Path(installer)) == "1.0.0"
