@@ -319,19 +319,13 @@ class V2RayVpnService : VpnService(), ServiceControl {
             builder.addRoute("0.0.0.0", 0)
         }
 
-        // Russia policy must also capture IPv6; otherwise an app could bypass
-        // the IPv4 restrictions whenever the device has native IPv6 access.
-        val captureIpv6 =
-            RegionalPolicyManager.isRussiaModeEnabled() ||
-                MmkvManager.decodeSettingsBool(AppConfig.PREF_PREFER_IPV6)
-        if (captureIpv6) {
-            builder.addAddress(vpnConfig.ipv6Client, 126)
-            if (bypassLan) {
-                builder.addRoute("2000::", 3) // Currently only 1/8 of total IPv6 is in use
-                builder.addRoute("fc00::", 18) // Xray-core default FakeIPv6 Pool
-            } else {
-                builder.addRoute("::", 0)
-            }
+        // Always capture native IPv6, even if the user has not enabled the
+        // "prefer IPv6" setting or Russia mode. Otherwise AAAA-capable apps
+        // can bypass the VPN over their carrier's native IPv6 interface.
+        // If the chosen exit cannot route IPv6, fail closed, never leak it.
+        builder.addAddress(vpnConfig.ipv6Client, 126)
+        SkryonTrafficPrivacyRoutes.ipv6Routes(bypassLan).forEach { (address, prefix) ->
+            builder.addRoute(address, prefix)
         }
 
         // Configure DNS servers

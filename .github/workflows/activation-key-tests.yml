@@ -121,3 +121,5 @@ jobs:
           grep -F 'versionName = "2.0.18"' app/build.gradle.kts
       - name: Assemble Playstore debug
         run: ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
+      - name: Verify IPv6 privacy routing regression
+        run: ./gradlew :app:testPlaystoreDebugUnitTest --tests com.v2ray.ang.service.SkryonTrafficPrivacyRoutesTest --no-daemon --stacktrace
