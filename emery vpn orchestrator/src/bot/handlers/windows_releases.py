@@ -14,6 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.bot.ui.keyboards import admin_menu_keyboard
 from src.bot.utils.access import is_admin
 from src.bot.utils import windows_release_store as store
+from src.bot.utils import windows_upload_chunks as chunks
 
 router = Router(name="windows_releases")
 _upload_lock = asyncio.Lock()
@@ -49,11 +50,12 @@ def _status() -> tuple[str, InlineKeyboardMarkup]:
         + ("✅ Публикация настроена." if not issues else
            "🔒 Публикация заблокирована до настройки безопасности:\n"
            + "\n".join("• " + x for x in issues))
-        + "\n\nОтправьте установщик .exe этому боту лично. "
-          "Версию бот прочитает из Windows-файла автоматически."
+        + "\n\nДля больших установщиков пришлите все части .skpart "
+          "по 18 МиБ прямо в этот чат. Для небольших EXE можно прислать один файл."
     )
     return _screen(text, [
         ("📥 Загрузить Windows-сборку", "wr:upload"),
+        ("🗑 Сбросить незавершённые части", "wr:cancel_uploads"),
         ("📋 Ожидают публикации", "wr:pending"),
         ("🗂 История выпусков", "wr:history"),
         ("🔐 Правила принудительного обновления", "wr:mandatory"),
@@ -122,11 +124,15 @@ async def release_upload(callback: CallbackQuery) -> None:
         await callback.answer("Доступ запрещён.", show_alert=True)
         return
     await callback.message.edit_text(
-        "📥 Пришлите установщик SkryonSetup-*.exe отдельным документом в этот чат.\n\n"
-        "Бот определит версию, хеш, размер и цифровую подпись. "
-        "Никакой публикации до вашего отдельного подтверждения.\n\n"
-        "⚠️ Файл 100+ МБ требует локального Telegram Bot API Server. "
-        "Если он не подключён, большой файл будет отклонён.",
+        "📥 Загрузка Windows через обычный Telegram\n\n"
+        "Большой EXE делится на части .skpart по 18 МиБ. "
+        "Отправьте все части как документы в этот личный чат, "
+        "можно несколько сразу, в произвольном порядке.\n\n"
+        "Бот сам соберёт EXE, проверит SHA-256, прочитает версию "
+        "и предложит предварительный просмотр. Ничего не публикуется "
+        "до подтверждения.\n\n"
+        "Для маленького .exe (до 18 МиБ) отправьте файл целиком. "
+        "API ID и API Hash НЕ нужны.",
         reply_markup=_screen("", [("← Релизы", "wr:menu")])[1],
     )
     await callback.answer()
@@ -137,42 +143,65 @@ async def release_document(message: Message, bot: Bot) -> None:
     if not _authorized(message.from_user.id if message.from_user else None, message.chat.type):
         return
     doc = message.document
-    if not doc or not (doc.file_name or "").lower().endswith(".exe"):
+    if not doc:
         return
-    if not doc.file_size or doc.file_size >= store.MAX_UPLOAD:
-        await message.answer("Слишком большой файл для релиза Windows.")
+    filename = doc.file_name or ""
+    is_chunk = filename.endswith(".skpart")
+    if not is_chunk and not filename.lower().endswith(".exe"):
         return
-    if _upload_lock.locked():
-        await message.answer("Уже проверяю другую загрузку. Повторите отправку позже.")
+    if is_chunk:
+        try:
+            chunks.parse(filename)
+        except store.ReleaseError as exc:
+            await message.answer("⛔ " + str(exc))
+            return
+    if not doc.file_size or doc.file_size > chunks.PART_BYTES:
+        await message.answer(
+            "⛔ Обычный Telegram API скачивает не больше 20 МБ. "
+            "Разбейте установщик на части по 18 МиБ через "
+            "Skryon Prepare Telegram Release. Затем отправьте файлы .skpart.")
         return
+    # Queue document updates instead of rejecting busy updates. Multiple
+    # documents are delivered concurrently by Telegram and aiogram.
     async with _upload_lock:
-        notice = await message.answer("📥 Принимаю файл и проверяю подписи…")
+        notice = await message.answer(
+            f"📥 Принимаю {'часть сборки' if is_chunk else 'Windows EXE'}…")
         temp = None
         try:
             folder = store.release_root() / "incoming"
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with tempfile.NamedTemporaryFile(dir=folder, prefix="tg-", suffix=".exe",
+            with tempfile.NamedTemporaryFile(dir=folder, prefix="tg-", suffix=".part",
                                              delete=False) as f:
                 temp = Path(f.name)
-            # In local Telegram Bot API mode aiogram can directly access the
-            # absolute file_path. In cloud mode getFile rejects >20 MB.
             remote_file = await bot.get_file(doc.file_id)
-            await bot.download(remote_file, destination=str(temp), timeout=360)
+            await bot.download(remote_file, destination=str(temp), timeout=240)
             if temp.stat().st_size != doc.file_size:
-                raise store.ReleaseError("Файл Telegram скачан не полностью.")
-            row = await asyncio.to_thread(store.stage, temp, doc.file_name, message.from_user.id)
-            temp = None
+                raise store.ReleaseError("Файл получен не полностью.")
+            if is_chunk:
+                received, total, row = await asyncio.to_thread(
+                    chunks.add_part, temp, filename, doc.file_size,
+                    message.from_user.id)
+                temp = None
+                if row is None:
+                    await notice.edit_text(
+                        f"✅ Часть сохранена. Готово: {received}/{total}. "
+                        "Отправьте оставшиеся .skpart. "
+                        "Данные сохраняются даже после перезапуска бота.")
+                    return
+            else:
+                row = await asyncio.to_thread(
+                    store.stage, temp, filename, message.from_user.id)
+                temp = None
             digest = row["sha256"][:12]
             text = (
-                "✅ Сборка получена, НО ЕЩЁ НЕ ОПУБЛИКОВАНА.\n\n"
+                "✅ Windows-сборка получена и проверена, но ЕЩЁ НЕ ОПУБЛИКОВАНА.\n\n"
                 f"Версия: {row['version']}\n"
                 f"Код протокола (предполагаемый): {row['versionCode']}\n"
-                f"Размер: {row['size']/1048576:.1f} МБ\n"
+                f"Размер: {row['size']/1048576:.1f} МиБ\n"
                 f"SHA-256: {row['sha256']}\n"
                 f"Подпись Windows: {row['authenticodeReason']}\n\n"
-                "Проверка номера версии в PE не доказывает, что внутри клиента "
-                "такой же протокол: нужен проверенный релизный конвейер."
-            )
+                "Версия из EXE не доказывает соответствие кода протокола. "
+                "Перед публикацией нужна подлинная подпись и проверенный выпуск.")
             _, keyboard = _screen("", [
                 ("🔍 Посмотреть выпуск", f"wr:details:{digest}"),
                 ("🗑 Удалить загрузку", f"wr:drop:{digest}"),
@@ -180,16 +209,29 @@ async def release_document(message: Message, bot: Bot) -> None:
             ])
             await notice.edit_text(text, reply_markup=keyboard)
         except Exception as exc:
-            # Never leak Telegram IDs, API tokens, secrets or full paths.
             from aiogram.exceptions import TelegramBadRequest
-            detail = (str(exc)[:170] if isinstance(exc, store.ReleaseError) else
-                      "Не удалось получить/проверить документ.")
+            detail = (str(exc)[:170] if isinstance(exc, store.ReleaseError)
+                      else "Не удалось получить или проверить документ.")
             if isinstance(exc, TelegramBadRequest):
-                detail = ("Telegram не позволяет боту скачать этот большой файл. "
-                          "Нужно подключить локальный Telegram Bot API Server.")
-            await notice.edit_text("⛔ Загрузка отменена. " + detail)
+                detail = ("Telegram не выдал файл боту. "
+                          "Отправьте части .skpart по 18 МиБ.")
+            await notice.edit_text("⛔ " + detail)
         finally:
             if temp: temp.unlink(missing_ok=True)
+
+
+@router.callback_query(F.data == "wr:cancel_uploads")
+async def cancel_uploads(callback: CallbackQuery) -> None:
+    if not _authorized(callback.from_user.id, callback.message.chat.type):
+        await callback.answer("Доступ запрещён.", show_alert=True)
+        return
+    async with _upload_lock:
+        removed = await asyncio.to_thread(chunks.cancel_parts, callback.from_user.id)
+    await callback.message.edit_text(
+        f"🗑 Незавершённых загрузок удалено: {removed}. "
+        "Уже подготовленные кандидаты не тронуты.",
+        reply_markup=_screen("", [("← Релизы", "wr:menu")])[1])
+    await callback.answer()
 
 
 @router.callback_query(F.data == "wr:pending")
