@@ -13,7 +13,7 @@ from device_auth import DeviceAuthError, _request_canonical
 
 
 def request(headers=None):
-    pairs = [(name.lower().encode('ascii'), str(value).encode('ascii'))
+    pairs = [(name.lower().encode('ascii'), str(value).encode('utf-8'))
              for name, value in (headers or {}).items()]
     return Request({'type': 'http', 'method': 'GET', 'path': '/api/vpn/servers/authorized',
                     'headers': pairs, 'query_string': b'', 'server': ('localhost', 80)})
