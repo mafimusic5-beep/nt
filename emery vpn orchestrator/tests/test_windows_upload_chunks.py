@@ -55,12 +55,12 @@ def test_parts_out_of_order_and_resume(tmp_path, monkeypatch):
     files = filenames(data, 8)
     assert len(files) == 5
     # Same bot state directory survives process restarts.
-    for i in [3, 1, 4, 2, 5]:
+    for step, i in enumerate([3, 1, 4, 2, 5], start=1):
         name, payload = files[i - 1]
         received = tmp_path / f"incoming-{i}.part"
         received.write_bytes(payload)
         n, total, row = chunks.add_part(received, name, len(payload), 42)
-        assert n == sorted([3, 1, 4, 2, 5]).index(i) + 1 or n >= 1
+        assert n == step
         assert total == 5
         assert (row is None) == (i != 5)
     assert row["sha256"] == expected_sha
@@ -70,7 +70,7 @@ def test_parts_out_of_order_and_resume(tmp_path, monkeypatch):
 def test_duplicate_part_not_corrupted(tmp_path, monkeypatch):
     monkeypatch.setenv("SKRYON_WINDOWS_RELEASE_DIR", str(tmp_path))
     monkeypatch.setattr(chunks, "PART_BYTES", 4)
-    first, _ = filenames(b"ABCD" * 3, 4)
+    first = filenames(b"ABCD" * 3, 4)[0]
     file = tmp_path / "first"
     file.write_bytes(first[1])
     assert chunks.add_part(file, first[0], 4, 77)[0] == 1
