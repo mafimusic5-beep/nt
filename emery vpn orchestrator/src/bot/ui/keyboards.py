@@ -43,6 +43,8 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="📦 Релизы Windows", callback_data="admin_releases")
+    kb.button(text="🖥 Управление VPS", callback_data="admin_node_tools")
+    kb.button(text="➕ Добавить VPS", callback_data="admin_vps_add")
     kb.button(text="Статистика", callback_data="admin_stats")
     kb.button(text="Узлы", callback_data="admin_nodes")
     kb.button(text="Ёмкость", callback_data="admin_capacity")
@@ -53,7 +55,7 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
     kb.button(text="Код себе", callback_data="admin_code_self")
     kb.button(text="Проблемы", callback_data="admin_problem_activations")
     kb.button(text="📚 Помощь по админке", callback_data="admin_help")
-    kb.adjust(1, 2, 2, 2, 2, 1)
+    kb.adjust(1, 2, 2, 2, 2, 2, 1)
     return kb.as_markup()
 
 def admin_codes_keyboard(items: list[dict], *, total: int, page: int, page_size: int, mode: str) -> InlineKeyboardMarkup:
