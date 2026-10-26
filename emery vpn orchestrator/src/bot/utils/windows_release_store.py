@@ -286,7 +286,11 @@ def _upload_to_site(local_installer: Path, manifest: dict, remote_filename: str)
                                         separators=(",", ":")).encode("utf-8"))
             client.chmod(new_manifest, 0o644)
             # Latest pointer MUST be published last, after binary is available.
-            client.rename(new_manifest, manifest_dest)
+            # OpenSSH posix-rename performs an atomic replacement of the
+            # previous latest.json (standard SFTP rename may fail if it exists).
+            # If the extension isn't supported, fail closed: never delete
+            # the old signed manifest before a new one is safely uploaded.
+            client.posix_rename(new_manifest, manifest_dest)
         except Exception:
             for name in (new_installer, new_manifest):
                 try: client.remove(name)
