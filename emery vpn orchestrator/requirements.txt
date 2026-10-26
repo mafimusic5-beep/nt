@@ -9,3 +9,4 @@ python-dateutil==2.9.0.post0
 httpx==0.28.1
 paramiko==3.5.1
 pytest==8.4.2
+pefile==2024.8.26
