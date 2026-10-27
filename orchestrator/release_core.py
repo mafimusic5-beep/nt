@@ -324,6 +324,14 @@ class ReleaseStore:
     def publish(self, digest: str) -> Manifest:
         manifest = self.validate_candidate(digest)
         src = self._assembled_file(manifest)
+        # The bot and skryon.ru frontend can live on DIFFERENT VPS instances.
+        # Never silently create /var/www/... on the wrong host and claim
+        # that an update was released.
+        if not self.site_root.is_dir() or not (self.site_root / "index.html").is_file():
+            raise ReleaseError(
+                "Official website root is not available on this server. "
+                "Publishing must use an authenticated frontend transfer."
+            )
         destination = self.public_installer_dir / manifest.installer_name
         # Symlink/path safety preflight.
         for parent in (self.site_root, self.public_installer_dir, self.public_manifest_dir):
