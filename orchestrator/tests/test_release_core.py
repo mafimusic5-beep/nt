@@ -23,6 +23,8 @@ class ReleaseFlowTest(unittest.TestCase):
         pub = self.key.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)
         self.patch = patch.object(c, 'PUBLISHER_PUBLIC_SPKI', base64.b64encode(pub).decode('ascii'))
         self.patch.start();self.addCleanup(self.patch.stop)
+        (self.root/'site').mkdir()
+        (self.root/'site'/'index.html').write_text('<html>skryon</html>', encoding='utf-8')
         self.store = c.ReleaseStore(self.root/'stage',self.root/'site',enabled=True)
         self.binary = b'MZ' + b'linux-safe-test-not-a-real-exe' * 50
         self.digest = hashlib.sha256(self.binary).hexdigest()
@@ -85,6 +87,14 @@ class ReleaseFlowTest(unittest.TestCase):
         self.assertEqual(self.store.public_manifest.read_bytes(),self.blob)
         with self.assertRaisesRegex(c.ReleaseError,'Only newer'):
             self.store.publish(self.digest)
+
+    def test_remote_website_is_not_silently_created(self):
+        self.upload()
+        (self.root/'site'/'index.html').unlink()
+        with patch.object(c,'inspect_exe_version',return_value=(self.build,self.version)):
+            with self.assertRaisesRegex(c.ReleaseError,'website root'):
+                self.store.publish(self.digest)
+        self.assertFalse(self.store.public_manifest.exists())
 
     def test_disabled_publish_is_fail_closed(self):
         self.upload()
