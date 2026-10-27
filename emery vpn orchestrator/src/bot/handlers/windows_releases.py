@@ -50,8 +50,8 @@ def _status() -> tuple[str, InlineKeyboardMarkup]:
         + ("✅ Публикация настроена." if not issues else
            "🔒 Публикация заблокирована до настройки безопасности:\n"
            + "\n".join("• " + x for x in issues))
-        + "\n\nДля больших установщиков пришлите все части .skpart "
-          "по 18 МиБ прямо в этот чат. Для небольших EXE можно прислать один файл."
+        + "\n\nПришлите части .skpart по 18 МиБ, затем подписанный на ПК "
+          "SkryonRelease-*.json. Для маленького EXE можно прислать один файл."
     )
     return _screen(text, [
         ("📥 Загрузить Windows-сборку", "wr:upload"),
@@ -128,8 +128,10 @@ async def release_upload(callback: CallbackQuery) -> None:
         "Большой EXE делится на части .skpart по 18 МиБ. "
         "Отправьте все части как документы в этот личный чат, "
         "можно несколько сразу, в произвольном порядке.\n\n"
-        "Бот сам соберёт EXE, проверит SHA-256, прочитает версию "
-        "и предложит предварительный просмотр. Ничего не публикуется "
+        "Бот соберёт EXE и проверит SHA-256. После последней части "
+        "пришлите из той же папки файл SkryonRelease-26K101.json "
+        "(номер в имени будет соответствовать вашей сборке). "
+        "Бот проверит цифровую подпись издателя. Ничего не публикуется "
         "до подтверждения.\n\n"
         "Для маленького .exe (до 18 МиБ) отправьте файл целиком. "
         "API ID и API Hash НЕ нужны.",
@@ -147,7 +149,8 @@ async def release_document(message: Message, bot: Bot) -> None:
         return
     filename = doc.file_name or ""
     is_chunk = filename.endswith(".skpart")
-    if not is_chunk and not filename.lower().endswith(".exe"):
+    is_manifest = filename.startswith("SkryonRelease-") and filename.endswith(".json")
+    if not is_chunk and not is_manifest and not filename.lower().endswith(".exe"):
         return
     if is_chunk:
         try:
@@ -155,6 +158,9 @@ async def release_document(message: Message, bot: Bot) -> None:
         except store.ReleaseError as exc:
             await message.answer("⛔ " + str(exc))
             return
+    if is_manifest and (not doc.file_size or doc.file_size > store.MAX_MANIFEST_BYTES):
+        await message.answer("⛔ Подписанный манифест больше 12 КиБ.")
+        return
     if not doc.file_size or doc.file_size > chunks.PART_BYTES:
         await message.answer(
             "⛔ Обычный Telegram API скачивает не больше 20 МБ. "
@@ -177,6 +183,24 @@ async def release_document(message: Message, bot: Bot) -> None:
             await bot.download(remote_file, destination=str(temp), timeout=240)
             if temp.stat().st_size != doc.file_size:
                 raise store.ReleaseError("Файл получен не полностью.")
+            if is_manifest:
+                row = await asyncio.to_thread(
+                    store.attach_publisher_manifest,
+                    temp.read_bytes(), message.from_user.id, filename
+                )
+                await notice.edit_text(
+                    f"✅ Подпись издателя подтверждена.\n\n"
+                    f"Сборка: {row['buildId']}\n"
+                    f"Версия: {row['version']}\n"
+                    f"SHA-256: {row['sha256']}\n\n"
+                    "Файл проверен и готов к предварительному просмотру. "
+                    "Публикации ещё не было.",
+                    reply_markup=_screen("", [
+                        ("🔎 Посмотреть сборку", f"wr:details:{row['sha256'][:12]}"),
+                        ("← Релизы", "wr:menu"),
+                    ])[1],
+                )
+                return
             if is_chunk:
                 received, total, row = await asyncio.to_thread(
                     chunks.add_part, temp, filename, doc.file_size,
@@ -258,9 +282,10 @@ async def details(callback: CallbackQuery) -> None:
             f"Код: {row['versionCode']}\n"
             f"Размер: {row['size']/1048576:.1f} МБ\n"
             f"SHA-256: {digest}\n"
-            f"Подпись: {row['authenticodeReason']}\n\n"
-            "Публикация требует действительного сертификата Windows, "
-            "совпадающего ключа подписи манифестов и защищённого SFTP.")
+            f"Подпись Windows: {row['authenticodeReason']}\n"
+            f"Подпись издателя: {'✅ подтверждена' if row.get('publisherSignatureValid') else '❌ пришлите SkryonRelease-*.json'}\n\n"
+            "Публикация требует подписанного на Windows ПК манифеста, "
+            "проверки подлинности EXE и защищённого SFTP.")
     _, kb = _screen(text, [
         ("✅ Опубликовать", f"wr:approve:{digest[:12]}"),
         ("🗑 Удалить", f"wr:drop:{digest[:12]}"),
@@ -286,7 +311,7 @@ async def approve(callback: CallbackQuery) -> None:
     ])
     await callback.message.edit_text(
         f"Подтвердите публикацию Windows {row['version']}.\n"
-        "После проверки будет изменён указатель latest.json на сайте. "
+        "После проверки подписанного манифеста будет изменён указатель latest.json на сайте. "
         "Минимальную разрешённую версию API это НЕ меняет.",
         reply_markup=kb)
     await callback.answer()

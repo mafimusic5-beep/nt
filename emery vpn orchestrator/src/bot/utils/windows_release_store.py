@@ -26,6 +26,108 @@ VERSION_RE = re.compile(r"^(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})$
 MAX_UPLOAD = 2_000_000_000
 BASE_CODE = 20261026  # 1.0.0. Each increment must match the actual Windows binary.
 
+# Same *public* ECDSA key pinned in SkryonUpdateFeed.cs (Windows client).
+# Publisher's non-exportable private key remains on the developer Windows PC.
+CLIENT_MANIFEST_PUBLIC_SPKI_B64 = (
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETxGHQgaATere1BFfKQLU9gZzvqesNsAtZoo+0YDYhn/gfPdhvh/ooV+b4WeAlSL+e35ODRckNozzr/uc9HJs9w=="
+)
+MAX_MANIFEST_BYTES = 12_288
+
+
+def _unsigned_opt_in() -> bool:
+    # Disabled by default. Authenticode is preferred for production.
+    return os.environ.get("SKRYON_RELEASE_ALLOW_UNSIGNED", "").strip().lower() in {
+        "1", "true", "yes"
+    }
+
+
+def _object_without_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReleaseError("Повторяющееся поле манифеста.")
+        result[key] = value
+    return result
+
+
+def _validate_windows_publisher_manifest(manifest_bytes: bytes, row: dict) -> dict:
+    """Verify the exact canonical ECDSA signature that the Windows client checks.
+
+    The bot NEVER signs update metadata itself. An admin sends the detached JSON
+    produced on the Windows build PC alongside the installer chunks.
+    """
+    if not (10 < len(manifest_bytes) <= MAX_MANIFEST_BYTES):
+        raise ReleaseError("Манифест сборки пустой или слишком большой.")
+    try:
+        manifest = json.loads(
+            manifest_bytes.decode("utf-8-sig"),
+            object_pairs_hook=_object_without_duplicate_keys,
+        )
+    except (ValueError, UnicodeError, TypeError) as exc:
+        raise ReleaseError("Неверный формат JSON-манифеста.") from exc
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "versionCode", "version", "downloadUrl", "sha256", "signature"
+    }:
+        raise ReleaseError("Манифест не соответствует формату Skryon.")
+    expected_url = "https://skryon.ru/downloads/windows/" + row["filename"]
+    if (type(manifest["versionCode"]) is not int
+        or manifest["versionCode"] != row["versionCode"]
+        or manifest["version"] != row["version"]
+        or manifest["downloadUrl"] != expected_url
+        or manifest["sha256"] != row["sha256"]):
+        raise ReleaseError("Подписанный манифест не совпадает с установщиком.")
+    try:
+        signature = base64.b64decode(manifest["signature"], validate=True)
+        if len(signature) > 160:
+            raise ValueError("Unexpected ECDSA signature length")
+        public_key = serialization.load_der_public_key(
+            base64.b64decode(CLIENT_MANIFEST_PUBLIC_SPKI_B64, validate=True)
+        )
+        if not isinstance(public_key, ec.EllipticCurvePublicKey):
+            raise ValueError("Unexpected publisher key type")
+        canonical = "\n".join([
+            "skryon-windows-update-v1",
+            "version_code=" + str(manifest["versionCode"]),
+            "version=" + manifest["version"],
+            "download_url=" + manifest["downloadUrl"],
+            "sha256=" + manifest["sha256"],
+        ]).encode("utf-8")
+        public_key.verify(signature, canonical, ec.ECDSA(hashes.SHA256()))
+    except (ValueError, TypeError, UnicodeError) as exc:
+        raise ReleaseError("Некорректные данные криптографической подписи.") from exc
+    except Exception as exc:
+        from cryptography.exceptions import InvalidSignature
+        if isinstance(exc, InvalidSignature):
+            raise ReleaseError("Подпись манифеста не принадлежит издателю Skryon.") from exc
+        raise
+    return manifest
+
+
+def attach_publisher_manifest(raw: bytes, admin_id: int, filename: str) -> dict:
+    """Attach a detached publisher-signed update JSON to a staged installer."""
+    if not re.fullmatch(r"SkryonRelease-[0-9]{2}[A-HJ-M][0-9]{3,}\.json", filename):
+        raise ReleaseError("Неверное имя подписанного SkryonRelease-*.json.")
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise ReleaseError("Подписанный манифест слишком большой.")
+    try:
+        obj = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_object_without_duplicate_keys)
+    except (ValueError, UnicodeError, TypeError) as exc:
+        raise ReleaseError("Некорректный манифест.") from exc
+    if not isinstance(obj, dict) or not isinstance(obj.get("sha256"), str):
+        raise ReleaseError("В манифесте отсутствует SHA-256.")
+    staged = state()
+    row = staged.get("staged", {}).get(obj["sha256"])
+    if row is None or row.get("admin") != admin_id:
+        raise ReleaseError("Сначала загрузите части соответствующего EXE в этот чат.")
+    if filename != f"SkryonRelease-{row['buildId']}.json":
+        raise ReleaseError("Номер сборки в имени манифеста не совпадает с EXE.")
+    valid = _validate_windows_publisher_manifest(raw, row)
+    row["signedManifest"] = valid
+    row["publisherSignatureValid"] = True
+    _atomic_json(release_root() / "state.json", staged)
+    return row
+
+
 
 class ReleaseError(Exception):
     pass
@@ -206,10 +308,9 @@ def publishing_readiness() -> list[str]:
     problems = []
     # Standard Telegram cloud API is supported by uploading 18 MiB chunks
     # and validating the reconstructed EXE. No Telegram API ID/hash required.
-    if shutil.which("osslsigncode") is None:
+    if shutil.which("osslsigncode") is None and not _unsigned_opt_in():
         problems.append("Не установлен проверяющий подпись Windows osslsigncode")
-    if not _current_key_matches_client():
-        problems.append("Подписывающий ключ не совпадает с ключом Windows-клиента")
+    # The signing key does NOT live on the bot. Signed JSON comes from Windows.
     if not os.environ.get("SKRYON_RELEASE_SFTP_HOST", ""):
         problems.append("Не задан SFTP сервер")
     if not os.environ.get("SKRYON_RELEASE_SFTP_USER", ""):
@@ -343,8 +444,10 @@ async def publish(digest: str, requesting_admin: int) -> dict:
     if not record: raise ReleaseError("Сборка не найдена среди подготовленных.")
     if record["admin"] != requesting_admin:
         raise ReleaseError("Подтверждать эту загрузку может только загрузивший администратор.")
-    if not record["authenticodeValid"]:
-        raise ReleaseError("Нельзя публиковать неподписанный установщик. Подпишите Windows Authenticode.")
+    if not record["authenticodeValid"] and not _unsigned_opt_in():
+        raise ReleaseError("Это неподписанный установщик. Требуется подпись Windows Authenticode.")
+    if not record.get("signedManifest"):
+        raise ReleaseError("Нет SkryonRelease-*.json, подписанного издателем на Windows ПК.")
     errors = publishing_readiness()
     if errors: raise ReleaseError("; ".join(errors))
     current = data.get("current")
@@ -353,8 +456,9 @@ async def publish(digest: str, requesting_admin: int) -> dict:
     file = Path(record["path"])
     if not file.is_file() or _sha256(file) != digest:
         raise ReleaseError("Файл изменился после проверки. Публикация отменена.")
-    key = _signing_key()
-    manifest = _signed_manifest(record, key)
+    manifest = _validate_windows_publisher_manifest(
+        json.dumps(record["signedManifest"], ensure_ascii=False).encode("utf-8"), record
+    )
     # Use a worker thread: hashing/uploading 100+ MB must not block Telegram.
     await asyncio.to_thread(_upload_to_site, file, manifest, record["filename"])
     record = dict(record)
