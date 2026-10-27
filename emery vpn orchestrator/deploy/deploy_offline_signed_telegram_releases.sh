@@ -11,7 +11,7 @@ ref=origin/skryon-rel-review-1027
 path1=src/bot/handlers/windows_releases.py
 path2=src/bot/utils/windows_release_store.py
 old_handler_blob=a22e8150036413c98d1cbb70078c2646ce84a6ca
-old_store_blob=94496a196652e82e252b9484b8c5fe05d426cd88
+old_store_blob=94496a190652e82e252b9484b8c5fe05d426cd88
 candidate_handler_blob=2b856b77756b9cc4ae48f298d78bd8c0959e11242
 candidate_store_blob=14165005b6ab2039350233cf8421d54d605b67d6
 [[ -x "$python" && -f "$runtime/$path1" && -f "$runtime/$path2" ]] || {
