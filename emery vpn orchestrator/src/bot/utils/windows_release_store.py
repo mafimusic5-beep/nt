@@ -67,42 +67,70 @@ def _safe_filename(value: str) -> str:
     return value
 
 
-def _pe_version(file: Path) -> str:
+def _pe_release_identity(file: Path) -> tuple[str, str | None]:
+    """Read the internal update version and the *public* Skryon build label.
+
+    Windows installers from build 26K101 onwards use:
+      PE FileVersion    = 1.0.1 (monotonic update comparison)
+      PE ProductVersion = 26K101 (user-facing build ID).
+    Neither value proves authenticity without a valid Authenticode signature.
+    """
     import pefile
     pe = pefile.PE(str(file), fast_load=False)
     try:
         if not pe.is_exe() or not pe.VS_FIXEDFILEINFO:
             raise ReleaseError("Нет корректных метаданных версии Windows.")
-        # Inno Setup usually keeps human-readable ProductVersion in
-        # StringFileInfo; VS_FIXEDFILEINFO ProductVersion may be 0.0.0.0.
+        build_id: str | None = None
+        technical: str | None = None
         for group in getattr(pe, "FileInfo", []):
             for table in group:
                 if getattr(table, "Key", b"") != b"StringFileInfo":
                     continue
                 for strings in getattr(table, "StringTable", []):
-                    raw = strings.entries.get(b"ProductVersion") or strings.entries.get(b"FileVersion")
-                    if not raw:
-                        continue
-                    version_text = raw.decode("utf-8", "replace").strip()
-                    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?", version_text)
-                    if not match:
-                        continue
-                    if match.group(4) and int(match.group(4)) != 0:
-                        raise ReleaseError("Ожидается версия X.Y.Z.")
-                    version = ".".join(str(int(x)) for x in match.groups()[:3])
-                    if VERSION_RE.fullmatch(version):
-                        return version
-        fixed = pe.VS_FIXEDFILEINFO[0]
-        product = tuple((
-            fixed.ProductVersionMS >> 16, fixed.ProductVersionMS & 65535,
-            fixed.ProductVersionLS >> 16, fixed.ProductVersionLS & 65535
-        ))
-        version = f"{product[0]}.{product[1]}.{product[2]}"
-        if not VERSION_RE.fullmatch(version) or product == (0, 0, 0):
-            raise ReleaseError("В установщике нет метаданных версии.")
-        return version
+                    entries = strings.entries
+                    product_raw = entries.get(b"ProductVersion")
+                    file_raw = entries.get(b"FileVersion")
+                    product = (product_raw.decode("utf-8", "replace").strip()
+                               if isinstance(product_raw, bytes) else str(product_raw or "").strip())
+                    file_version = (file_raw.decode("utf-8", "replace").strip()
+                                    if isinstance(file_raw, bytes) else str(file_raw or "").strip())
+                    if BUILD_RE.fullmatch(product):
+                        if build_id and build_id != product:
+                            raise ReleaseError("Разные номера сборки в метаданных EXE.")
+                        build_id = product
+                    for candidate in (file_version, product):
+                        m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?", candidate)
+                        if not m or (m.group(4) and int(m.group(4)) != 0):
+                            continue
+                        version = ".".join(str(int(x)) for x in m.groups()[:3])
+                        if VERSION_RE.fullmatch(version):
+                            if technical and technical != version:
+                                raise ReleaseError("Противоречивые технические версии EXE.")
+                            technical = version
+                            break
+        if not technical:
+            fixed = pe.VS_FIXEDFILEINFO[0]
+            version_parts = (
+                fixed.ProductVersionMS >> 16, fixed.ProductVersionMS & 65535,
+                fixed.ProductVersionLS >> 16, fixed.ProductVersionLS & 65535,
+            )
+            technical = ".".join(str(x) for x in version_parts[:3])
+            if not VERSION_RE.fullmatch(technical) or version_parts == (0, 0, 0, 0):
+                raise ReleaseError("В установщике нет метаданных версии.")
+        return technical, build_id
     finally:
         pe.close()
+
+
+BUILD_RE = re.compile(r"^[0-9]{2}[A-HJ-M][0-9]{3,}$")
+
+
+def _pe_version(file: Path) -> str:
+    return _pe_release_identity(file)[0]
+
+
+def _pe_build_id(file: Path) -> str | None:
+    return _pe_release_identity(file)[1]
 
 
 def code_for(version: str) -> int:
@@ -200,12 +228,14 @@ def stage(file: Path, original_name: str, admin_id: int) -> dict:
     with file.open("rb") as stream:
         if stream.read(2) != b"MZ":
             raise ReleaseError("Файл не является Windows PE (.exe).")
-    version = _pe_version(file)
+    version, build_id = _pe_release_identity(file)
     code = code_for(version)
+    if code > BASE_CODE and not build_id:
+        raise ReleaseError("В новом установщике отсутствует номер сборки Skryon.")
     digest = _sha256(file)
     signed, signing_message = has_valid_authenticode(file)
     record = {
-        "version": version, "versionCode": code, "sha256": digest,
+        "version": version, "buildId": build_id, "versionCode": code, "sha256": digest,
         "size": file.stat().st_size, "authenticodeValid": signed,
         "authenticodeReason": signing_message, "admin": admin_id,
         "uploadedAt": int(time.time()), "filename": f"SkryonSetup-{version}.exe",
