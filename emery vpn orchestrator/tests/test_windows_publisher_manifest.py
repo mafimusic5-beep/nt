@@ -104,7 +104,7 @@ def test_unsigned_publish_is_default_denied_even_with_manifest(tmp_path, monkeyp
     row["path"] = str(installer)
     state["staged"][HASH] = row
     store._atomic_json(tmp_path / "state.json", state)
-    with pytest.raises(store.ReleaseError, match="Неподписанный"):
+    with pytest.raises(store.ReleaseError, match="неподписанный"):
         asyncio.run(store.publish(HASH, 42))
 
 
