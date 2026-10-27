@@ -445,7 +445,7 @@ async def publish(digest: str, requesting_admin: int) -> dict:
     if record["admin"] != requesting_admin:
         raise ReleaseError("Подтверждать эту загрузку может только загрузивший администратор.")
     if not record["authenticodeValid"] and not _unsigned_opt_in():
-        raise ReleaseError("Неподписанный установщик. Требуется подпись Windows Authenticode.")
+        raise ReleaseError("Это неподписанный установщик. Требуется подпись Windows Authenticode.")
     if not record.get("signedManifest"):
         raise ReleaseError("Нет SkryonRelease-*.json, подписанного издателем на Windows ПК.")
     errors = publishing_readiness()
