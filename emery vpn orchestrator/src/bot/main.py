@@ -6,12 +6,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import ErrorEvent
 
 from src.bot.handlers.admin import router as admin_router
+from src.bot.handlers.admin_guided import router as admin_guided_router
 from src.bot.handlers.admin_codes import router as admin_codes_router
 from src.bot.handlers.admin_node_delete import router as admin_node_delete_router
 from src.bot.handlers.admin_slots import router as admin_slots_router
 from src.bot.handlers.compat_commands import router as compat_commands_router
 from src.bot.handlers.server_setup import router as server_setup_router
 from src.bot.handlers.start import router as start_router
+from src.bot.handlers.windows_releases import router as windows_releases_router
 from src.bot.handlers.subscription import router as subscription_router
 from src.common.config import settings
 
@@ -51,7 +53,16 @@ async def run() -> None:
 
     await asyncio.to_thread(_disable_legacy_polling_service)
 
-    bot = Bot(token=settings.bot_token)
+    # For large Windows installers the standard Bot API getFile (20 MB) is
+    # insufficient. A self-hosted Telegram Bot API Server can be configured
+    # via SKRYON_TELEGRAM_LOCAL_API_URL, e.g. http://127.0.0.1:8081.
+    import os
+    from aiogram.client.session.aiohttp import AiohttpSession
+    from aiogram.client.telegram import TelegramAPIServer
+    local_api = os.getenv('SKRYON_TELEGRAM_LOCAL_API_URL', '').strip()
+    session = AiohttpSession(api=TelegramAPIServer.from_base(
+        local_api.rstrip('/'), is_local=True)) if local_api else None
+    bot = Bot(token=settings.bot_token, session=session) if session else Bot(token=settings.bot_token)
     dp = Dispatcher()
     dp.errors.register(on_error)
     dp.include_router(start_router)
@@ -65,6 +76,9 @@ async def run() -> None:
     # bot never presents reserved assignment slots as live connected clients.
     dp.include_router(admin_slots_router)
     dp.include_router(compat_commands_router)
+    # Release callbacks must precede the admin_ wildcard router.
+    dp.include_router(windows_releases_router)
+    dp.include_router(admin_guided_router)
     dp.include_router(admin_router)
     # Make command updates independent tasks explicitly. Long-running admin
     # operations (notably VPS provisioning) must never serialize all Telegram

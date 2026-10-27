@@ -57,7 +57,14 @@ def event_line(row: dict) -> str:
 async def start_cmd(message: Message) -> None:
     if not is_admin_message(message):
         return
-    await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID\n/syncconfigs\n/events')
+    try:
+        from src.bot.ui.keyboards import admin_menu_keyboard, admin_reply_keyboard
+        await message.answer("👑 Админ-меню Skryon закреплено снизу.",
+                             reply_markup=admin_reply_keyboard())
+        await message.answer("Панель управления Skryon. Выберите действие:",
+                             reply_markup=admin_menu_keyboard())
+    except ImportError:
+        await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID\n/syncconfigs\n/events')
 
 
 async def newcode_cmd(message: Message) -> None:
@@ -239,7 +246,28 @@ async def main() -> None:
             logger.warning('Initial server-pool sync failed: %s', error)
     else:
         logger.warning('Server-pool sync is disabled because the Emery admin key is unavailable')
-    bot = Bot(BOT_TOKEN)
+    # Migrate the live legacy skryon-bot service to the shared, button-based
+    # admin routers without starting another poller with the same Telegram token.
+    import os
+    import sys
+    from pathlib import Path
+    from config import SERVER_POOL_SYNC_URL, SERVER_POOL_SYNC_ADMIN_KEY
+    os.environ.setdefault("BACKEND_BASE_URL", SERVER_POOL_SYNC_URL)
+    if SERVER_POOL_SYNC_ADMIN_KEY:
+        os.environ.setdefault("ADMIN_API_KEY", SERVER_POOL_SYNC_ADMIN_KEY)
+    modern_root = Path(__file__).resolve().parent.parent / "emery vpn orchestrator"
+    if str(modern_root) not in sys.path:
+        sys.path.insert(0, str(modern_root))
+    from src.bot.handlers.admin_codes import router as codes_admin_router
+    from src.bot.handlers.admin_guided import router as guided_admin_router
+    from src.bot.handlers.windows_releases import router as windows_admin_router
+    from src.bot.handlers.admin import router as modern_admin_router
+    from aiogram.client.session.aiohttp import AiohttpSession
+    from aiogram.client.telegram import TelegramAPIServer
+    local_api = os.getenv("SKRYON_TELEGRAM_LOCAL_API_URL", "").strip()
+    bot = (Bot(BOT_TOKEN, session=AiohttpSession(api=TelegramAPIServer.from_base(
+        local_api.rstrip("/"), is_local=True)))
+        if local_api else Bot(BOT_TOKEN))
     dp = Dispatcher()
 
     admin_filter = F.from_user.id.func(is_admin)
@@ -253,7 +281,15 @@ async def main() -> None:
     dp.message.register(delconfig_cmd, admin_filter, Command('delconfig'))
     dp.message.register(syncconfigs_cmd, admin_filter, Command('syncconfigs'))
     dp.message.register(events_cmd, admin_filter, Command('events'))
-    dp.message.register(ignore_non_admin)
+    dp.message.register(start_cmd, admin_filter, Command('admin'))
+    dp.message.register(start_cmd, admin_filter, F.text.in_({'👑 Админ', 'Админ'}))
+    # Keep existing legacy operations in place. Additional admin menus are
+    # attached as child routers. The old catch-all handler must NOT swallow
+    # documents sent to the owner-only release uploader.
+    dp.include_router(codes_admin_router)
+    dp.include_router(windows_admin_router)
+    dp.include_router(guided_admin_router)
+    dp.include_router(modern_admin_router)
 
     await dp.start_polling(bot)
 
