@@ -23,7 +23,7 @@ from release_core import (CHUNK_RE, MANIFEST_RE, ReleaseError,
 
 log = logging.getLogger(__name__)
 _STORE = ReleaseStore(
-    Path(os.getenv('SKRYON_RELEASE_STAGING_DIR', '/var/lib/skryon-releases')),
+    Path(os.getenv('SKRYON_RELEASE_STAGING_DIR', str(Path.home() / '.local' / 'share' / 'skryon-release-staging'))),
     Path(os.getenv('SKRYON_SITE_ROOT', '/var/www/skryon.ru/html')),
     enabled=os.getenv('SKRYON_RELEASE_PUBLISH_ENABLED', '0').lower() in ('1','true','yes','on'),
 )
