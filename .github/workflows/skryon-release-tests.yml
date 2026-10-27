@@ -1,0 +1,50 @@
+name: Skryon signed Windows release tests
+
+on:
+  push:
+    branches:
+      - feature/skryon-telegram-releases-20261027
+    paths:
+      - 'orchestrator/release_core.py'
+      - 'orchestrator/tg_release_routes.py'
+      - 'orchestrator/tg_admin.py'
+      - 'orchestrator/tests/test_release_core.py'
+      - 'orchestrator/requirements.txt'
+      - '.github/workflows/skryon-release-tests.yml'
+  pull_request:
+    paths:
+      - 'orchestrator/release_core.py'
+      - 'orchestrator/tg_release_routes.py'
+      - 'orchestrator/tg_admin.py'
+      - 'orchestrator/tests/test_release_core.py'
+      - 'orchestrator/requirements.txt'
+      - '.github/workflows/skryon-release-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install release dependencies
+        run: |
+          python -m pip install --quiet -r orchestrator/requirements.txt
+          python -m pip install --quiet pytest
+      - name: Compile bot sources
+        run: python -m compileall -q orchestrator
+      - name: Verify signed release staging and anti-rollback
+        env:
+          PYTHONPATH: orchestrator
+          SKRYON_RELEASE_PUBLISH_ENABLED: '0'
+        run: python -m pytest -q orchestrator/tests/test_release_core.py
+      - name: Verify existing bot can import registered routes
+        env:
+          PYTHONPATH: orchestrator
+          SKRYON_RELEASE_PUBLISH_ENABLED: '0'
+        run: python -c 'from tg_admin import main; from tg_release_routes import register_release_routes; print("BOT_RELEASE_ROUTE_IMPORT_OK")'
