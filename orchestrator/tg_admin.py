@@ -7,6 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import BOT_TOKEN, is_admin
+from tg_release_routes import register_release_routes
 from server_pool_sync import ServerPoolSyncError, is_enabled as pool_sync_enabled, publish_server, unpublish_server
 from storage import (
     create_activation_code,
@@ -57,7 +58,7 @@ def event_line(row: dict) -> str:
 async def start_cmd(message: Message) -> None:
     if not is_admin_message(message):
         return
-    await message.answer('/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID\n/syncconfigs\n/events')
+    await message.answer('/release\n/newcode 30 note\n/codes\n/revoke CODE\n/addconfig VLESS_LINK\n/configs\n/useconfig ID\n/delconfig ID\n/syncconfigs\n/events')
 
 
 async def newcode_cmd(message: Message) -> None:
@@ -253,6 +254,7 @@ async def main() -> None:
     dp.message.register(delconfig_cmd, admin_filter, Command('delconfig'))
     dp.message.register(syncconfigs_cmd, admin_filter, Command('syncconfigs'))
     dp.message.register(events_cmd, admin_filter, Command('events'))
+    register_release_routes(dp)
     dp.message.register(ignore_non_admin)
 
     await dp.start_polling(bot)
