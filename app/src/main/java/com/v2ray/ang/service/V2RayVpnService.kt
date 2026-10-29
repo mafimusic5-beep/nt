@@ -27,10 +27,12 @@ import com.v2ray.ang.handler.ManualModeDebugLogger
 import com.v2ray.ang.handler.ManualModeDiagnostics
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.RegionalPolicyManager
+import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
+import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
 import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
 import com.v2ray.ang.security.DeviceBoundVlessProxy
 import com.v2ray.ang.security.EmeryDeviceGateConfig
@@ -45,12 +47,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @SuppressLint("VpnServicePolicy")
 class V2RayVpnService : VpnService(), ServiceControl {
     private lateinit var mInterface: ParcelFileDescriptor
+    @Volatile
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
     private var deviceGateProxy: DeviceBoundVlessProxy? = null
@@ -464,28 +468,117 @@ class V2RayVpnService : VpnService(), ServiceControl {
         return true
     }
 
+    /**
+     * Heartbeat is authorization, NOT a connectivity probe. Wi-Fi/mobile-data
+     * outages can cause IOException("network") and must never stop the tunnel.
+     * The server's 90s session lease can expire during a longer outage; in
+     * that case re-acquire the SAME server with device-bound authorization.
+     */
     private fun startSessionHeartbeat() {
         sessionHeartbeatJob?.cancel()
         val accessKey = MmkvManager.decodeSettingsString(SKRYON_ACTIVATION_CODE_PREF, "")
             ?.trim().orEmpty()
-        val sessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
+        val initialSessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
             ?.trim().orEmpty()
-        if (accessKey.isBlank() || sessionId.isBlank()) return
+        if (accessKey.isBlank() || initialSessionId.isBlank()) return
 
         sessionHeartbeatJob = sessionScope.launch {
-            while (isActive) {
-                delay(30_000L)
-                val heartbeat = EmeryBackendClient.heartbeatVpnSession(accessKey, sessionId)
-                if (heartbeat.isFailure) {
-                    Log.w(AppConfig.TAG, "StartCore-VPN: Session heartbeat rejected")
-                    withContext(Dispatchers.Main) {
-                        MessageUtil.sendMsg2UI(this@V2RayVpnService, AppConfig.MSG_STATE_START_FAILURE, "")
-                        stopAllService()
+            var activeSessionId = initialSessionId
+            var nextDelayMs = HEARTBEAT_INTERVAL_MS
+            while (isActive && isRunning && !stopInProgress) {
+                delay(nextDelayMs)
+                if (!isRunning || stopInProgress) break
+
+                // A manual disconnect, server switch or newer service may
+                // replace the stored lease. Never touch someone else's session.
+                val storedSessionId = MmkvManager
+                    .decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "").orEmpty()
+                if (storedSessionId != activeSessionId) break
+
+                val heartbeat = EmeryBackendClient.heartbeatVpnSession(accessKey, activeSessionId)
+                if (heartbeat.isSuccess) {
+                    nextDelayMs = HEARTBEAT_INTERVAL_MS
+                    continue
+                }
+
+                val reason = heartbeat.exceptionOrNull()?.message.orEmpty()
+                when (heartbeatFailureAction(reason)) {
+                    VpnHeartbeatFailureAction.RETRY -> {
+                        // Not having internet is not an authorization denial.
+                        Log.i(AppConfig.TAG, "StartCore-VPN: Heartbeat unavailable; keeping VPN alive")
+                        nextDelayMs = HEARTBEAT_RETRY_INTERVAL_MS
                     }
-                    break
+
+                    VpnHeartbeatFailureAction.REACQUIRE_SESSION -> {
+                        val recovery = recoverExpiredVpnSession(accessKey, activeSessionId)
+                        if (recovery.isSuccess) {
+                            activeSessionId = recovery.getOrThrow()
+                            nextDelayMs = HEARTBEAT_INTERVAL_MS
+                            Log.i(AppConfig.TAG, "StartCore-VPN: Session recovered after network outage")
+                        } else {
+                            val recoveryReason = recovery.exceptionOrNull()?.message.orEmpty()
+                            if (heartbeatFailureAction(recoveryReason) == VpnHeartbeatFailureAction.RETRY) {
+                                Log.i(AppConfig.TAG, "StartCore-VPN: Recovery delayed; keeping VPN alive")
+                                nextDelayMs = HEARTBEAT_RETRY_INTERVAL_MS
+                            } else {
+                                terminateRevokedVpnSession(recoveryReason)
+                                break
+                            }
+                        }
+                    }
+
+                    VpnHeartbeatFailureAction.STOP_REVOKED_SESSION -> {
+                        terminateRevokedVpnSession(reason)
+                        break
+                    }
                 }
             }
         }
+    }
+
+    private suspend fun recoverExpiredVpnSession(
+        accessKey: String,
+        expiredSessionId: String,
+    ): Result<String> {
+        val serverId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
+        if (serverId <= 0L) return Result.failure(IllegalStateException("server_not_found"))
+
+        val policy = (
+            RegionalPolicyManager.readMode() ?: RegionalPolicyMode.International
+        ).storageValue
+        val renewed = EmeryBackendClient.connectServer(accessKey, serverId, policy)
+        val payload = renewed.getOrElse { return Result.failure(it) }
+
+        // Don't silently change the selected endpoint or overwrite a session
+        // from a manual disconnect/reconnect racing with this request.
+        val originalStillActive = currentCoroutineContext().isActive &&
+            isRunning &&
+            !stopInProgress &&
+            MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "").orEmpty() == expiredSessionId &&
+            MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L) == serverId &&
+            (RegionalPolicyManager.readMode() ?: RegionalPolicyMode.International).storageValue == policy
+
+        if (!originalStillActive || payload.serverId != serverId) {
+            EmeryBackendClient.releaseVpnSession(accessKey, payload.sessionId)
+            return Result.failure(IllegalStateException("session_replaced"))
+        }
+
+        MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, payload.sessionId)
+        return Result.success(payload.sessionId)
+    }
+
+    private suspend fun terminateRevokedVpnSession(reason: String) {
+        Log.w(AppConfig.TAG, "StartCore-VPN: Server rejected VPN session: $reason")
+        withContext(Dispatchers.Main) {
+            if (!isRunning || stopInProgress) return@withContext
+            MessageUtil.sendMsg2UI(this@V2RayVpnService, AppConfig.MSG_STATE_START_FAILURE, "")
+            stopAllService()
+        }
+    }
+
+    private companion object {
+        const val HEARTBEAT_INTERVAL_MS = 30_000L
+        const val HEARTBEAT_RETRY_INTERVAL_MS = 10_000L
     }
 
     private fun stopAllService(isForced: Boolean = true) {
