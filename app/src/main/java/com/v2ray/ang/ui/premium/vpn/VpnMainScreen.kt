@@ -89,6 +89,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
@@ -118,11 +119,7 @@ fun VpnMainRoute(
             }
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
-        onAutoReconnectClick = {
-            requestVpnPermission {
-                viewModel.onAutoReconnectClick(startVpnService)
-            }
-        },
+        onAutoReconnectClick = viewModel::onAutoReconnectClick,
         onActivationCodeSubmit = viewModel::activateReplacementCode,
         checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
@@ -407,6 +404,13 @@ fun VpnMainScreen(
                     onAutoConnectChange = { enabled ->
                         autoConnectEnabled = enabled
                         MmkvManager.encodeStartOnBoot(enabled)
+                        if (enabled) {
+                            // Manual OFF remains authoritative: enabling the
+                            // toggle does not secretly re-arm a stopped VPN.
+                            SkryonVpnAutoConnectScheduler.ensureScheduled(context)
+                        } else {
+                            SkryonVpnAutoConnectScheduler.cancel(context)
+                        }
                     },
                     connectionState = uiState.connectionState,
                     onActivationCodeSubmit = onActivationCodeSubmit,
@@ -811,7 +815,7 @@ private fun AutoConnectCard(
                 text = when {
                     !enabled -> "Автовосстановление отключено"
                     !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную. Включите кнопкой"
-                    else -> "Восстановится при появлении сети"
+                    else -> "После сети, перезагрузки и сна ТВ"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
