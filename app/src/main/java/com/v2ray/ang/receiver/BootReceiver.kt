@@ -8,6 +8,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
@@ -37,6 +38,13 @@ class BootReceiver : BroadcastReceiver() {
 
         val applicationContext = context.applicationContext
         val premiumProfile = EmeryAccessManager.loadProfile()
+        // Preserve the explicit OFF action, including after a device reboot.
+        // For premium VPN, auto-start is only allowed after an explicit
+        // connection was armed by the user. Manual profiles keep old behavior.
+        if (premiumProfile != null && !SkryonVpnConnectionIntent.isArmed()) {
+            Log.i(AppConfig.TAG, "BootReceiver: User explicitly disconnected premium VPN")
+            return
+        }
         if (premiumProfile == null) {
             if (MmkvManager.getSelectServer().isNullOrEmpty()) {
                 Log.w(AppConfig.TAG, "BootReceiver: No server selected")
