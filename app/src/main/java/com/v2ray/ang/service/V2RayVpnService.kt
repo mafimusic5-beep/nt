@@ -586,7 +586,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         var accepted = false
         try {
             val actualFingerprint = runCatching {
-                vpnImportFingerprint(EmeryDeviceGateConfig.prepareImportText(payload.importText))
+                vpnImportFingerprint(payload.importText)
             }.getOrElse { return Result.failure(IllegalStateException("reacquire_profile_invalid")) }
 
             if (payload.serverId != serverId || actualFingerprint != expectedFingerprint) {
