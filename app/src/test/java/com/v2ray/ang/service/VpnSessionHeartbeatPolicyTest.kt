@@ -16,6 +16,8 @@ class VpnSessionHeartbeatPolicyTest {
             "http_502",
             "http_503",
             "http_504",
+            "http_520",
+            "http_599",
             "no_server",
         ).forEach { reason ->
             assertEquals(reason, VpnHeartbeatFailureAction.RETRY, heartbeatFailureAction(reason))
