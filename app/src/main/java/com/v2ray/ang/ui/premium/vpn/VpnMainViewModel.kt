@@ -15,6 +15,7 @@ import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
@@ -300,6 +301,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         locationsError = "",
                     )
                 }
+                SkryonVpnConnectionIntent.finishUserConnectionAttempt()
+                SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
                 startTimer()
                 VpnUiDebugLogger.log(
                     hypothesisId = "H-TRAFFIC",
@@ -803,33 +806,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /**
-     * Network restoration must target the PREVIOUSLY selected pool ID, even
-     * if the refreshed location list now displays a different first server.
-     */
-    fun onAutoReconnectClick(startVpnService: (String) -> Boolean) {
-        if (autoReconnectJob?.isActive == true) return
-        autoReconnectJob = viewModelScope.launch {
-            // Avoid killing a still-running background tunnel when the screen
-            // appears before the service-state broadcast is received.
-            refreshDaemonStateIfUnknown()
-            if (!SkryonVpnConnectionIntent.shouldRetry(
-                    networkAvailable = true,
-                    vpnAlreadyRunning = daemonRunning == true ||
-                        _uiState.value.connectionState != VpnConnectionState.Disconnected,
-                )
-            ) return@launch
-            // Only the original pool may be requested by an automatic retry.
-            val poolId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
-            if (poolId <= 0L) return@launch
-            onConnectClick(startVpnService, preferredPoolId = poolId)
-        }
+    /** Background retry delegates pool selection to the capacity-aware worker. */
+    fun onAutoReconnectClick() {
+        SkryonVpnAutoConnectScheduler.requestOnce(getApplication())
     }
 
-    fun onConnectClick(
-        startVpnService: (String) -> Boolean = { true },
-        preferredPoolId: Long? = null,
-    ) {
+    fun onConnectClick(startVpnService: (String) -> Boolean = { true }) {
         val currentState = _uiState.value.let { state ->
             state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
         }
@@ -939,7 +921,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
 
-            val result = connectSelectedLocation(currentState, preferredPoolId)
+            val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = { payload ->
                     if (!stopStaleRuntimeBeforeProfileStart(attempt)) {
@@ -1104,6 +1086,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun setDisconnectedWithError(message: String) {
+        SkryonVpnConnectionIntent.finishUserConnectionAttempt()
         timerJob?.cancel()
         serviceStateRecheckJob?.cancel()
         _uiState.update { state ->
@@ -1117,13 +1100,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun connectSelectedLocation(
         state: VpnMainUiState,
-        preferredPoolId: Long? = null,
     ): Result<EmeryVpnSync.ConnectServerResult> {
         val normalizedState = state.copy(
             activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
         )
-        // Auto-reconnect never silently falls back to another pool.
-        val serverId = preferredPoolId ?: normalizedState.selectedLocation.id.toLongOrNull()
+        val serverId = normalizedState.selectedLocation.id.toLongOrNull()
         if (serverId != null) {
             return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
         }
@@ -1135,6 +1116,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         // Persist the user's OFF decision BEFORE stopping the service, so
         // network/boot observers cannot race in and restart it.
         SkryonVpnConnectionIntent.markUserDisconnected()
+        SkryonVpnAutoConnectScheduler.cancel(getApplication())
         autoReconnectJob?.cancel()
         connectionAttempt += 1L
         preserveConnectionFailure = false
