@@ -13,6 +13,7 @@ import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.os.StrictMode
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -28,6 +29,8 @@ import com.v2ray.ang.handler.ManualModeDiagnostics
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
+import com.v2ray.ang.handler.EmeryAccessManager
+import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
@@ -46,11 +49,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 @SuppressLint("VpnServicePolicy")
 class V2RayVpnService : VpnService(), ServiceControl {
@@ -61,6 +66,9 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private var pendingDeviceGate: DeviceBoundVlessProxy.ResolvedDescriptor? = null
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var sessionHeartbeatJob: Job? = null
+    // Network callbacks wake the retry loop immediately when Wi-Fi/mobile
+    // returns instead of waiting for the next 5s/30s heartbeat tick.
+    private val underlayChanges = Channel<Unit>(Channel.CONFLATED)
     @Volatile
     private var stopInProgress = false
     @Volatile
@@ -92,15 +100,31 @@ class V2RayVpnService : VpnService(), ServiceControl {
         object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 setUnderlyingNetworks(arrayOf(network))
+                underlayChanges.trySend(Unit)
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                // it's a good idea to refresh capabilities
+                // Switch to the physical network chosen by Android; never
+                // report the VPN itself as its underlying transport.
                 setUnderlyingNetworks(arrayOf(network))
+                underlayChanges.trySend(Unit)
             }
 
             override fun onLost(network: Network) {
-                setUnderlyingNetworks(null)
+                // Losing Wi-Fi must not drop the cellular underlay that may
+                // already be available. Network callbacks can arrive out of
+                // order during a Wi-Fi <-> LTE handover.
+                val fallback = runCatching {
+                    connectivity.allNetworks.firstOrNull { other ->
+                        other != network &&
+                            connectivity.getNetworkCapabilities(other)?.let { caps ->
+                                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                            } == true
+                    }
+                }.getOrNull()
+                setUnderlyingNetworks(fallback?.let { arrayOf(it) })
+                underlayChanges.trySend(Unit)
             }
         }
     }
@@ -115,6 +139,9 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     override fun onRevoke() {
         Log.w(AppConfig.TAG, "StartCore-VPN: Permission revoked")
+        // Android revoked our permission, therefore this is not a transient
+        // internet outage and the app must not attempt to restart silently.
+        SkryonVpnConnectionIntent.markUserDisconnected()
         stopAllService()
     }
 
@@ -127,6 +154,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         deviceGateProxy?.stop()
         deviceGateProxy = null
         sessionHeartbeatJob?.cancel()
+        underlayChanges.close()
         sessionScope.cancel()
         super.onDestroy()
         Log.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
@@ -135,6 +163,15 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(AppConfig.TAG, "StartCore-VPN: Service command received")
+        // Android Always-on VPN can relaunch us after STOP. Respect the
+        // explicitly persisted user preference before starting a new tunnel.
+        if (EmeryAccessManager.loadProfile() != null &&
+            !SkryonVpnConnectionIntent.isArmed()
+        ) {
+            Log.i(AppConfig.TAG, "StartCore-VPN: Manual OFF respected; ignoring system restart")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         try {
             // Promote to foreground immediately to avoid FGS timeout
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
@@ -488,8 +525,9 @@ class V2RayVpnService : VpnService(), ServiceControl {
         sessionHeartbeatJob = sessionScope.launch {
             var nextDelayMs = SESSION_HEARTBEAT_NORMAL_INTERVAL_MS
             var wasOffline = false
+            var lastHeartbeatAtMs = 0L
             while (isActive && isRunning && !stopInProgress) {
-                delay(nextDelayMs)
+                withTimeoutOrNull(nextDelayMs) { underlayChanges.receive() }
                 if (!isActive || !isRunning || stopInProgress) break
 
                 // A missing physical network never means the user turned off
@@ -514,6 +552,14 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     // heartbeat is suspended. Do not acquire another lease.
                     break
                 }
+                // Several callback events can fire together during Wi-Fi
+                // association. Keep backend requests bounded.
+                val elapsedSinceHeartbeatMs = SystemClock.elapsedRealtime() - lastHeartbeatAtMs
+                if (lastHeartbeatAtMs > 0L && elapsedSinceHeartbeatMs < MIN_HEARTBEAT_GAP_MS) {
+                    delay(MIN_HEARTBEAT_GAP_MS - elapsedSinceHeartbeatMs)
+                }
+                if (!isActive || !isRunning || stopInProgress) break
+                lastHeartbeatAtMs = SystemClock.elapsedRealtime()
                 val heartbeat = EmeryBackendClient.heartbeatVpnSession(accessKey, sessionId)
                 if (!isActive || !isRunning || stopInProgress) break
                 if (heartbeat.isSuccess) {
@@ -619,6 +665,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private companion object {
         const val SESSION_HEARTBEAT_NORMAL_INTERVAL_MS = 30_000L
         const val SESSION_HEARTBEAT_RETRY_INTERVAL_MS = 5_000L
+        const val MIN_HEARTBEAT_GAP_MS = 2_000L
     }
 
     private fun stopAllService(isForced: Boolean = true) {
