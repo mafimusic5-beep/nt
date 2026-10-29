@@ -94,6 +94,10 @@ fun VpnMainRoute(
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val connectionQualityChecker = remember(context) {
+        PreVpnConnectionQualityChecker(context)
+    }
     VpnMainScreen(
         uiState = uiState,
         locations = uiState.locations,
@@ -105,6 +109,7 @@ fun VpnMainRoute(
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
         onActivationCodeSubmit = viewModel::activateReplacementCode,
+        checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
     )
 }
@@ -117,6 +122,9 @@ fun VpnMainScreen(
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
+    checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
+        PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
+    },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -127,8 +135,19 @@ fun VpnMainScreen(
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
-    // A VPN connect must begin on the first tap. A remote bandwidth check is not
-    // a prerequisite: its timeout or warning dialog must not delay the VPN startup.
+    var connectionQualityWarning by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
+
+    // Preserve the useful connection-quality warning, but run it AFTER the
+    // tunnel was verified. It can never delay or deny the first VPN connect tap.
+    LaunchedEffect(uiState.connectionState) {
+        connectionQualityWarning = null
+        if (uiState.connectionState == VpnConnectionState.Connected) {
+            val quality = checkPreVpnConnection().quality
+            if (quality.shouldWarn) {
+                connectionQualityWarning = quality
+            }
+        }
+    }
 
     LaunchedEffect(
         reconnectAfterPolicyChange,
@@ -202,6 +221,20 @@ fun VpnMainScreen(
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
+                    )
+                }
+                connectionQualityWarning?.let { quality ->
+                    Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
+                    Text(
+                        text = when (quality) {
+                            PreVpnConnectionQuality.Critical -> "Медленная исходная сеть: менее 8 Мбит/с"
+                            PreVpnConnectionQuality.Offline -> "Не удалось проверить исходную сеть"
+                            else -> ""
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFC25B18),
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
                     )
                 }
                 if (uiState.locationsError.isNotBlank()) {
