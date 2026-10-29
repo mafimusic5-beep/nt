@@ -38,6 +38,38 @@ class SkryonVpnConnectionIntentTest {
     }
 
     @Test
+    fun `system must not restart after a manual disconnect`() {
+        assertFalse(isPremiumVpnServiceStartAllowed(
+            userRequestedConnection = false,
+            autoConnectEnabled = true,
+            explicitUserStart = false,
+        ))
+    }
+
+    @Test
+    fun `OS restart requires auto-connect setting enabled`() {
+        assertFalse(isPremiumVpnServiceStartAllowed(
+            userRequestedConnection = true,
+            autoConnectEnabled = false,
+            explicitUserStart = false,
+        ))
+        assertTrue(isPremiumVpnServiceStartAllowed(
+            userRequestedConnection = true,
+            autoConnectEnabled = true,
+            explicitUserStart = false,
+        ))
+    }
+
+    @Test
+    fun `manual connect works with auto-connect setting off`() {
+        assertTrue(isPremiumVpnServiceStartAllowed(
+            userRequestedConnection = true,
+            autoConnectEnabled = false,
+            explicitUserStart = true,
+        ))
+    }
+
+    @Test
     fun `auto-connect disabled never restarts after reconnecting wifi`() {
         assertFalse(shouldAutoReconnectVpn(
             enabled = false, userRequestedConnection = true,
