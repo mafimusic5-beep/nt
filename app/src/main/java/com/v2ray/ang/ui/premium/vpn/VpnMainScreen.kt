@@ -135,17 +135,15 @@ fun VpnMainScreen(
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
-    var connectionQualityWarning by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
+    var connectionQuality by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
 
-    // Preserve the useful connection-quality warning, but run it AFTER the
-    // tunnel was verified. It can never delay or deny the first VPN connect tap.
+    // Keep network quality visible for every outcome, not just failures.
+    // This check runs only after a VERIFIED VPN connection and cannot delay
+    // or deny the first connection attempt.
     LaunchedEffect(uiState.connectionState) {
-        connectionQualityWarning = null
+        connectionQuality = null
         if (uiState.connectionState == VpnConnectionState.Connected) {
-            val quality = checkPreVpnConnection().quality
-            if (quality.shouldWarn) {
-                connectionQualityWarning = quality
-            }
+            connectionQuality = checkPreVpnConnection().quality
         }
     }
 
@@ -223,16 +221,17 @@ fun VpnMainScreen(
                         maxLines = 1,
                     )
                 }
-                connectionQualityWarning?.let { quality ->
+                if (uiState.connectionState == VpnConnectionState.Connected) {
                     Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
                     Text(
-                        text = when (quality) {
-                            PreVpnConnectionQuality.Critical -> "Медленная исходная сеть: менее 8 Мбит/с"
-                            PreVpnConnectionQuality.Offline -> "Не удалось проверить исходную сеть"
-                            else -> ""
-                        },
+                        text = connectionQualityLabel(connectionQuality),
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFC25B18),
+                        color = when (connectionQuality) {
+                            PreVpnConnectionQuality.Good -> AppUiColors.PositiveStrong
+                            PreVpnConnectionQuality.Critical, PreVpnConnectionQuality.Offline ->
+                                Color(0xFFC25B18)
+                            else -> AppUiColors.TextSecondary
+                        },
                         textAlign = TextAlign.Center,
                         maxLines = 2,
                     )
