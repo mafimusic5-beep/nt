@@ -808,10 +808,14 @@ private fun AutoConnectCard(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = if (enabled) "Восстановит VPN при возвращении сети, если вы не выключили его вручную" else "Автовосстановление и запуск после перезагрузки отключены",
+                text = when {
+                    !enabled -> "Автовосстановление отключено"
+                    !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную. Включите кнопкой"
+                    else -> "Восстановится при появлении сети"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
