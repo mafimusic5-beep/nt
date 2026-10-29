@@ -18,6 +18,7 @@ import androidx.work.WorkerParameters
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
+import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
 import java.util.concurrent.TimeUnit
 
 /**
@@ -100,14 +101,11 @@ internal class SkryonVpnAutoConnectWorker(
             return Result.success()
         }
 
-        val servers = EmeryBackendClient.fetchVpnServers().getOrElse { error ->
-            Log.w(AppConfig.TAG, "Auto-connect server list unavailable: ${error.message}")
-            return Result.retry()
-        }
-        val pool = chooseFreestVpnPool(servers) ?: return Result.retry()
-        // Do not bind to the last-used server: choose the lowest-occupancy
-        // available pool on each new connection.
-        val connection = EmeryVpnSync.connectToServer(confirmed.accessKey, pool.id)
+        // Do not move customers between pools without consent. Reconnect ONLY
+        // to the exact server they previously selected, including after boot.
+        val lastPoolId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
+        if (lastPoolId <= 0L) return Result.success()
+        val connection = EmeryVpnSync.connectToServer(confirmed.accessKey, lastPoolId)
             .getOrElse { error ->
                 Log.w(AppConfig.TAG, "Auto-connect pool acquire failed: ${error.message}")
                 return if (error.message in setOf("network", "server_capacity_unavailable", "pool_backend_unreachable", "assignment_install_in_progress")) {
@@ -125,7 +123,10 @@ internal class SkryonVpnAutoConnectWorker(
             return Result.success()
         }
 
-        val started = V2RayServiceManager.startVService(applicationContext, connection.selectedGuid)
+        // This is a background auto-start, NOT a new manual user action.
+        // Starting without a GUID keeps the explicit/automatic service gate
+        // active; EmeryVpnSync has already selected the desired profile.
+        val started = V2RayServiceManager.startVService(applicationContext)
         if (!started) {
             EmeryBackendClient.releaseVpnSession(confirmed.accessKey, connection.sessionId)
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == connection.sessionId) {
