@@ -118,6 +118,11 @@ fun VpnMainRoute(
             }
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
+        onAutoReconnectClick = {
+            requestVpnPermission {
+                viewModel.onAutoReconnectClick(startVpnService)
+            }
+        },
         onActivationCodeSubmit = viewModel::activateReplacementCode,
         checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
@@ -132,6 +137,7 @@ fun VpnMainScreen(
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
+    onAutoReconnectClick: () -> Unit = onConnectClick,
     checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
         PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
     },
@@ -204,7 +210,7 @@ fun VpnMainScreen(
             )
         ) {
             automaticRetryAttemptedThisOnlinePeriod = true
-            onConnectClick()
+            onAutoReconnectClick()
         }
     }
 
