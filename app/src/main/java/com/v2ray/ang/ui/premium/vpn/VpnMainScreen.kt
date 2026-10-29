@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -88,6 +89,7 @@ import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
+import com.v2ray.ang.handler.SkryonRegionPreference
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.shouldAutoReconnectVpn
@@ -243,7 +245,8 @@ fun VpnMainScreen(
     ) {
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
-        val horizontalPadding = if (tight) 18.dp else 24.dp
+        val tvLandscape = maxWidth > maxHeight * 1.4f
+        val horizontalPadding = if (tvLandscape) 26.dp else if (tight) 18.dp else 24.dp
         val showParisBackground = selectedTab == MainTab.Home && uiState.selectedLocation.cityLabel() == "Париж"
 
         if (showParisBackground) {
@@ -266,11 +269,21 @@ fun VpnMainScreen(
 
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .align(Alignment.TopCenter)
+                // Do not stretch phone controls across an entire television.
+                // Keep text/buttons within a readable centered content area.
+                .widthIn(max = if (tvLandscape) 820.dp else maxWidth)
+                .fillMaxWidth()
+                .fillMaxHeight()
                 .padding(start = horizontalPadding, top = 0.dp, end = horizontalPadding, bottom = if (tight) 8.dp else 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
+            HeaderBar(
+                selectedLocation = uiState.selectedLocation,
+                randomRegion = uiState.randomRegion,
+                connectionState = uiState.connectionState,
+                compact = compact,
+            )
 
             if (selectedTab == MainTab.Home) {
                 Spacer(Modifier.height(if (tight) 18.dp else if (compact) 30.dp else 42.dp))
@@ -337,6 +350,7 @@ fun VpnMainScreen(
                 Spacer(Modifier.weight(0.75f))
                 RegionSelectorCard(
                     selectedLocation = uiState.selectedLocation,
+                    randomRegion = uiState.randomRegion,
                     locations = locations,
                     compact = compact,
                     tight = tight,
@@ -463,9 +477,18 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 }
 
 @Composable
-private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
-    val locationLabel = selectedLocation.cityLabel().let { city ->
-        if (city == "Франкфурт") "Франкфурт-на-Майне" else city
+private fun HeaderBar(
+    selectedLocation: VpnLocationOption,
+    randomRegion: Boolean,
+    connectionState: VpnConnectionState,
+    compact: Boolean,
+) {
+    val locationLabel = if (randomRegion && connectionState != VpnConnectionState.Connected) {
+        "Случайный регион"
+    } else {
+        selectedLocation.cityLabel().let { city ->
+            if (city == "Франкфурт") "Франкфурт-на-Майне" else city
+        }
     }
 
     Row(
@@ -637,14 +660,15 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
 @Composable
 private fun RegionSelectorCard(
     selectedLocation: VpnLocationOption,
+    randomRegion: Boolean,
     locations: List<VpnLocationOption>,
     compact: Boolean,
     tight: Boolean,
     onLocationSelected: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedCode = selectedLocation.countryCodeLabel()
-    val selectedTitle = "Выбрать регион"
+    val selectedCode = if (randomRegion) "VPN" else selectedLocation.countryCodeLabel()
+    val selectedTitle = if (randomRegion) "Случайный регион" else selectedLocation.cityLabel()
     val cardShape = RoundedCornerShape(if (compact) 18.dp else 20.dp)
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -694,9 +718,29 @@ private fun RegionSelectorCard(
                 .width(menuWidth)
                 .background(Color.White),
         ) {
-            locations.forEach { location ->
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FlagMark(code = "VPN", modifier = Modifier.width(28.dp).height(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = "Случайный регион",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = AppUiColors.TextPrimary,
+                            fontWeight = if (randomRegion) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                },
+                onClick = {
+                    expanded = false
+                    onLocationSelected(SkryonRegionPreference.RANDOM_REGION_ID)
+                },
+                modifier = Modifier.background(if (randomRegion) AppUiColors.RegionSelected else Color.White),
+            )
+            locations.filter { it.id.toLongOrNull() != null }.forEach { location ->
                 val code = location.countryCodeLabel()
-                val selected = location.id == selectedLocation.id || location.title == selectedLocation.title
+                val selected = !randomRegion &&
+                    (location.id == selectedLocation.id || location.title == selectedLocation.title)
                 DropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -769,7 +813,7 @@ private fun RegionChip(
 private fun FlagMark(code: String, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Text(
-            text = countryFlagEmoji(code),
+            text = if (code == "VPN") "🌐" else countryFlagEmoji(code),
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 1,
         )
@@ -1600,7 +1644,8 @@ private object AppUiColors {
     val RegionSelected = Color(0xFFF3FAEF)
     val Border = Color(0xFFE6E9EE)
     val TextPrimary = Color(0xFF111319)
-    val TextSecondary = Color(0xFF7D828D)
+    // Contrast-friendly for Android TV and smaller full-HD text.
+    val TextSecondary = Color(0xFF535D6B)
     val Positive = Color(0xFF74C84F)
     val PositiveStrong = Color(0xFF36A852)
 }
