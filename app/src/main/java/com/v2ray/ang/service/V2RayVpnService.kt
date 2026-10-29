@@ -62,12 +62,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 @SuppressLint("VpnServicePolicy")
 class V2RayVpnService : VpnService(), ServiceControl {
     private lateinit var mInterface: ParcelFileDescriptor
+    @Volatile
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
     private var deviceGateProxy: DeviceBoundVlessProxy? = null
     private var pendingDeviceGate: DeviceBoundVlessProxy.ResolvedDescriptor? = null
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var sessionHeartbeatJob: Job? = null
+    @Volatile
+    private var serviceLeaseId: String = ""
     // Network callbacks wake the retry loop immediately when Wi-Fi/mobile
     // returns instead of waiting for the next 5s/30s heartbeat tick.
     private val underlayChanges = Channel<Unit>(Channel.CONFLATED)
@@ -161,9 +164,21 @@ class V2RayVpnService : VpnService(), ServiceControl {
         super.onDestroy()
         Log.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
         NotificationManager.cancelNotification()
-        // A system-killed VPN service can recover after Wi-Fi/LTE returns.
-        // Explicit OFF or revoked VPN permission has already disarmed intent.
-        SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
+        // On an unexpected service stop, discard only OUR OWN stale lease
+        // so the scheduled worker may establish the same pool again. Never
+        // clear a newer lease created by another connection attempt.
+        if (SkryonVpnConnectionIntent.shouldRetry(
+                networkAvailable = true,
+                vpnAlreadyRunning = false,
+            )
+        ) {
+            val savedLease = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
+                ?.trim().orEmpty()
+            if (serviceLeaseId.isNotBlank() && savedLease == serviceLeaseId) {
+                MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
+            }
+            SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -187,6 +202,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
             }
         }
         try {
+            serviceLeaseId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
+                ?.trim().orEmpty()
             // Promote to foreground immediately to avoid FGS timeout
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
             if (!RegionalPolicyManager.isPolicyReadyForServiceStart(this)) {
@@ -535,6 +552,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         val initialSessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
             ?.trim().orEmpty()
         if (accessKey.isBlank() || initialSessionId.isBlank()) return
+        serviceLeaseId = initialSessionId
 
         sessionHeartbeatJob = sessionScope.launch {
             var nextDelayMs = SESSION_HEARTBEAT_NORMAL_INTERVAL_MS
@@ -664,6 +682,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             if (!MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, payload.sessionId)) {
                 return Result.failure(IllegalStateException("reacquire_store_failed"))
             }
+            serviceLeaseId = payload.sessionId
             accepted = true
             return Result.success(Unit)
         } finally {
