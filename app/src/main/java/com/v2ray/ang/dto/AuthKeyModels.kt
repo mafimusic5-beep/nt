@@ -57,6 +57,8 @@ data class VpnServerItemApiResponseBody(
     @SerializedName("city") val city: String? = null,
     @SerializedName("health_status") val healthStatus: String? = null,
     @SerializedName("is_available") val isAvailable: Boolean? = null,
+    @SerializedName("active_connections") val activeConnections: Int? = null,
+    @SerializedName("connections_limit") val connectionsLimit: Int? = null,
 )
 
 data class VpnConnectRequestBody(
