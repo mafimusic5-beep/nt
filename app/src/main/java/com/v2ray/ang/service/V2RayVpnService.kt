@@ -31,6 +31,7 @@ import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.isPremiumVpnServiceStartAllowed
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
@@ -165,12 +166,21 @@ class V2RayVpnService : VpnService(), ServiceControl {
         Log.i(AppConfig.TAG, "StartCore-VPN: Service command received")
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
-        if (EmeryAccessManager.loadProfile() != null &&
-            !SkryonVpnConnectionIntent.isArmed()
-        ) {
-            Log.i(AppConfig.TAG, "StartCore-VPN: Manual OFF respected; ignoring system restart")
-            stopSelf(startId)
-            return START_NOT_STICKY
+        if (EmeryAccessManager.loadProfile() != null) {
+            val explicitStart = intent?.getBooleanExtra(
+                SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT,
+                false,
+            ) == true
+            if (!isPremiumVpnServiceStartAllowed(
+                    userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
+                    autoConnectEnabled = MmkvManager.decodeStartOnBoot(),
+                    explicitUserStart = explicitStart,
+                )
+            ) {
+                Log.i(AppConfig.TAG, "StartCore-VPN: Auto-start blocked by user settings")
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
         }
         try {
             // Promote to foreground immediately to avoid FGS timeout
