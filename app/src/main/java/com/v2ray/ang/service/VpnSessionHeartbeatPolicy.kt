@@ -18,16 +18,14 @@ internal fun heartbeatFailureAction(reason: String?): VpnHeartbeatFailureAction 
     if (normalized == "vpn_session_expired") {
         return VpnHeartbeatFailureAction.REACQUIRE_SESSION
     }
+    val httpStatus = normalized.removePrefix("http_").takeIf { normalized.startsWith("http_") }?.toIntOrNull()
     if (
         normalized == "network" ||
         normalized == "timeout" ||
         normalized == "no_server" ||
-        normalized == "http_408" ||
-        normalized == "http_429" ||
-        normalized == "http_500" ||
-        normalized == "http_502" ||
-        normalized == "http_503" ||
-        normalized == "http_504"
+        httpStatus == 408 ||
+        httpStatus == 429 ||
+        httpStatus in 500..599
     ) {
         return VpnHeartbeatFailureAction.RETRY
     }
