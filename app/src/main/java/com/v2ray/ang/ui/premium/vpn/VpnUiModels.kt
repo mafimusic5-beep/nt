@@ -261,6 +261,10 @@ data class VpnMainUiState(
     val activationKey: String = "",
     val locations: List<VpnLocationOption> = VpnDemoData.loadingLocations,
     val selectedLocation: VpnLocationOption = VpnDemoData.loadingLocations.first(),
+    // New manual connections choose an available region at random unless the
+    // user explicitly picked one. Temporary network loss is a different flow:
+    // the reconnect worker uses the same remembered pool to restore the tunnel.
+    val randomRegionEnabled: Boolean = true,
     val connectionState: VpnConnectionState = VpnConnectionState.Disconnected,
     val elapsedSeconds: Long = 0L,
     val locationsLoading: Boolean = false,
