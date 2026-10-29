@@ -88,6 +88,9 @@ import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
+import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
+import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.util.Utils
@@ -116,6 +119,7 @@ fun VpnMainRoute(
             }
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
+        onAutoReconnectClick = viewModel::onAutoReconnectClick,
         onActivationCodeSubmit = viewModel::activateReplacementCode,
         checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
@@ -130,6 +134,7 @@ fun VpnMainScreen(
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
+    onAutoReconnectClick: () -> Unit = onConnectClick,
     checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
         PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
     },
@@ -144,6 +149,7 @@ fun VpnMainScreen(
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
     var connectionQuality by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
+    var automaticRetryAttemptedThisOnlinePeriod by remember { mutableStateOf(false) }
     val connectivity = remember(context) {
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     }
@@ -176,6 +182,32 @@ fun VpnMainScreen(
                 if (registered) runCatching { connectivity.unregisterNetworkCallback(callback) }
                 mainHandler.removeCallbacksAndMessages(null)
             }
+        }
+    }
+
+    // When the physical network comes back, retry the last selected pool once
+    // during this online period. Never restart when the user manually pressed
+    // OFF, and never compete with an already running connection.
+    LaunchedEffect(
+        physicalLinkAvailable,
+        autoConnectEnabled,
+        uiState.connectionState,
+        uiState.connectButtonEnabled,
+    ) {
+        if (!physicalLinkAvailable) {
+            automaticRetryAttemptedThisOnlinePeriod = false
+        } else if (
+            !automaticRetryAttemptedThisOnlinePeriod &&
+            uiState.connectButtonEnabled &&
+            shouldAutoReconnectVpn(
+                enabled = autoConnectEnabled,
+                userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
+                networkAvailable = physicalLinkAvailable,
+                vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected,
+            )
+        ) {
+            automaticRetryAttemptedThisOnlinePeriod = true
+            onAutoReconnectClick()
         }
     }
 
@@ -372,6 +404,13 @@ fun VpnMainScreen(
                     onAutoConnectChange = { enabled ->
                         autoConnectEnabled = enabled
                         MmkvManager.encodeStartOnBoot(enabled)
+                        if (enabled) {
+                            // Manual OFF remains authoritative: enabling the
+                            // toggle does not secretly re-arm a stopped VPN.
+                            SkryonVpnAutoConnectScheduler.ensureScheduled(context)
+                        } else {
+                            SkryonVpnAutoConnectScheduler.cancel(context)
+                        }
                     },
                     connectionState = uiState.connectionState,
                     onActivationCodeSubmit = onActivationCodeSubmit,
@@ -773,10 +812,14 @@ private fun AutoConnectCard(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = if (enabled) "VPN запустится после перезагрузки" else "Включится после первого запуска VPN",
+                text = when {
+                    !enabled -> "Автовосстановление отключено"
+                    !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную. Включите кнопкой"
+                    else -> "После сети, перезагрузки и сна ТВ"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }

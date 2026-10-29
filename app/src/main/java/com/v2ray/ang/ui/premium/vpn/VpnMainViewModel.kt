@@ -14,6 +14,8 @@ import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
+import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
@@ -74,6 +76,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private val tunnelVerifier = VpnTunnelTrafficVerifier(application)
 
     private var connectJob: Job? = null
+    private var autoReconnectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
     private var configSyncJob: Job? = null
@@ -298,6 +301,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         locationsError = "",
                     )
                 }
+                SkryonVpnConnectionIntent.finishUserConnectionAttempt()
+                SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
                 startTimer()
                 VpnUiDebugLogger.log(
                     hypothesisId = "H-TRAFFIC",
@@ -801,6 +806,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** Background retry delegates pool selection to the capacity-aware worker. */
+    fun onAutoReconnectClick() {
+        SkryonVpnAutoConnectScheduler.requestOnce(getApplication())
+    }
+
     fun onConnectClick(startVpnService: (String) -> Boolean = { true }) {
         val currentState = _uiState.value.let { state ->
             state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
@@ -826,6 +836,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
+        // Only an explicit user connect (or approved automatic retry) may
+        // re-arm background reconnection after a manual disconnect.
+        SkryonVpnConnectionIntent.markUserConnected()
         connectionAttempt += 1L
         val attempt = connectionAttempt
         preserveConnectionFailure = false
@@ -1073,6 +1086,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun setDisconnectedWithError(message: String) {
+        SkryonVpnConnectionIntent.finishUserConnectionAttempt()
         timerJob?.cancel()
         serviceStateRecheckJob?.cancel()
         _uiState.update { state ->
@@ -1084,7 +1098,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
+    private suspend fun connectSelectedLocation(
+        state: VpnMainUiState,
+    ): Result<EmeryVpnSync.ConnectServerResult> {
         val normalizedState = state.copy(
             activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
         )
@@ -1097,6 +1113,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
+        // Persist the user's OFF decision BEFORE stopping the service, so
+        // network/boot observers cannot race in and restart it.
+        SkryonVpnConnectionIntent.markUserDisconnected()
+        SkryonVpnAutoConnectScheduler.cancel(getApplication())
+        autoReconnectJob?.cancel()
         connectionAttempt += 1L
         preserveConnectionFailure = false
         awaitingStartConfirmation = false
@@ -1172,6 +1193,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     override fun onCleared() {
         connectionAttempt += 1L
         connectJob?.cancel()
+        autoReconnectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
         configSyncJob?.cancel()
