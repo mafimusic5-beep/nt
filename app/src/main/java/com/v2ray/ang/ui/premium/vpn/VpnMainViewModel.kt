@@ -613,7 +613,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         val safeLocations = locations.ifEmpty { VpnDemoData.unavailableLocations }
         _uiState.update { state ->
             val pinnedId = SkryonRegionPreference.pinnedServerId()?.toString()
-            val selected = safeLocations.firstOrNull { it.id == pinnedId }
+            val activeId = if (state.connectionState == VpnConnectionState.Connected || daemonRunning == true) {
+                MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L).toString()
+            } else {
+                null
+            }
+            val selected = safeLocations.firstOrNull { it.id == activeId }
+                ?: safeLocations.firstOrNull { it.id == pinnedId }
                 ?: safeLocations.firstOrNull { it.id == state.selectedLocation.id }
                 ?: safeLocations.first()
             state.copy(
@@ -763,12 +769,16 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, -1L)
             MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, -1L)
             MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
+            // A new activation code should not inherit a pin from somebody
+            // else's subscription. Reset explicitly to Random.
+            SkryonRegionPreference.selectRandom()
 
             _uiState.update { state ->
                 state.copy(
                     activationKey = confirmedCode,
                     locations = VpnDemoData.unavailableLocations,
                     selectedLocation = VpnDemoData.unavailableLocations.first(),
+                    randomRegion = true,
                     locationsLoading = true,
                     locationsError = "",
                 )
