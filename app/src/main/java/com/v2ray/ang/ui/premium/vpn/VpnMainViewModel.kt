@@ -59,6 +59,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val STALE_RUNTIME_STOP_TIMEOUT_MS = 10_000L
         const val STALE_RUNTIME_SETTLE_DELAY_MS = 300L
         const val CONFIG_SYNC_RETRY_DELAY_MS = 3_000L
+        const val CONFIG_SYNC_POLL_DELAY_MS = 30_000L
         const val CONFIG_SYNC_ACCESS_RETRY_DELAY_MS = 30_000L
         const val TUNNEL_VERIFY_TIMEOUT_MS = 12_000L
     }
@@ -421,6 +422,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 } else {
                     applySyncedSkryonConfig(result.config, result.serverId)
                 }
+                // Successful sync must never spin in a tight loop and flood
+                // /api/config/sync while VPN connect is using the same backend.
+                delay(CONFIG_SYNC_POLL_DELAY_MS)
             }
         }
     }
