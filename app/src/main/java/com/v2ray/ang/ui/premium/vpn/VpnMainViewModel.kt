@@ -14,6 +14,7 @@ import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
+import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
@@ -826,6 +827,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
+        // Only an explicit user connect (or approved automatic retry) may
+        // re-arm background reconnection after a manual disconnect.
+        SkryonVpnConnectionIntent.markUserConnected()
         connectionAttempt += 1L
         val attempt = connectionAttempt
         preserveConnectionFailure = false
@@ -1097,6 +1101,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
+        // Persist the user's OFF decision BEFORE stopping the service, so
+        // network/boot observers cannot race in and restart it.
+        SkryonVpnConnectionIntent.markUserDisconnected()
         connectionAttempt += 1L
         preserveConnectionFailure = false
         awaitingStartConfirmation = false
