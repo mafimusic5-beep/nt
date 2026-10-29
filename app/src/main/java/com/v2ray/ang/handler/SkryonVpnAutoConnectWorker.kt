@@ -71,6 +71,10 @@ internal class SkryonVpnAutoConnectWorker(
             )
         ) return Result.success()
 
+        // Manual Connect has priority. The normal worker runs in a different
+        // process and cannot inspect a Compose ViewModel's in-flight state.
+        if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return Result.retry()
+
         // Never prompt for VPN consent from a background worker, and never
         // attempt to replace another running VPN app.
         if (VpnService.prepare(applicationContext) != null) return Result.success()
