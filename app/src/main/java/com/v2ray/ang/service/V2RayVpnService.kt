@@ -31,6 +31,7 @@ import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.isPremiumVpnServiceStartAllowed
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
@@ -160,6 +161,9 @@ class V2RayVpnService : VpnService(), ServiceControl {
         super.onDestroy()
         Log.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
         NotificationManager.cancelNotification()
+        // A system-killed VPN service can recover after Wi-Fi/LTE returns.
+        // Explicit OFF or revoked VPN permission has already disarmed intent.
+        SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
