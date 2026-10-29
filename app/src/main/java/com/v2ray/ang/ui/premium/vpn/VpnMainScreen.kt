@@ -94,10 +94,6 @@ fun VpnMainRoute(
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val context = LocalContext.current
-    val connectionQualityChecker = remember(context) {
-        PreVpnConnectionQualityChecker(context)
-    }
     VpnMainScreen(
         uiState = uiState,
         locations = uiState.locations,
@@ -109,7 +105,6 @@ fun VpnMainRoute(
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
         onActivationCodeSubmit = viewModel::activateReplacementCode,
-        checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
     )
 }
@@ -122,9 +117,6 @@ fun VpnMainScreen(
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
-    checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
-        PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
-    },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -135,29 +127,8 @@ fun VpnMainScreen(
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
-    var connectionCheckInProgress by remember { mutableStateOf(false) }
-    var connectionWarning by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
-
-    fun connectAfterUserConfirmation() {
-        onConnectClick()
-    }
-
-    fun checkConnectionAndConnect() {
-        if (connectionCheckInProgress) return
-        connectionCheckInProgress = true
-        policyScope.launch {
-            try {
-                val assessment = checkPreVpnConnection()
-                if (assessment.quality.shouldWarn) {
-                    connectionWarning = assessment.quality
-                } else {
-                    connectAfterUserConfirmation()
-                }
-            } finally {
-                connectionCheckInProgress = false
-            }
-        }
-    }
+    // A VPN connect must begin on the first tap. A remote bandwidth check is not
+    // a prerequisite: its timeout or warning dialog must not delay the VPN startup.
 
     LaunchedEffect(
         reconnectAfterPolicyChange,
@@ -256,14 +227,14 @@ fun VpnMainScreen(
                 PrimaryConnectButton(
                     state = uiState.connectionState,
                     enabled = uiState.connectButtonEnabled,
-                    checkingConnection = connectionCheckInProgress,
+                    checkingConnection = false,
                     compact = compact,
                     tight = tight,
                     onClick = {
                         if (uiState.connectionState == VpnConnectionState.Connected) {
                             onDisconnectClick()
                         } else {
-                            checkConnectionAndConnect()
+                            onConnectClick()
                         }
                     },
                 )
@@ -342,20 +313,6 @@ fun VpnMainScreen(
         }
     }
 
-    connectionWarning?.let { quality ->
-        PreVpnConnectionWarningDialog(
-            quality = quality,
-            onContinue = {
-                connectionWarning = null
-                connectAfterUserConfirmation()
-            },
-            onRetry = {
-                connectionWarning = null
-                checkConnectionAndConnect()
-            },
-            onDismiss = { connectionWarning = null },
-        )
-    }
 }
 
 private fun screenTitle(state: VpnConnectionState): String = when (state) {
