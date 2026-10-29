@@ -386,7 +386,10 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 val activeSessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
                     ?.trim()
                     .orEmpty()
-                if (activeSessionId.isNotBlank()) {
+                if (
+                    activeSessionId.isNotBlank() ||
+                    _uiState.value.connectionState != VpnConnectionState.Disconnected
+                ) {
                     delay(CONFIG_SYNC_RETRY_DELAY_MS)
                     continue
                 }
@@ -401,6 +404,15 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     revision = knownRevision,
                 )
                 if (!isActive) return@launch
+                // A connect may have started while the HTTP sync was in flight.
+                // Never replace the selected profile or clear its session mid-connect.
+                if (
+                    _uiState.value.connectionState != VpnConnectionState.Disconnected ||
+                    MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "").orEmpty().isNotBlank()
+                ) {
+                    delay(CONFIG_SYNC_RETRY_DELAY_MS)
+                    continue
+                }
 
                 if (!result.ok) {
                     if (result.reason in setOf("not_found", "expired", "banned", "not_bound", "upgrade_required")) {
