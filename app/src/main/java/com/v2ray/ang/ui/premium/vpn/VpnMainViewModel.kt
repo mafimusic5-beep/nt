@@ -802,7 +802,25 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onConnectClick(startVpnService: (String) -> Boolean = { true }) {
+    /**
+     * Network restoration must target the PREVIOUSLY selected pool ID, even
+     * if the refreshed location list now displays a different first server.
+     */
+    fun onAutoReconnectClick(startVpnService: (String) -> Boolean) {
+        if (!SkryonVpnConnectionIntent.shouldRetry(
+                networkAvailable = true,
+                vpnAlreadyRunning = _uiState.value.connectionState != VpnConnectionState.Disconnected,
+            )
+        ) return
+        val poolId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
+        if (poolId <= 0L) return
+        onConnectClick(startVpnService, preferredPoolId = poolId)
+    }
+
+    fun onConnectClick(
+        startVpnService: (String) -> Boolean = { true },
+        preferredPoolId: Long? = null,
+    ) {
         val currentState = _uiState.value.let { state ->
             state.copy(activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } })
         }
@@ -912,7 +930,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
 
-            val result = connectSelectedLocation(currentState)
+            val result = connectSelectedLocation(currentState, preferredPoolId)
             result.fold(
                 onSuccess = { payload ->
                     if (!stopStaleRuntimeBeforeProfileStart(attempt)) {
@@ -1088,11 +1106,15 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
+    private suspend fun connectSelectedLocation(
+        state: VpnMainUiState,
+        preferredPoolId: Long? = null,
+    ): Result<EmeryVpnSync.ConnectServerResult> {
         val normalizedState = state.copy(
             activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
         )
-        val serverId = normalizedState.selectedLocation.id.toLongOrNull()
+        // Auto-reconnect never silently falls back to another pool.
+        val serverId = preferredPoolId ?: normalizedState.selectedLocation.id.toLongOrNull()
         if (serverId != null) {
             return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
         }
