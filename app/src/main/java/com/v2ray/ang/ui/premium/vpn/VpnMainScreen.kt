@@ -1,5 +1,12 @@
 package com.v2ray.ang.ui.premium.vpn
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -49,6 +56,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -136,13 +144,47 @@ fun VpnMainScreen(
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
     var connectionQuality by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
+    val connectivity = remember(context) {
+        context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    }
+    var physicalLinkAvailable by remember(connectivity) {
+        mutableStateOf(connectivity?.let(::hasPhysicalInternetLink) ?: true)
+    }
+
+    // Observe the actual Wi-Fi/cellular underlay, NOT the VPN interface.
+    // This only changes the displayed status; the VPN lifecycle stays with
+    // VpnService and the backend's authenticated session lease.
+    DisposableEffect(connectivity) {
+        if (connectivity == null) {
+            onDispose { }
+        } else {
+            val mainHandler = Handler(Looper.getMainLooper())
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                private fun refresh() {
+                    mainHandler.post { physicalLinkAvailable = hasPhysicalInternetLink(connectivity) }
+                }
+                override fun onAvailable(network: Network) = refresh()
+                override fun onLost(network: Network) = refresh()
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
+            }
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build()
+            val registered = runCatching { connectivity.registerNetworkCallback(request, callback) }.isSuccess
+            onDispose {
+                if (registered) runCatching { connectivity.unregisterNetworkCallback(callback) }
+                mainHandler.removeCallbacksAndMessages(null)
+            }
+        }
+    }
 
     // Keep network quality visible for every outcome, not just failures.
     // This check runs only after a VERIFIED VPN connection and cannot delay
     // or deny the first connection attempt.
-    LaunchedEffect(uiState.connectionState) {
+    LaunchedEffect(uiState.connectionState, physicalLinkAvailable) {
         connectionQuality = null
-        if (uiState.connectionState == VpnConnectionState.Connected) {
+        if (uiState.connectionState == VpnConnectionState.Connected && physicalLinkAvailable) {
             connectionQuality = checkPreVpnConnection().quality
         }
     }
@@ -204,7 +246,11 @@ fun VpnMainScreen(
                 StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
                 Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
                 Text(
-                    text = screenTitle(uiState.connectionState),
+                    text = if (uiState.connectionState == VpnConnectionState.Connected && !physicalLinkAvailable) {
+                        "Ожидаем интернет"
+                    } else {
+                        screenTitle(uiState.connectionState)
+                    },
                     style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = AppUiColors.TextPrimary,
@@ -214,7 +260,11 @@ fun VpnMainScreen(
                 if (uiState.connectionState != VpnConnectionState.Disconnected) {
                     Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
                     Text(
-                        text = screenSubtitle(uiState.connectionState),
+                        text = if (uiState.connectionState == VpnConnectionState.Connected && !physicalLinkAvailable) {
+                            "VPN остаётся включённым"
+                        } else {
+                            screenSubtitle(uiState.connectionState)
+                        },
                         style = if (tight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
@@ -224,12 +274,17 @@ fun VpnMainScreen(
                 if (uiState.connectionState == VpnConnectionState.Connected) {
                     Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
                     Text(
-                        text = connectionQualityLabel(connectionQuality),
+                        text = if (!physicalLinkAvailable) {
+                            "Нет сети. VPN восстановит связь автоматически"
+                        } else {
+                            connectionQualityLabel(connectionQuality)
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = when (connectionQuality) {
-                            PreVpnConnectionQuality.Good -> AppUiColors.PositiveStrong
-                            PreVpnConnectionQuality.Critical, PreVpnConnectionQuality.Offline ->
-                                Color(0xFFC25B18)
+                        color = when {
+                            !physicalLinkAvailable -> Color(0xFFC25B18)
+                            connectionQuality == PreVpnConnectionQuality.Good -> AppUiColors.PositiveStrong
+                            connectionQuality == PreVpnConnectionQuality.Critical ||
+                                connectionQuality == PreVpnConnectionQuality.Offline -> Color(0xFFC25B18)
                             else -> AppUiColors.TextSecondary
                         },
                         textAlign = TextAlign.Center,
@@ -346,6 +401,15 @@ fun VpnMainScreen(
     }
 
 }
+
+private fun hasPhysicalInternetLink(manager: ConnectivityManager): Boolean = runCatching {
+    manager.allNetworks.any { network ->
+        manager.getNetworkCapabilities(network)?.let { capabilities ->
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        } == true
+    }
+}.getOrDefault(true)
 
 private fun screenTitle(state: VpnConnectionState): String = when (state) {
     VpnConnectionState.Disconnected -> "Защита выключена"
