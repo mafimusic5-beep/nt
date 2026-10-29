@@ -32,6 +32,11 @@ class VpnSessionResilienceTest {
         assertEquals(stable, vpnImportFingerprint("vless://test-connection"))
         assertEquals(stable, vpnImportFingerprint("  vless://test-connection  "))
         assertNotEquals(stable, vpnImportFingerprint("vless://different-connection"))
+        // The device-gate descriptor can change while the sanitized VLESS
+        // address stays the same. Compare raw metadata, not the sanitized URI.
+        val gateV1 = "vless://uuid@127.0.0.1:10808?eg_assignment=12&eg_node=1"
+        val gateV2 = "vless://uuid@127.0.0.1:10808?eg_assignment=13&eg_node=1"
+        assertNotEquals(vpnImportFingerprint(gateV1), vpnImportFingerprint(gateV2))
         assertEquals(64, stable.length)
     }
 }
