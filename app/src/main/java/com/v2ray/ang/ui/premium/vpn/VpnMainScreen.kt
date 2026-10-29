@@ -88,6 +88,8 @@ import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
+import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.util.Utils
@@ -144,6 +146,7 @@ fun VpnMainScreen(
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
     var connectionQuality by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
+    var automaticRetryAttemptedThisOnlinePeriod by remember { mutableStateOf(false) }
     val connectivity = remember(context) {
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     }
@@ -176,6 +179,32 @@ fun VpnMainScreen(
                 if (registered) runCatching { connectivity.unregisterNetworkCallback(callback) }
                 mainHandler.removeCallbacksAndMessages(null)
             }
+        }
+    }
+
+    // When the physical network comes back, retry the last selected pool once
+    // during this online period. Never restart when the user manually pressed
+    // OFF, and never compete with an already running connection.
+    LaunchedEffect(
+        physicalLinkAvailable,
+        autoConnectEnabled,
+        uiState.connectionState,
+        uiState.connectButtonEnabled,
+    ) {
+        if (!physicalLinkAvailable) {
+            automaticRetryAttemptedThisOnlinePeriod = false
+        } else if (
+            !automaticRetryAttemptedThisOnlinePeriod &&
+            uiState.connectButtonEnabled &&
+            shouldAutoReconnectVpn(
+                enabled = autoConnectEnabled,
+                userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
+                networkAvailable = physicalLinkAvailable,
+                vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected,
+            )
+        ) {
+            automaticRetryAttemptedThisOnlinePeriod = true
+            onConnectClick()
         }
     }
 
@@ -773,7 +802,7 @@ private fun AutoConnectCard(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = if (enabled) "VPN запустится после перезагрузки" else "Включится после первого запуска VPN",
+                text = if (enabled) "Восстановит VPN при возвращении сети, если вы не выключили его вручную" else "Автовосстановление и запуск после перезагрузки отключены",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
                 maxLines = 1,
