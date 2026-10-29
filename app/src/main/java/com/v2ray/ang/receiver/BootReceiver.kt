@@ -65,15 +65,11 @@ class BootReceiver : BroadcastReceiver() {
                 verification.fold(
                     onSuccess = { confirmedProfile ->
                         EmeryAccessManager.saveProfile(confirmedProfile)
-                        var serverId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
+                        val serverId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
                         if (serverId <= 0L) {
-                            serverId = EmeryBackendClient.fetchVpnServers()
-                                .getOrNull()
-                                ?.firstOrNull { it.isAvailable }
-                                ?.id ?: -1L
-                        }
-                        if (serverId <= 0L) {
-                            Log.w(AppConfig.TAG, "BootReceiver: No premium server available")
+                            // No silent fallback to another pool. Require
+                            // user selection when last pool ID is unavailable.
+                            Log.w(AppConfig.TAG, "BootReceiver: No remembered pool; not auto-connecting")
                             return@fold
                         }
                         val session = EmeryVpnSync.connectToServer(confirmedProfile.accessKey, serverId)
