@@ -25,6 +25,20 @@ enum class PreVpnConnectionQuality {
         get() = this == Critical || this == Offline
 }
 
+/**
+ * The quality badge describes the underlying network, NOT VPN tunnel health.
+ * VPN connectivity is verified separately before "Connected" can be shown.
+ * A missing/failed probe must never be presented as proof that VPN is broken.
+ */
+internal fun connectionQualityLabel(quality: PreVpnConnectionQuality?): String = when (quality) {
+    null -> "Проверяем качество исходной сети…"
+    PreVpnConnectionQuality.Good -> "Исходная сеть: скорость от 8 Мбит/с"
+    PreVpnConnectionQuality.Unstable -> "Исходная сеть: нестабильная связь"
+    PreVpnConnectionQuality.Critical -> "Исходная сеть: скорость ниже 8 Мбит/с"
+    PreVpnConnectionQuality.Offline -> "Не удалось проверить исходную сеть"
+    PreVpnConnectionQuality.Unknown -> "Скорость исходной сети не определена"
+}
+
 data class PreVpnConnectionAssessment(
     val quality: PreVpnConnectionQuality,
 )
