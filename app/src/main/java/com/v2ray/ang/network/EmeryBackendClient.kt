@@ -89,8 +89,6 @@ object EmeryBackendClient {
         val city: String,
         val healthStatus: String,
         val isAvailable: Boolean,
-        val activeConnections: Int? = null,
-        val connectionsLimit: Int? = null,
     )
 
     data class ConnectPayload(
@@ -258,8 +256,6 @@ object EmeryBackendClient {
                         city = it.city?.ifBlank { "Unknown" } ?: "Unknown",
                         healthStatus = it.healthStatus ?: "unknown",
                         isAvailable = it.isAvailable != false,
-                        activeConnections = it.activeConnections,
-                        connectionsLimit = it.connectionsLimit,
                     )
                 })
             }
