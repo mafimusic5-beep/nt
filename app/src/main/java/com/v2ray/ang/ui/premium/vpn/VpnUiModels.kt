@@ -257,6 +257,25 @@ private fun hasLocationToken(value: String, token: String): Boolean {
     return Regex("(^|[^a-z0-9])${Regex.escape(token.lowercase())}([^a-z0-9]|$)").containsMatchIn(value)
 }
 
+/**
+ * A NEW manual connection may use a randomly selected AVAILABLE pool.
+ * The reconnection path deliberately does not call this function: it must
+ * restore the last pool selected by the already-running VPN session.
+ */
+internal fun chooseRegionForNewConnection(
+    locations: List<VpnLocationOption>,
+    selectedLocation: VpnLocationOption,
+    randomRegionEnabled: Boolean,
+    chooseIndex: (Int) -> Int = { count -> kotlin.random.Random.nextInt(count) },
+): VpnLocationOption {
+    if (!randomRegionEnabled) return selectedLocation
+    val availablePools = locations.filter { location ->
+        location.id.toLongOrNull()?.let { id -> id > 0L } == true
+    }
+    if (availablePools.isEmpty()) return selectedLocation
+    return availablePools[chooseIndex(availablePools.size).coerceIn(0, availablePools.lastIndex)]
+}
+
 data class VpnMainUiState(
     val activationKey: String = "",
     val locations: List<VpnLocationOption> = VpnDemoData.loadingLocations,
