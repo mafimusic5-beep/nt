@@ -188,7 +188,7 @@ object EmeryVpnSync {
         // Reacquiring a lease after a long offline period may return a changed
         // server profile. Keep a hash of the *running* profile so the service
         // cannot silently pair an old tunnel with a new server assignment.
-        MmkvManager.encodeSettings(SKRYON_VPN_IMPORT_FINGERPRINT_PREF, vpnImportFingerprint(preparedImportText))
+        MmkvManager.encodeSettings(SKRYON_VPN_IMPORT_FINGERPRINT_PREF, vpnImportFingerprint(payload.importText))
         MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, payload.sessionId)
         ManualModeDiagnostics.clearError()
         ManualModeDiagnostics.recordSuccessStep("Server selected: ${payload.city}")
