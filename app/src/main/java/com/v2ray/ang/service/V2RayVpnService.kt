@@ -44,6 +44,7 @@ import java.lang.ref.SoftReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -608,7 +609,9 @@ class V2RayVpnService : VpnService(), ServiceControl {
         } finally {
             if (!accepted) {
                 // Never leak an acquired server session on a failed restore.
-                EmeryBackendClient.releaseVpnSession(accessKey, payload.sessionId)
+                withContext(NonCancellable) {
+                    EmeryBackendClient.releaseVpnSession(accessKey, payload.sessionId)
+                }
             }
         }
     }
