@@ -123,7 +123,21 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
     private suspend fun assessCurrentNetwork(): PreVpnConnectionAssessment {
         val manager = connectivityManager
             ?: return PreVpnConnectionAssessment(PreVpnConnectionQuality.Unknown)
-        val network = manager.activeNetwork
+        val active = manager.activeNetwork
+        val activeCapabilities = active?.let(manager::getNetworkCapabilities)
+        // Once SKRYON is connected, activeNetwork may itself be the VPN.
+        // A physical-link quality advisory must sample the underlying network,
+        // never use the newly established VPN as its own "pre-VPN" baseline.
+        val network = if (activeCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true) {
+            manager.allNetworks.firstOrNull { candidate ->
+                val caps = manager.getNetworkCapabilities(candidate)
+                caps != null &&
+                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            }
+        } else {
+            active
+        }
         val capabilities = network?.let(manager::getNetworkCapabilities)
         val hasActiveNetwork = network != null && capabilities != null
         val hasInternetCapability =
