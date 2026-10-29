@@ -15,6 +15,9 @@ on:
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
+      - 'docs/FUNCTION_REGISTRY.md'
+      - 'AGENTS.md'
+      - '.github/copilot-instructions.md'
       - '.github/workflows/activation-key-tests.yml'
   pull_request:
     paths:
@@ -30,6 +33,9 @@ on:
       - 'app/src/main/java/com/v2ray/ang/network/EmeryAuthClient.kt'
       - 'app/src/main/java/com/v2ray/ang/network/EmeryBackendClient.kt'
       - 'app/src/main/java/com/v2ray/ang/ui/premium/SkryonActivationClient.kt'
+      - 'docs/FUNCTION_REGISTRY.md'
+      - 'AGENTS.md'
+      - '.github/copilot-instructions.md'
       - '.github/workflows/activation-key-tests.yml'
 
 permissions:
@@ -121,3 +127,5 @@ jobs:
           grep -F 'versionName = "2.0.18"' app/build.gradle.kts
       - name: Assemble Playstore debug
         run: ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
+      - name: Run Playstore debug unit tests
+        run: ./gradlew :app:testPlaystoreDebugUnitTest --no-daemon --stacktrace
