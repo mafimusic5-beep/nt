@@ -1,0 +1,3 @@
+# SKRYON AI coding instructions
+
+MANDATORY: read repository-root `AGENTS.md` and `docs/FUNCTION_REGISTRY.md` before any change. For every fix, map affected functions and their callers/callees, preserve existing behavior, update the registry with newly discovered dependencies, add regression tests, review deletions and state transitions, and validate related features. Never silently remove or disable a function, UI warning, security check or notification. Use draft PRs and block merge/release on failing mandatory checks. APK compilation alone is not Android VPN verification. Clearly disclose unknowns and baseline CI failures.
