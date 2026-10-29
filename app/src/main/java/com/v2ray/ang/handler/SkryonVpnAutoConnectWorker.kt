@@ -18,7 +18,6 @@ import androidx.work.WorkerParameters
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
-import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
 import java.util.concurrent.TimeUnit
 
 /**
@@ -105,11 +104,20 @@ internal class SkryonVpnAutoConnectWorker(
             return Result.success()
         }
 
-        // Do not move customers between pools without consent. Reconnect ONLY
-        // to the exact server they previously selected, including after boot.
-        val lastPoolId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
-        if (lastPoolId <= 0L) return Result.success()
-        val connection = EmeryVpnSync.connectToServer(confirmed.accessKey, lastPoolId)
+        // Only a manual region choice is sticky. "Random region" draws a new
+        // available pool on each NEW connection after a stopped service.
+        // Underlay dropouts on a still-live tunnel keep its existing server.
+        val pinnedId = SkryonRegionPreference.pinnedServerId()
+        val availableIds = if (pinnedId != null) {
+            emptyList()
+        } else {
+            EmeryBackendClient.fetchVpnServers()
+                .getOrElse { return Result.retry() }
+                .filter { it.isAvailable }
+                .map { it.id }
+        }
+        val nextPoolId = chooseRegionPoolId(pinnedId, availableIds) ?: return Result.retry()
+        val connection = EmeryVpnSync.connectToServer(confirmed.accessKey, nextPoolId)
             .getOrElse { error ->
                 Log.w(AppConfig.TAG, "Auto-connect pool acquire failed: ${error.message}")
                 return if (error.message in setOf("network", "server_capacity_unavailable", "pool_backend_unreachable", "assignment_install_in_progress")) {
