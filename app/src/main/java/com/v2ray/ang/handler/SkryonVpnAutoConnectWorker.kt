@@ -40,13 +40,16 @@ internal object SkryonVpnAutoConnectScheduler {
             .build()
         WorkManager.getInstance(context.applicationContext)
             .enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP, periodic)
-        requestOnce(context)
+        // Do not schedule an immediate second session while the user is
+        // in the middle of the initial Connect flow. Network recovery is
+        // handled immediately by the active service's callback.
     }
 
     fun requestOnce(context: Context) {
         if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setInitialDelay(30, TimeUnit.SECONDS)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         WorkManager.getInstance(context.applicationContext)
@@ -83,10 +86,11 @@ internal class SkryonVpnAutoConnectWorker(
         val session = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
             ?.trim().orEmpty()
         if (session.isNotBlank()) {
-            // A foreground connect may already be starting; avoid replacing
-            // its in-flight profile. A stale session will be reconciled on a
-            // subsequent retry/recovery path rather than by racing it here.
-            return Result.retry()
+            // The active foreground service owns its signed lease. Do not
+            // touch its profile or spam WorkManager retries while it runs.
+            // If a service stops cleanly, the foreground lifecycle releases
+            // this session and the next scheduled work can recover.
+            return Result.success()
         }
 
         val profile = EmeryAccessManager.loadProfile() ?: return Result.success()
