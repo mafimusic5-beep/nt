@@ -75,6 +75,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private val tunnelVerifier = VpnTunnelTrafficVerifier(application)
 
     private var connectJob: Job? = null
+    private var autoReconnectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
     private var configSyncJob: Job? = null
@@ -807,14 +808,22 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
      * if the refreshed location list now displays a different first server.
      */
     fun onAutoReconnectClick(startVpnService: (String) -> Boolean) {
-        if (!SkryonVpnConnectionIntent.shouldRetry(
-                networkAvailable = true,
-                vpnAlreadyRunning = _uiState.value.connectionState != VpnConnectionState.Disconnected,
-            )
-        ) return
-        val poolId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
-        if (poolId <= 0L) return
-        onConnectClick(startVpnService, preferredPoolId = poolId)
+        if (autoReconnectJob?.isActive == true) return
+        autoReconnectJob = viewModelScope.launch {
+            // Avoid killing a still-running background tunnel when the screen
+            // appears before the service-state broadcast is received.
+            refreshDaemonStateIfUnknown()
+            if (!SkryonVpnConnectionIntent.shouldRetry(
+                    networkAvailable = true,
+                    vpnAlreadyRunning = daemonRunning == true ||
+                        _uiState.value.connectionState != VpnConnectionState.Disconnected,
+                )
+            ) return@launch
+            // Only the original pool may be requested by an automatic retry.
+            val poolId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
+            if (poolId <= 0L) return@launch
+            onConnectClick(startVpnService, preferredPoolId = poolId)
+        }
     }
 
     fun onConnectClick(
@@ -1126,6 +1135,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         // Persist the user's OFF decision BEFORE stopping the service, so
         // network/boot observers cannot race in and restart it.
         SkryonVpnConnectionIntent.markUserDisconnected()
+        autoReconnectJob?.cancel()
         connectionAttempt += 1L
         preserveConnectionFailure = false
         awaitingStartConfirmation = false
@@ -1201,6 +1211,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     override fun onCleared() {
         connectionAttempt += 1L
         connectJob?.cancel()
+        autoReconnectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
         configSyncJob?.cancel()
