@@ -85,13 +85,13 @@ internal fun TvCrispText(
 
     // Complex surrogate emoji and interactive/underlined text retain native
     // rendering, which preserves fallback fonts and decoration.
-    val useVectorGlyphs = isTv &&
-        text.isNotEmpty() &&
-        text.none { Character.isSurrogate(it) } &&
-        textDecoration == null &&
-        style.textDecoration == null &&
-        effectiveFontSize.isSpecified &&
-        effectiveColor.alpha > 0f
+    val useVectorGlyphs = shouldDrawTvGlyphPaths(
+        isTv = isTv,
+        text = text,
+        hasDecoration = textDecoration != null || style.textDecoration != null,
+        hasExplicitSize = effectiveFontSize.isSpecified,
+        alpha = effectiveColor.alpha,
+    )
     var measured by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
 
     val paint = remember(sizePx, effectiveColor, effectiveWeight, effectiveStyle) {
@@ -162,3 +162,14 @@ internal fun TvCrispText(
         style = style,
     )
 }
+
+/** Keep decorative vector rendering off unsupported text and non-TV devices. */
+internal fun shouldDrawTvGlyphPaths(
+    isTv: Boolean,
+    text: String,
+    hasDecoration: Boolean,
+    hasExplicitSize: Boolean,
+    alpha: Float,
+): Boolean =
+    isTv && text.isNotEmpty() && !hasDecoration && hasExplicitSize && alpha > 0f &&
+        text.none { Character.isSurrogate(it) }
