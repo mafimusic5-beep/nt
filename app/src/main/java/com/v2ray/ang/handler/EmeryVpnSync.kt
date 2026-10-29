@@ -8,6 +8,8 @@ import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
 import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
+import com.v2ray.ang.ui.premium.SKRYON_VPN_IMPORT_FINGERPRINT_PREF
+import com.v2ray.ang.service.vpnImportFingerprint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -183,6 +185,10 @@ object EmeryVpnSync {
         }
         MmkvManager.setSelectServer(selectedGuid)
         MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, payload.serverId)
+        // Reacquiring a lease after a long offline period may return a changed
+        // server profile. Keep a hash of the *running* profile so the service
+        // cannot silently pair an old tunnel with a new server assignment.
+        MmkvManager.encodeSettings(SKRYON_VPN_IMPORT_FINGERPRINT_PREF, vpnImportFingerprint(payload.importText))
         MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, payload.sessionId)
         ManualModeDiagnostics.clearError()
         ManualModeDiagnostics.recordSuccessStep("Server selected: ${payload.city}")
