@@ -25,7 +25,7 @@ internal fun heartbeatFailureAction(reason: String?): VpnHeartbeatFailureAction 
         normalized == "no_server" ||
         httpStatus == 408 ||
         httpStatus == 429 ||
-        httpStatus in 500..599
+        (httpStatus != null && httpStatus in 500..599)
     ) {
         return VpnHeartbeatFailureAction.RETRY
     }
