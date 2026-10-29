@@ -620,6 +620,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             }
             val selected = safeLocations.firstOrNull { it.id == activeId }
                 ?: safeLocations.firstOrNull { it.id == pinnedId }
+                // An unavailable manually pinned server is NEVER presented as
+                // some other country. Keep the chosen ID visible to the user.
+                ?: pinnedId?.let { id ->
+                    state.selectedLocation.takeIf { it.id == id }
+                        ?: VpnLocationOption(id = id, title = "Выбранный регион недоступен")
+                }
                 ?: safeLocations.firstOrNull { it.id == state.selectedLocation.id }
                 ?: safeLocations.first()
             state.copy(
