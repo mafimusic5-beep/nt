@@ -2,6 +2,7 @@ import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -239,7 +240,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start()
                 process.waitFor() == 0 && staged.length() > 1_000_000L &&
-                    java.util.zip.ZipFile(staged).use { it.getEntry("AndroidManifest.xml") != null }
+                    ZipFile(staged).use { it.getEntry("AndroidManifest.xml") != null }
             }.getOrDefault(false)
             if (restoredFromGit) {
                 staged.copyTo(libv2rayAar, overwrite = true)
@@ -264,7 +265,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
                     }
                 }
                 require(incoming.length() > 1_000_000L &&
-                    java.util.zip.ZipFile(incoming).use { it.getEntry("AndroidManifest.xml") != null }) {
+                    ZipFile(incoming).use { it.getEntry("AndroidManifest.xml") != null }) {
                     "Downloaded libv2ray.aar is incomplete or invalid"
                 }
                 incoming.copyTo(libv2rayAar, overwrite = true)
