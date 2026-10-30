@@ -35,7 +35,8 @@ internal fun shouldRecoverStaleVpnLease(
     hasSession: Boolean,
     vpnNetworkActive: Boolean,
     connectionStarting: Boolean,
-): Boolean = hasSession && !vpnNetworkActive && !connectionStarting
+    serviceAlive: Boolean,
+): Boolean = hasSession && !vpnNetworkActive && !connectionStarting && !serviceAlive
 
 internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
     val code = reason.orEmpty().trim().lowercase()
@@ -133,6 +134,10 @@ internal class SkryonVpnAutoConnectWorker(
         // attempt to replace another running VPN app.
         if (VpnService.prepare(applicationContext) != null) return Result.success()
 
+        // The service core lives in another process. Android may hide the
+        // disallowed VPN app's own network from ConnectivityManager; its
+        // short-lived daemon pulse prevents a false "stale session" cleanup.
+        if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return Result.success()
         val networkPresent = vpnNetworkPresent() ?: return Result.retry()
         if (networkPresent) {
             // The VPN service owns its current session even when its Xray
@@ -147,6 +152,7 @@ internal class SkryonVpnAutoConnectWorker(
                 hasSession = session.isNotBlank(),
                 vpnNetworkActive = networkPresent,
                 connectionStarting = SkryonVpnConnectionIntent.isUserConnectionStarting(),
+                serviceAlive = SkryonVpnConnectionIntent.isVpnServiceAlive(),
             )
         ) {
             // Process death might leave a lease in MMKV without a live Android
@@ -158,7 +164,9 @@ internal class SkryonVpnAutoConnectWorker(
                 return if (isRetryableSkryonReconnectFailure(reason)) Result.retry() else Result.success()
             }
             if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return Result.retry()
-            if (vpnNetworkPresent() != false) return Result.retry()
+            if (SkryonVpnConnectionIntent.isVpnServiceAlive() || vpnNetworkPresent() != false) {
+                return Result.retry()
+            }
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == session) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
             } else {
