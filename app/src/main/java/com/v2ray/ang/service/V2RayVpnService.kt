@@ -69,6 +69,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private var pendingDeviceGate: DeviceBoundVlessProxy.ResolvedDescriptor? = null
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var sessionHeartbeatJob: Job? = null
+    private var serviceLivenessJob: Job? = null
     @Volatile
     private var serviceLeaseId: String = ""
     // Network callbacks wake the retry loop immediately when Wi-Fi/mobile
@@ -159,6 +160,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
         deviceGateProxy?.stop()
         deviceGateProxy = null
         sessionHeartbeatJob?.cancel()
+        serviceLivenessJob?.cancel()
+        SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
         underlayChanges.close()
         sessionScope.cancel()
         super.onDestroy()
@@ -177,6 +180,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             if (serviceLeaseId.isNotBlank() && savedLease == serviceLeaseId) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
             }
+            SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
             SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
         }
     }
@@ -261,6 +265,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             stopAllService()
             return
         }
+        startServiceLivenessHeartbeat()
         startSessionHeartbeat()
     }
 
@@ -539,6 +544,22 @@ class V2RayVpnService : VpnService(), ServiceControl {
     }
 
     /**
+     * The default app/WorkManager processes cannot observe Xray's in-memory
+     * running flag in :RunSoLibV2RayDaemon. Update a short-lived MMKV pulse
+     * while the VPN core is alive so recovery never releases a LIVE lease.
+     * Unlike the signed backend heartbeat, this pulse runs even when offline.
+     */
+    private fun startServiceLivenessHeartbeat() {
+        serviceLivenessJob?.cancel()
+        serviceLivenessJob = sessionScope.launch {
+            while (isActive && isRunning && !stopInProgress && V2RayServiceManager.isRunning()) {
+                SkryonVpnConnectionIntent.markVpnServiceAlive()
+                delay(5_000L)
+            }
+        }
+    }
+
+    /**
      * Keep the Android VPN/TUN interface alive through Wi-Fi/mobile dropouts.
      *
      * A transport failure is not a revoked subscription. The backend's session
@@ -714,6 +735,9 @@ class V2RayVpnService : VpnService(), ServiceControl {
             isRunning = false
             sessionHeartbeatJob?.cancel()
             sessionHeartbeatJob = null
+            serviceLivenessJob?.cancel()
+            serviceLivenessJob = null
+            SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {
                     connectivity.unregisterNetworkCallback(defaultNetworkCallback)
