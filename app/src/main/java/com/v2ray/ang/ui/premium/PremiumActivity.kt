@@ -1,9 +1,6 @@
 package com.v2ray.ang.ui.premium
 
 import android.app.Activity
-import android.content.pm.PackageManager
-import android.content.res.Configuration
-import android.view.KeyEvent as AndroidKeyEvent
 import android.graphics.Color as AndroidColor
 import android.net.VpnService
 import android.os.Bundle
@@ -52,17 +49,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -806,21 +795,6 @@ private fun ActivationCodeInput(
     onCodeChange: (String) -> Unit,
     compact: Boolean,
 ) {
-    val context = LocalContext.current
-    val isTv = remember(context) {
-        val tvMode = context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
-        tvMode == Configuration.UI_MODE_TYPE_TELEVISION ||
-            context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
-    }
-    val keyboard = LocalSoftwareKeyboardController.current
-    val focusRequester = remember { FocusRequester() }
-    var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(isTv) {
-        // Physical remotes start with an accessible field focus. A keyboard
-        // must open on OK, not require a PC mouse or emulator click.
-        if (isTv) focusRequester.requestFocus()
-    }
-
     BasicTextField(
         value = code,
         onValueChange = { value ->
@@ -833,29 +807,7 @@ private fun ActivationCodeInput(
             capitalization = KeyboardCapitalization.Characters,
             keyboardType = KeyboardType.Ascii,
         ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusRequester(focusRequester)
-            .onFocusChanged { focused = it.isFocused }
-            .onPreviewKeyEvent { event ->
-                if (isTv && event.type == KeyEventType.KeyDown &&
-                    event.nativeKeyEvent.keyCode in listOf(
-                        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                        AndroidKeyEvent.KEYCODE_ENTER,
-                        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
-                    )
-                ) {
-                    keyboard?.show()
-                    true
-                } else {
-                    false
-                }
-            }
-            .border(
-                width = if (isTv && focused) 2.dp else 0.dp,
-                color = Color(0xFF74C84F),
-                shape = RoundedCornerShape(12.dp),
-            ),
+        modifier = Modifier.fillMaxWidth(),
         decorationBox = { innerTextField ->
             Box(
                 modifier = Modifier
