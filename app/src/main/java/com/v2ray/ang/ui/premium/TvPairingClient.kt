@@ -2,6 +2,7 @@ package com.v2ray.ang.ui.premium
 
 import android.util.Base64
 import java.security.KeyPairGenerator
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.spec.MGF1ParameterSpec
 import java.util.concurrent.TimeUnit
@@ -67,7 +68,12 @@ internal object TvPairingClient {
         val pollSecret = result.getString("poll_secret")
         val url = result.getString("url")
         check(Regex("^[A-Za-z0-9_-]{32}$").matches(ticket)) { "Некорректный QR-токен" }
-        check(url == "$API?ticket=$ticket") { "Некорректная ссылка активации" }
+        val keyHash = MessageDigest.getInstance("SHA-256")
+            .digest(pair.public.encoded)
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+        check(url == "$ORIGIN/api/tv/activate?ticket=$ticket#key=$keyHash") {
+            "Некорректная ссылка активации"
+        }
         check(pollSecret.length >= 32) { "Некорректный секрет сеанса" }
         Session(
             ticket = ticket,
