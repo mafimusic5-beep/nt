@@ -14,10 +14,6 @@ import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
-import com.v2ray.ang.handler.SkryonRegionPreference
-import com.v2ray.ang.handler.chooseRegionPoolId
-import com.v2ray.ang.handler.SkryonVpnConnectionIntent
-import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
 import com.v2ray.ang.network.EmeryPoolClient
@@ -63,7 +59,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val STALE_RUNTIME_STOP_TIMEOUT_MS = 10_000L
         const val STALE_RUNTIME_SETTLE_DELAY_MS = 300L
         const val CONFIG_SYNC_RETRY_DELAY_MS = 3_000L
-        const val CONFIG_SYNC_POLL_DELAY_MS = 30_000L
         const val CONFIG_SYNC_ACCESS_RETRY_DELAY_MS = 30_000L
         const val TUNNEL_VERIFY_TIMEOUT_MS = 12_000L
     }
@@ -71,7 +66,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow(
         VpnMainUiState(
             activationKey = savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY },
-            randomRegion = SkryonRegionPreference.isRandom(),
         )
     )
     val uiState: StateFlow<VpnMainUiState> = _uiState.asStateFlow()
@@ -79,7 +73,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private val tunnelVerifier = VpnTunnelTrafficVerifier(application)
 
     private var connectJob: Job? = null
-    private var autoReconnectJob: Job? = null
     private var timerJob: Job? = null
     private var serversJob: Job? = null
     private var configSyncJob: Job? = null
@@ -304,8 +297,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         locationsError = "",
                     )
                 }
-                SkryonVpnConnectionIntent.finishUserConnectionAttempt()
-                SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
                 startTimer()
                 VpnUiDebugLogger.log(
                     hypothesisId = "H-TRAFFIC",
@@ -394,10 +385,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 val activeSessionId = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
                     ?.trim()
                     .orEmpty()
-                if (
-                    activeSessionId.isNotBlank() ||
-                    _uiState.value.connectionState != VpnConnectionState.Disconnected
-                ) {
+                if (activeSessionId.isNotBlank()) {
                     delay(CONFIG_SYNC_RETRY_DELAY_MS)
                     continue
                 }
@@ -412,15 +400,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     revision = knownRevision,
                 )
                 if (!isActive) return@launch
-                // A connect may have started while the HTTP sync was in flight.
-                // Never replace the selected profile or clear its session mid-connect.
-                if (
-                    _uiState.value.connectionState != VpnConnectionState.Disconnected ||
-                    MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "").orEmpty().isNotBlank()
-                ) {
-                    delay(CONFIG_SYNC_RETRY_DELAY_MS)
-                    continue
-                }
 
                 if (!result.ok) {
                     if (result.reason in setOf("not_found", "expired", "banned", "not_bound", "upgrade_required")) {
@@ -442,9 +421,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 } else {
                     applySyncedSkryonConfig(result.config, result.serverId)
                 }
-                // Successful sync must never spin in a tight loop and flood
-                // /api/config/sync while VPN connect is using the same backend.
-                delay(CONFIG_SYNC_POLL_DELAY_MS)
             }
         }
     }
@@ -520,8 +496,18 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
 
-            // Always refresh the available pool list. Returning only the last
-            // assigned server would hide the manual region picker on reconnect.
+            val activatedLocation = savedSkryonConfigLocation()
+            if (activatedLocation != null) {
+                applyLocations(listOf(activatedLocation), "")
+                VpnUiDebugLogger.log(
+                    hypothesisId = "H9",
+                    location = "VpnMainViewModel.kt:refreshLocations",
+                    message = "using saved activated skryon config",
+                    data = JSONObject().put("title", activatedLocation.title),
+                )
+                return@launch
+            }
+
             val result = withTimeoutOrNull(4_000L) {
                 EmeryBackendClient.fetchVpnServers()
             } ?: Result.failure(IllegalStateException("server_list_timeout"))
@@ -612,24 +598,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     private fun applyLocations(locations: List<VpnLocationOption>, error: String) {
         val safeLocations = locations.ifEmpty { VpnDemoData.unavailableLocations }
         _uiState.update { state ->
-            val pinnedId = SkryonRegionPreference.pinnedServerId()?.toString()
-            val activeId = if (state.connectionState == VpnConnectionState.Connected || daemonRunning == true) {
-                MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L).toString()
-            } else {
-                null
-            }
-            val selected = safeLocations.firstOrNull { it.id == activeId }
-                ?: safeLocations.firstOrNull { it.id == pinnedId }
-                // An unavailable manually pinned server is NEVER presented as
-                // some other country. Keep the chosen ID visible to the user.
-                ?: pinnedId?.let { id ->
-                    state.selectedLocation.takeIf { it.id == id }
-                        ?: VpnLocationOption(id = id, title = "Выбранный регион недоступен")
-                }
-                ?: safeLocations.firstOrNull { it.id == state.selectedLocation.id }
+            val selected = safeLocations.firstOrNull { it.id == state.selectedLocation.id }
                 ?: safeLocations.first()
             state.copy(
-                randomRegion = pinnedId == null,
                 activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
                 locations = safeLocations,
                 selectedLocation = selected,
@@ -775,16 +746,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, -1L)
             MmkvManager.encodeSettings(SKRYON_CONFIG_REVISION_PREF, -1L)
             MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
-            // A new activation code should not inherit a pin from somebody
-            // else's subscription. Reset explicitly to Random.
-            SkryonRegionPreference.selectRandom()
 
             _uiState.update { state ->
                 state.copy(
                     activationKey = confirmedCode,
                     locations = VpnDemoData.unavailableLocations,
                     selectedLocation = VpnDemoData.unavailableLocations.first(),
-                    randomRegion = true,
                     locationsLoading = true,
                     locationsError = "",
                 )
@@ -802,16 +769,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onLocationSelected(location: String) {
-        if (location == SkryonRegionPreference.RANDOM_REGION_ID) {
-            SkryonRegionPreference.selectRandom()
-            _uiState.update { it.copy(randomRegion = true) }
-            return
-        }
         val selected = _uiState.value.locations.firstOrNull {
             it.id == location || it.title == location
         } ?: return
-        val poolId = selected.id.toLongOrNull() ?: return
-        SkryonRegionPreference.pinServer(poolId)
         VpnUiDebugLogger.log(
             hypothesisId = "H5",
             location = "VpnMainViewModel.kt:onLocationSelected",
@@ -821,13 +781,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 .put("serverId", selected.id),
         )
         _uiState.update { state ->
-            state.copy(selectedLocation = selected, randomRegion = false)
+            state.copy(selectedLocation = selected)
         }
-    }
-
-    /** Background retry delegates pool selection to the capacity-aware worker. */
-    fun onAutoReconnectClick() {
-        SkryonVpnAutoConnectScheduler.requestOnce(getApplication())
     }
 
     fun onConnectClick(startVpnService: (String) -> Boolean = { true }) {
@@ -855,9 +810,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        // Only an explicit user connect (or approved automatic retry) may
-        // re-arm background reconnection after a manual disconnect.
-        SkryonVpnConnectionIntent.markUserConnected()
         connectionAttempt += 1L
         val attempt = connectionAttempt
         preserveConnectionFailure = false
@@ -943,16 +895,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             val result = connectSelectedLocation(currentState)
             result.fold(
                 onSuccess = { payload ->
-                    // A random assignment is visible as the real server once
-                    // connected, but it must NOT pin a manual preference.
-                    _uiState.update { state ->
-                        val location = state.locations.firstOrNull { it.id == payload.serverId.toString() }
-                            ?: VpnLocationOption(
-                                id = payload.serverId.toString(),
-                                title = serverRegionTitle(payload.city, payload.serverId.toInt()),
-                            )
-                        state.copy(selectedLocation = location)
-                    }
                     if (!stopStaleRuntimeBeforeProfileStart(attempt)) {
                         releaseCurrentVpnSession()
                         setDisconnectedWithError("Не удалось остановить предыдущий VPN-сеанс")
@@ -1115,7 +1057,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun setDisconnectedWithError(message: String) {
-        SkryonVpnConnectionIntent.finishUserConnectionAttempt()
         timerJob?.cancel()
         serviceStateRecheckJob?.cancel()
         _uiState.update { state ->
@@ -1127,25 +1068,19 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun connectSelectedLocation(
-        state: VpnMainUiState,
-    ): Result<EmeryVpnSync.ConnectServerResult> {
+    private suspend fun connectSelectedLocation(state: VpnMainUiState): Result<EmeryVpnSync.ConnectServerResult> {
         val normalizedState = state.copy(
             activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
         )
-        val availableIds = normalizedState.locations.mapNotNull { it.id.toLongOrNull() }
-        val preferredId = if (normalizedState.randomRegion) null else SkryonRegionPreference.pinnedServerId()
-        val serverId = chooseRegionPoolId(preferredId, availableIds)
-            ?: return Result.failure(IllegalStateException("server_selection_refresh_required"))
-        return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
+        val serverId = normalizedState.selectedLocation.id.toLongOrNull()
+        if (serverId != null) {
+            return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
+        }
+
+        return Result.failure(IllegalStateException("server_selection_refresh_required"))
     }
 
     fun onDisconnectClick(stopVpnService: () -> Unit = {}) {
-        // Persist the user's OFF decision BEFORE stopping the service, so
-        // network/boot observers cannot race in and restart it.
-        SkryonVpnConnectionIntent.markUserDisconnected()
-        SkryonVpnAutoConnectScheduler.cancel(getApplication())
-        autoReconnectJob?.cancel()
         connectionAttempt += 1L
         preserveConnectionFailure = false
         awaitingStartConfirmation = false
@@ -1221,7 +1156,6 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     override fun onCleared() {
         connectionAttempt += 1L
         connectJob?.cancel()
-        autoReconnectJob?.cancel()
         timerJob?.cancel()
         serversJob?.cancel()
         configSyncJob?.cancel()

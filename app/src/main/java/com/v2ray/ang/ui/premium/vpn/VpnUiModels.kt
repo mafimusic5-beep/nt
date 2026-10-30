@@ -261,7 +261,6 @@ data class VpnMainUiState(
     val activationKey: String = "",
     val locations: List<VpnLocationOption> = VpnDemoData.loadingLocations,
     val selectedLocation: VpnLocationOption = VpnDemoData.loadingLocations.first(),
-    val randomRegion: Boolean = true,
     val connectionState: VpnConnectionState = VpnConnectionState.Disconnected,
     val elapsedSeconds: Long = 0L,
     val locationsLoading: Boolean = false,

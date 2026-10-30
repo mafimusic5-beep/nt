@@ -16,16 +16,6 @@ class PreVpnConnectionQualityTest {
     }
 
     @Test
-    fun `underlying network status is visible for all probe outcomes`() {
-        assertEquals("Проверяем качество исходной сети…", connectionQualityLabel(null))
-        assertEquals("Исходная сеть: скорость от 8 Мбит/с", connectionQualityLabel(PreVpnConnectionQuality.Good))
-        assertEquals("Исходная сеть: нестабильная связь", connectionQualityLabel(PreVpnConnectionQuality.Unstable))
-        assertEquals("Исходная сеть: скорость ниже 8 Мбит/с", connectionQualityLabel(PreVpnConnectionQuality.Critical))
-        assertEquals("Не удалось проверить исходную сеть", connectionQualityLabel(PreVpnConnectionQuality.Offline))
-        assertEquals("Скорость исходной сети не определена", connectionQualityLabel(PreVpnConnectionQuality.Unknown))
-    }
-
-    @Test
     fun `offline when there is no active internet network`() {
         assertEquals(
             PreVpnConnectionQuality.Offline,

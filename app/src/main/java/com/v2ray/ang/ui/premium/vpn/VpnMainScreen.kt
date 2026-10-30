@@ -1,12 +1,5 @@
 package com.v2ray.ang.ui.premium.vpn
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
-import android.os.Handler
-import android.os.Looper
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -26,7 +19,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,7 +28,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,10 +46,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
-import com.v2ray.ang.ui.premium.vpn.TvCrispText as Text
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -90,10 +80,6 @@ import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
-import com.v2ray.ang.handler.SkryonRegionPreference
-import com.v2ray.ang.handler.SkryonVpnConnectionIntent
-import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
-import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.util.Utils
@@ -122,7 +108,6 @@ fun VpnMainRoute(
             }
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
-        onAutoReconnectClick = viewModel::onAutoReconnectClick,
         onActivationCodeSubmit = viewModel::activateReplacementCode,
         checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
@@ -137,7 +122,6 @@ fun VpnMainScreen(
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
-    onAutoReconnectClick: () -> Unit = onConnectClick,
     checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
         PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
     },
@@ -151,76 +135,27 @@ fun VpnMainScreen(
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
-    var connectionQuality by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
-    var automaticRetryAttemptedThisOnlinePeriod by remember { mutableStateOf(false) }
-    val connectivity = remember(context) {
-        context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-    }
-    var physicalLinkAvailable by remember(connectivity) {
-        mutableStateOf(connectivity?.let(::hasPhysicalInternetLink) ?: true)
+    var connectionCheckInProgress by remember { mutableStateOf(false) }
+    var connectionWarning by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
+
+    fun connectAfterUserConfirmation() {
+        onConnectClick()
     }
 
-    // Observe the actual Wi-Fi/cellular underlay, NOT the VPN interface.
-    // This only changes the displayed status; the VPN lifecycle stays with
-    // VpnService and the backend's authenticated session lease.
-    DisposableEffect(connectivity) {
-        if (connectivity == null) {
-            onDispose { }
-        } else {
-            val mainHandler = Handler(Looper.getMainLooper())
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                private fun refresh() {
-                    mainHandler.post { physicalLinkAvailable = hasPhysicalInternetLink(connectivity) }
+    fun checkConnectionAndConnect() {
+        if (connectionCheckInProgress) return
+        connectionCheckInProgress = true
+        policyScope.launch {
+            try {
+                val assessment = checkPreVpnConnection()
+                if (assessment.quality.shouldWarn) {
+                    connectionWarning = assessment.quality
+                } else {
+                    connectAfterUserConfirmation()
                 }
-                override fun onAvailable(network: Network) = refresh()
-                override fun onLost(network: Network) = refresh()
-                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
+            } finally {
+                connectionCheckInProgress = false
             }
-            val request = NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                .build()
-            val registered = runCatching { connectivity.registerNetworkCallback(request, callback) }.isSuccess
-            onDispose {
-                if (registered) runCatching { connectivity.unregisterNetworkCallback(callback) }
-                mainHandler.removeCallbacksAndMessages(null)
-            }
-        }
-    }
-
-    // When the physical network comes back, retry the last selected pool once
-    // during this online period. Never restart when the user manually pressed
-    // OFF, and never compete with an already running connection.
-    LaunchedEffect(
-        physicalLinkAvailable,
-        autoConnectEnabled,
-        uiState.connectionState,
-        uiState.connectButtonEnabled,
-    ) {
-        if (!physicalLinkAvailable) {
-            automaticRetryAttemptedThisOnlinePeriod = false
-        } else if (
-            !automaticRetryAttemptedThisOnlinePeriod &&
-            uiState.connectButtonEnabled &&
-            shouldAutoReconnectVpn(
-                enabled = autoConnectEnabled,
-                userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
-                networkAvailable = physicalLinkAvailable,
-                vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected,
-            )
-        ) {
-            automaticRetryAttemptedThisOnlinePeriod = true
-            onAutoReconnectClick()
-        }
-    }
-
-    // Keep network quality visible for every outcome, not just failures.
-    // This check runs only after a VERIFIED VPN connection and cannot delay
-    // or deny the first connection attempt.
-    LaunchedEffect(uiState.connectionState, physicalLinkAvailable) {
-        connectionQuality = null
-        if (uiState.connectionState == VpnConnectionState.Connected && physicalLinkAvailable) {
-            connectionQuality = checkPreVpnConnection().quality
         }
     }
 
@@ -246,8 +181,7 @@ fun VpnMainScreen(
     ) {
         val compact = maxHeight < 830.dp
         val tight = maxHeight < 730.dp
-        val tvLandscape = maxWidth > maxHeight * 1.4f
-        val horizontalPadding = if (tvLandscape) 26.dp else if (tight) 18.dp else 24.dp
+        val horizontalPadding = if (tight) 18.dp else 24.dp
         val showParisBackground = selectedTab == MainTab.Home && uiState.selectedLocation.cityLabel() == "Париж"
 
         if (showParisBackground) {
@@ -270,21 +204,11 @@ fun VpnMainScreen(
 
         Column(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                // Do not stretch phone controls across an entire television.
-                // Keep text/buttons within a readable centered content area.
-                .widthIn(max = if (tvLandscape) 820.dp else maxWidth)
-                .fillMaxWidth()
-                .fillMaxHeight()
+                .fillMaxSize()
                 .padding(start = horizontalPadding, top = 0.dp, end = horizontalPadding, bottom = if (tight) 8.dp else 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            HeaderBar(
-                selectedLocation = uiState.selectedLocation,
-                randomRegion = uiState.randomRegion,
-                connectionState = uiState.connectionState,
-                compact = compact,
-            )
+            HeaderBar(selectedLocation = uiState.selectedLocation, compact = compact)
 
             if (selectedTab == MainTab.Home) {
                 Spacer(Modifier.height(if (tight) 18.dp else if (compact) 30.dp else 42.dp))
@@ -292,11 +216,7 @@ fun VpnMainScreen(
                 StatusBeacon(connectionState = uiState.connectionState, compact = compact, tight = tight)
                 Spacer(Modifier.height(if (tight) 10.dp else 16.dp))
                 Text(
-                    text = if (uiState.connectionState == VpnConnectionState.Connected && !physicalLinkAvailable) {
-                        "Ожидаем интернет"
-                    } else {
-                        screenTitle(uiState.connectionState)
-                    },
+                    text = screenTitle(uiState.connectionState),
                     style = if (tight) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = AppUiColors.TextPrimary,
@@ -306,35 +226,11 @@ fun VpnMainScreen(
                 if (uiState.connectionState != VpnConnectionState.Disconnected) {
                     Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
                     Text(
-                        text = if (uiState.connectionState == VpnConnectionState.Connected && !physicalLinkAvailable) {
-                            "VPN остаётся включённым"
-                        } else {
-                            screenSubtitle(uiState.connectionState)
-                        },
+                        text = screenSubtitle(uiState.connectionState),
                         style = if (tight) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
-                    )
-                }
-                if (uiState.connectionState == VpnConnectionState.Connected) {
-                    Spacer(Modifier.height(if (tight) 5.dp else 8.dp))
-                    Text(
-                        text = if (!physicalLinkAvailable) {
-                            "Нет сети. VPN восстановит связь автоматически"
-                        } else {
-                            connectionQualityLabel(connectionQuality)
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when {
-                            !physicalLinkAvailable -> Color(0xFFC25B18)
-                            connectionQuality == PreVpnConnectionQuality.Good -> AppUiColors.PositiveStrong
-                            connectionQuality == PreVpnConnectionQuality.Critical ||
-                                connectionQuality == PreVpnConnectionQuality.Offline -> Color(0xFFC25B18)
-                            else -> AppUiColors.TextSecondary
-                        },
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
                     )
                 }
                 if (uiState.locationsError.isNotBlank()) {
@@ -351,7 +247,6 @@ fun VpnMainScreen(
                 Spacer(Modifier.weight(0.75f))
                 RegionSelectorCard(
                     selectedLocation = uiState.selectedLocation,
-                    randomRegion = uiState.randomRegion,
                     locations = locations,
                     compact = compact,
                     tight = tight,
@@ -361,14 +256,14 @@ fun VpnMainScreen(
                 PrimaryConnectButton(
                     state = uiState.connectionState,
                     enabled = uiState.connectButtonEnabled,
-                    checkingConnection = false,
+                    checkingConnection = connectionCheckInProgress,
                     compact = compact,
                     tight = tight,
                     onClick = {
                         if (uiState.connectionState == VpnConnectionState.Connected) {
                             onDisconnectClick()
                         } else {
-                            onConnectClick()
+                            checkConnectionAndConnect()
                         }
                     },
                 )
@@ -419,13 +314,6 @@ fun VpnMainScreen(
                     onAutoConnectChange = { enabled ->
                         autoConnectEnabled = enabled
                         MmkvManager.encodeStartOnBoot(enabled)
-                        if (enabled) {
-                            // Manual OFF remains authoritative: enabling the
-                            // toggle does not secretly re-arm a stopped VPN.
-                            SkryonVpnAutoConnectScheduler.ensureScheduled(context)
-                        } else {
-                            SkryonVpnAutoConnectScheduler.cancel(context)
-                        }
                     },
                     connectionState = uiState.connectionState,
                     onActivationCodeSubmit = onActivationCodeSubmit,
@@ -454,16 +342,21 @@ fun VpnMainScreen(
         }
     }
 
-}
-
-private fun hasPhysicalInternetLink(manager: ConnectivityManager): Boolean = runCatching {
-    manager.allNetworks.any { network ->
-        manager.getNetworkCapabilities(network)?.let { capabilities ->
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-        } == true
+    connectionWarning?.let { quality ->
+        PreVpnConnectionWarningDialog(
+            quality = quality,
+            onContinue = {
+                connectionWarning = null
+                connectAfterUserConfirmation()
+            },
+            onRetry = {
+                connectionWarning = null
+                checkConnectionAndConnect()
+            },
+            onDismiss = { connectionWarning = null },
+        )
     }
-}.getOrDefault(true)
+}
 
 private fun screenTitle(state: VpnConnectionState): String = when (state) {
     VpnConnectionState.Disconnected -> "Защита выключена"
@@ -478,18 +371,9 @@ private fun screenSubtitle(state: VpnConnectionState): String = when (state) {
 }
 
 @Composable
-private fun HeaderBar(
-    selectedLocation: VpnLocationOption,
-    randomRegion: Boolean,
-    connectionState: VpnConnectionState,
-    compact: Boolean,
-) {
-    val locationLabel = if (randomRegion && connectionState != VpnConnectionState.Connected) {
-        "Случайный регион"
-    } else {
-        selectedLocation.cityLabel().let { city ->
-            if (city == "Франкфурт") "Франкфурт-на-Майне" else city
-        }
+private fun HeaderBar(selectedLocation: VpnLocationOption, compact: Boolean) {
+    val locationLabel = selectedLocation.cityLabel().let { city ->
+        if (city == "Франкфурт") "Франкфурт-на-Майне" else city
     }
 
     Row(
@@ -661,15 +545,14 @@ private fun StatusBeacon(connectionState: VpnConnectionState, compact: Boolean =
 @Composable
 private fun RegionSelectorCard(
     selectedLocation: VpnLocationOption,
-    randomRegion: Boolean,
     locations: List<VpnLocationOption>,
     compact: Boolean,
     tight: Boolean,
     onLocationSelected: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedCode = if (randomRegion) "VPN" else selectedLocation.countryCodeLabel()
-    val selectedTitle = if (randomRegion) "Случайный регион" else selectedLocation.cityLabel()
+    val selectedCode = selectedLocation.countryCodeLabel()
+    val selectedTitle = "Выбрать регион"
     val cardShape = RoundedCornerShape(if (compact) 18.dp else 20.dp)
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -719,29 +602,9 @@ private fun RegionSelectorCard(
                 .width(menuWidth)
                 .background(Color.White),
         ) {
-            DropdownMenuItem(
-                text = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FlagMark(code = "VPN", modifier = Modifier.width(28.dp).height(20.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            text = "Случайный регион",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = AppUiColors.TextPrimary,
-                            fontWeight = if (randomRegion) FontWeight.SemiBold else FontWeight.Normal,
-                        )
-                    }
-                },
-                onClick = {
-                    expanded = false
-                    onLocationSelected(SkryonRegionPreference.RANDOM_REGION_ID)
-                },
-                modifier = Modifier.background(if (randomRegion) AppUiColors.RegionSelected else Color.White),
-            )
-            locations.filter { it.id.toLongOrNull() != null }.forEach { location ->
+            locations.forEach { location ->
                 val code = location.countryCodeLabel()
-                val selected = !randomRegion &&
-                    (location.id == selectedLocation.id || location.title == selectedLocation.title)
+                val selected = location.id == selectedLocation.id || location.title == selectedLocation.title
                 DropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -814,7 +677,7 @@ private fun RegionChip(
 private fun FlagMark(code: String, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Text(
-            text = if (code == "VPN") "🌐" else countryFlagEmoji(code),
+            text = countryFlagEmoji(code),
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 1,
         )
@@ -857,14 +720,10 @@ private fun AutoConnectCard(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = when {
-                    !enabled -> "Автовосстановление отключено"
-                    !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную. Включите кнопкой"
-                    else -> "После сети, перезагрузки и сна ТВ"
-                },
+                text = if (enabled) "VPN запустится после перезагрузки" else "Включится после первого запуска VPN",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -1645,8 +1504,7 @@ private object AppUiColors {
     val RegionSelected = Color(0xFFF3FAEF)
     val Border = Color(0xFFE6E9EE)
     val TextPrimary = Color(0xFF111319)
-    // Contrast-friendly for Android TV and smaller full-HD text.
-    val TextSecondary = Color(0xFF535D6B)
+    val TextSecondary = Color(0xFF7D828D)
     val Positive = Color(0xFF74C84F)
     val PositiveStrong = Color(0xFF36A852)
 }

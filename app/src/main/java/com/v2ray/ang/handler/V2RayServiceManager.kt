@@ -154,7 +154,7 @@ object V2RayServiceManager {
             MmkvManager.setSelectServer(guid)
         }
 
-        return startContextService(context, explicitUserStart = guid != null)
+        return startContextService(context)
     }
 
     /**
@@ -184,7 +184,7 @@ object V2RayServiceManager {
      * Chooses between VPN service or Proxy-only service based on user settings.
      * @param context The context from which the service is started.
      */
-    private fun startContextService(context: Context, explicitUserStart: Boolean = false): Boolean {
+    private fun startContextService(context: Context): Boolean {
         val guid = MmkvManager.getSelectServer()
         if (coreController.isRunning) {
             if (guid != null && guid == currentGuid) {
@@ -286,9 +286,7 @@ object V2RayServiceManager {
         val isVpnMode = SettingsManager.isVpnMode()
         val intent = if (isVpnMode) {
             Log.i(AppConfig.TAG, "StartCore-Manager: Starting VPN service")
-            Intent(context.applicationContext, V2RayVpnService::class.java).apply {
-                putExtra(SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT, explicitUserStart)
-            }
+            Intent(context.applicationContext, V2RayVpnService::class.java)
         } else {
             Log.i(AppConfig.TAG, "StartCore-Manager: Starting Proxy service")
             Intent(context.applicationContext, V2RayProxyOnlyService::class.java)
