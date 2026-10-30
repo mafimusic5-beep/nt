@@ -835,13 +835,20 @@ def acquire_vpn_session(raw_code: str, device_id: str) -> Dict[str, Any]:
                 FROM code_devices
                 WHERE code = ?
                   AND active = 1
+                  AND device_id <> ?
                   AND vpn_session_expires_at_epoch <= ?
                   AND pool_assignment_id IS NOT NULL
                 ''',
-                (code, now_epoch),
+                (code, safe_device_id, now_epoch),
             ).fetchall()
         ]
 
+        # The requesting installation can be recovering a live Android tunnel
+        # after its 90-second lease expired during a Wi-Fi/VPS outage.
+        # Releasing its own pool assignment here rotates the VLESS/device-gate
+        # profile under that live tunnel, so the client must disconnect.
+        # Keep only this authenticated installation's assignment; the bridge
+        # still refreshes/validates it, and stale OTHER devices are reclaimed.
         already_active = int(device['vpn_session_expires_at_epoch'] or 0) > now_epoch
         active_connections = int(con.execute(
             '''
