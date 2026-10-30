@@ -167,19 +167,15 @@ class V2RayVpnService : VpnService(), ServiceControl {
         super.onDestroy()
         Log.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
         NotificationManager.cancelNotification()
-        // On an unexpected service stop, discard only OUR OWN stale lease
-        // so the scheduled worker may establish the same pool again. Never
-        // clear a newer lease created by another connection attempt.
+        // Preserve the old signed lease identifier after an UNEXPECTED stop.
+        // The scheduled worker must release it BEFORE requesting a new lease:
+        // clearing it here would let a late server-side release revoke a
+        // newly reacquired session for the same device.
         if (SkryonVpnConnectionIntent.shouldRetry(
                 networkAvailable = true,
                 vpnAlreadyRunning = false,
             )
         ) {
-            val savedLease = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
-                ?.trim().orEmpty()
-            if (serviceLeaseId.isNotBlank() && savedLease == serviceLeaseId) {
-                MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
-            }
             SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
             SkryonVpnAutoConnectScheduler.requestAfterUnexpectedStop(applicationContext)
         }
