@@ -22,6 +22,7 @@ from config import DATABASE_PATH
 
 
 router = APIRouter(prefix="/api/tv/pair", tags=["tv-pairing"])
+phone_router = APIRouter(tags=["tv-pairing"])
 PAIR_TTL_SECONDS = 300
 MAX_PENDING_TICKETS = 2000  # bound memory/storage use for an unauthenticated public endpoint
 TICKET_BYTES = 24
@@ -111,7 +112,8 @@ def start_pairing(payload: StartPairRequest):
         "ok": True,
         "ticket": ticket,
         "poll_secret": poll_secret,
-        "url": "https://skryon.ru/api/tv/pair?ticket=" + ticket,
+        "url": "https://skryon.ru/api/tv/activate?ticket=" + ticket
+        + "#key=" + hashlib.sha256(key_bytes).hexdigest(),
         "expires_in": PAIR_TTL_SECONDS,
     }
 
@@ -208,6 +210,7 @@ placeholder="XXXXXXXXXXX" maxlength="30" required>
 (function(){
 "use strict";
 const ticket = new URLSearchParams(location.search).get("ticket") || "";
+const expectedKeyHash = new URLSearchParams(location.hash.slice(1)).get("key") || "";
 const status = document.getElementById("status");
 const send = document.getElementById("send");
 const input = document.getElementById("code");
@@ -228,7 +231,16 @@ fetch("/api/tv/pair/info?ticket=" + encodeURIComponent(ticket), {cache:"no-store
   .then(async response => {
     if (!response.ok) throw new Error("QR-код устарел. Обновите его на телевизоре.");
     const data = await response.json();
-    publicKey = await crypto.subtle.importKey("spki", unb64(data.public_key),
+    // Pin the key to the scanned QR. The fragment is not sent to the server.
+    if (!/^[a-f0-9]{64}$/.test(expectedKeyHash))
+      throw new Error("Некорректный QR-код. Сканируйте QR с телевизора.");
+    const keyBytes = unb64(data.public_key);
+    const fingerprint = await crypto.subtle.digest("SHA-256", keyBytes);
+    const actualHash = Array.from(new Uint8Array(fingerprint),
+      b => b.toString(16).padStart(2, "0")).join("");
+    if (actualHash !== expectedKeyHash)
+      throw new Error("Ключ телевизора не совпадает. Обновите QR-код на ТВ.");
+    publicKey = await crypto.subtle.importKey("spki", keyBytes,
       {name:"RSA-OAEP",hash:"SHA-256"}, false, ["encrypt"]);
     status.textContent = "Телевизор найден. Введите код.";
     send.disabled = false;
@@ -263,6 +275,7 @@ form.addEventListener("submit", async e => {
 </script></main></body></html>"""
 
 
+@phone_router.get("/api/tv/activate", response_class=HTMLResponse)
 @router.get("", response_class=HTMLResponse)
 def phone_pair_page():
     return HTMLResponse(
