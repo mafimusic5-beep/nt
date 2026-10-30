@@ -2,7 +2,6 @@ import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
-import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -220,6 +219,23 @@ val libv2rayAar = layout.projectDirectory.file("libs/libv2ray.aar").asFile
 val libv2rayVersionProperty =
     (project.findProperty("libv2ray.version") as String?)?.trim()?.takeIf { it.isNotEmpty() } ?: "v26.3.9"
 
+/**
+ * Validate the AAR using ZipInputStream, already used by the HEV extractor
+ * below. This avoids Gradle Kotlin DSL / Windows resolver issues with ZipFile.
+ */
+fun containsAarManifest(archive: java.io.File): Boolean {
+    return ZipInputStream(archive.inputStream().buffered()).use { zip ->
+        var entry = zip.nextEntry
+        while (entry != null) {
+            if (!entry.isDirectory && entry.name == "AndroidManifest.xml") {
+                return@use true
+            }
+            entry = zip.nextEntry
+        }
+        false
+    }
+}
+
 val downloadLibv2ray = tasks.register("downloadLibv2ray") {
     group = "setup"
     description = "Restores the bundled libv2ray.aar from Git, falling back to upstream only when absent."
@@ -240,7 +256,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start()
                 process.waitFor() == 0 && staged.length() > 1_000_000L &&
-                    ZipFile(staged).use { it.getEntry("AndroidManifest.xml") != null }
+                    containsAarManifest(staged)
             }.getOrDefault(false)
             if (restoredFromGit) {
                 staged.copyTo(libv2rayAar, overwrite = true)
@@ -265,7 +281,7 @@ val downloadLibv2ray = tasks.register("downloadLibv2ray") {
                     }
                 }
                 require(incoming.length() > 1_000_000L &&
-                    ZipFile(incoming).use { it.getEntry("AndroidManifest.xml") != null }) {
+                    containsAarManifest(incoming)) {
                     "Downloaded libv2ray.aar is incomplete or invalid"
                 }
                 incoming.copyTo(libv2rayAar, overwrite = true)
