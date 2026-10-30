@@ -84,6 +84,23 @@ internal object SkryonVpnAutoConnectScheduler {
             .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.KEEP, request)
     }
 
+    /**
+     * A daemon may fail while the previous one-time worker is still finishing.
+     * APPEND_OR_REPLACE preserves that worker's signed acquire/release flow and
+     * guarantees a new recovery check afterwards. Network callbacks keep using
+     * KEEP to avoid flooding the queue.
+     */
+    fun requestAfterUnexpectedStop(context: Context) {
+        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setInitialDelay(10, TimeUnit.SECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+    }
+
     fun cancel(context: Context) {
         WorkManager.getInstance(context.applicationContext).apply {
             cancelUniqueWork(ONE_TIME_WORK)
