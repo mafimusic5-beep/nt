@@ -1,5 +1,6 @@
 """Contract tests for QR transfer: the backend sees ciphertext, not codes."""
 import base64
+import hashlib
 import sqlite3
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -33,8 +34,20 @@ def test_qr_pair_transfers_only_ciphertext_once(tmp_path, monkeypatch):
     activation_code = "A123456789B"
     with TestClient(api.app, base_url="https://skryon.ru") as client:
         session = _start(client, private_key)
-        assert session["url"] == "https://skryon.ru/api/tv/pair?ticket=" + session["ticket"]
+        der = private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        fingerprint = hashlib.sha256(der).hexdigest()
+        assert session["url"] == (
+            "https://skryon.ru/api/tv/activate?ticket=" + session["ticket"]
+            + "#key=" + fingerprint
+        )
         assert activation_code not in str(session)
+        page = client.get("/api/tv/activate", params={"ticket": session["ticket"]})
+        assert page.status_code == 200
+        assert "expectedKeyHash" in page.text
+        assert "actualHash !== expectedKeyHash" in page.text
         assert client.get("/api/tv/pair", params={"ticket": session["ticket"]}).status_code == 200
         info = client.get("/api/tv/pair/info", params={"ticket": session["ticket"]})
         assert info.status_code == 200
