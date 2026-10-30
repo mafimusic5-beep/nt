@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -637,23 +638,36 @@ private fun ActivationScreen(
             .background(Color.White)
             .navigationBarsPadding(),
     ) {
+        val tvLandscape = maxWidth > maxHeight * 1.4f
         val compact = maxHeight < 850.dp
         val showDeveloperLogs = developerActivationLogsEnabled() && error.isNotBlank() && diagnostic != null
         val cardHeight = when {
+            tvLandscape && showDeveloperLogs -> 390.dp
+            tvLandscape -> 335.dp
             showDeveloperLogs && compact -> 356.dp
             showDeveloperLogs -> 420.dp
             compact -> 306.dp
             else -> 368.dp
         }
 
+        if (tvLandscape) {
+            // Large-screen activation needs a centered, readable card. The
+            // old mobile bottom sheet filled the entire 1080p TV width.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFF5F7FA)),
+            )
+        }
+
         Text(
             text = "Skryon",
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 30.dp, top = 0.dp)
-                .offset(y = if (compact) 4.dp else 6.dp),
+                .padding(start = if (tvLandscape) 48.dp else 30.dp, top = if (tvLandscape) 24.dp else 0.dp)
+                .offset(y = if (tvLandscape) 0.dp else if (compact) 4.dp else 6.dp),
             style = TextStyle(
-                fontSize = if (compact) 45.sp else 52.sp,
+                fontSize = if (tvLandscape) 36.sp else if (compact) 45.sp else 52.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.sp,
                 color = Color(0xFF07080A),
@@ -661,36 +675,43 @@ private fun ActivationScreen(
             maxLines = 1,
         )
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(cardHeight + 118.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.White.copy(alpha = 0f),
-                        0.26f to Color.White.copy(alpha = 0.92f),
-                        1f to Color.White,
+        if (!tvLandscape) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(cardHeight + 118.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.White.copy(alpha = 0f),
+                            0.26f to Color.White.copy(alpha = 0.92f),
+                            1f to Color.White,
+                        ),
                     ),
-                ),
-        )
+            )
+        }
 
         Column(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
+                .align(if (tvLandscape) Alignment.Center else Alignment.BottomCenter)
+                .widthIn(max = if (tvLandscape) 620.dp else maxWidth)
                 .fillMaxWidth()
                 .height(cardHeight)
                 .shadow(
-                    elevation = 8.dp,
-                    shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+                    elevation = if (tvLandscape) 18.dp else 8.dp,
+                    shape = if (tvLandscape) RoundedCornerShape(28.dp)
+                        else RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
                     spotColor = Color(0x14000000),
                 )
-                .clip(RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp))
+                .clip(
+                    if (tvLandscape) RoundedCornerShape(28.dp)
+                    else RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp)
+                )
                 .background(Color.White)
-                .padding(horizontal = if (compact) 26.dp else 36.dp),
+                .padding(horizontal = if (tvLandscape) 44.dp else if (compact) 26.dp else 36.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(if (compact) 22.dp else 34.dp))
+            Spacer(Modifier.height(if (tvLandscape) 26.dp else if (compact) 22.dp else 34.dp))
             Text(
                 text = "Активация",
                 style = TextStyle(
@@ -713,8 +734,9 @@ private fun ActivationScreen(
                 ),
                 maxLines = 1,
             )
-            Spacer(Modifier.height(if (compact) 24.dp else 34.dp))
+            Spacer(Modifier.height(if (tvLandscape) 32.dp else if (compact) 24.dp else 34.dp))
             ActivationCodeInput(
+                modifier = if (tvLandscape) Modifier.widthIn(max = 410.dp) else Modifier.fillMaxWidth(),
                 code = code,
                 onCodeChange = {
                     code = it
@@ -767,6 +789,7 @@ private fun ActivationScreen(
                 },
                 enabled = !isLoading,
                 modifier = Modifier
+                    .widthIn(max = if (tvLandscape) 410.dp else maxWidth)
                     .fillMaxWidth()
                     .height(if (compact) 56.dp else 64.dp),
                 shape = RoundedCornerShape(18.dp),
@@ -794,6 +817,7 @@ private fun ActivationCodeInput(
     code: String,
     onCodeChange: (String) -> Unit,
     compact: Boolean,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     BasicTextField(
         value = code,
@@ -807,7 +831,7 @@ private fun ActivationCodeInput(
             capitalization = KeyboardCapitalization.Characters,
             keyboardType = KeyboardType.Ascii,
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         decorationBox = { innerTextField ->
             Box(
                 modifier = Modifier
