@@ -36,6 +36,17 @@ internal object SkryonVpnConnectionIntent {
         MmkvManager.encodeSettings(KEY_CONNECT_IN_PROGRESS_SINCE, System.currentTimeMillis())
     }
 
+    /**
+     * Reserve the same cross-process startup grace period for a background worker.
+     * Otherwise the periodic and one-off WorkManager jobs may race and both
+     * replace the selected VPN profile during startup.
+     */
+    fun markAutoConnectionStarting() {
+        if (isArmed()) {
+            MmkvManager.encodeSettings(KEY_CONNECT_IN_PROGRESS_SINCE, System.currentTimeMillis())
+        }
+    }
+
     fun finishUserConnectionAttempt() {
         MmkvManager.encodeSettings(KEY_CONNECT_IN_PROGRESS_SINCE, 0L)
     }
