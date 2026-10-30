@@ -353,6 +353,60 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         replacement = device_auth.acquire_vpn_session(code, 'second-device')
         self.assertEqual(1, replacement['active_connections'])
 
+    def test_expired_session_reacquire_keeps_own_pool_assignment(self) -> None:
+        """Android tunnel must not lose its Xray device gate during lease recovery."""
+        code = self.create_code('personal', 1)
+        self.register(code=code, device_id='stable-device')
+        first_session = device_auth.acquire_vpn_session(code, 'stable-device')
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                """UPDATE code_devices
+                   SET vpn_session_expires_at_epoch = ?, pool_assignment_id = ?
+                   WHERE code = ? AND device_id = ?""",
+                (int(time.time()) - 1, 17, storage.format_code(code), 'stable-device'),
+            )
+            con.commit()
+
+        renewed = device_auth.acquire_vpn_session(code, 'stable-device')
+        self.assertEqual(1, renewed['active_connections'])
+        self.assertNotEqual(first_session['session_id'], renewed['session_id'])
+        self.assertFalse(any(
+            stale['device_id'] == 'stable-device'
+            for stale in renewed['stale_assignments']
+        ))
+        with sqlite3.connect(self.db_path) as con:
+            assignment_id = con.execute(
+                'SELECT pool_assignment_id FROM code_devices WHERE code = ? AND device_id = ?',
+                (storage.format_code(code), 'stable-device'),
+            ).fetchone()[0]
+        self.assertEqual(17, assignment_id)
+        self.assertTrue(device_auth.is_vpn_session_active(code, 'stable-device'))
+
+    def test_reconnect_still_reclaims_other_devices_expired_assignments(self) -> None:
+        code = self.create_code('personal', 1)
+        self.register(code=code, device_id='stable-device')
+        self.register(code=code, device_id='other-device')
+        with sqlite3.connect(self.db_path) as con:
+            con.execute(
+                """UPDATE code_devices
+                   SET vpn_session_expires_at_epoch = ?, pool_assignment_id = ?
+                   WHERE code = ? AND device_id = ?""",
+                (int(time.time()) - 1, 17, storage.format_code(code), 'stable-device'),
+            )
+            con.execute(
+                """UPDATE code_devices
+                   SET vpn_session_expires_at_epoch = ?, pool_assignment_id = ?
+                   WHERE code = ? AND device_id = ?""",
+                (int(time.time()) - 1, 19, storage.format_code(code), 'other-device'),
+            )
+            con.commit()
+
+        result = device_auth.acquire_vpn_session(code, 'stable-device')
+        self.assertEqual(
+            [{'device_id': 'other-device', 'assignment_id': 19}],
+            result['stale_assignments'],
+        )
+
     def test_old_session_id_cannot_release_new_session(self) -> None:
         code = self.create_code('personal', 1)
         self.register(code=code, device_id='stable-device')
