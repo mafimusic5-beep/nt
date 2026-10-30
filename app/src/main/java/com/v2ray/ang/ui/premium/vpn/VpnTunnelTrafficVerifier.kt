@@ -23,6 +23,32 @@ internal data class VpnTunnelProbe(
     val reason: String,
 )
 
+/**
+ * Try the dedicated health endpoint first, then the main Skryon site.
+ * A 404 on /health must not be confused with a broken VPN tunnel.
+ * Both requests still travel through the local SOCKS proxy.
+ */
+internal fun probeSkryonEndpoints(
+    attempt: Int,
+    probe: (String, Int, String) -> VpnTunnelProbe,
+    onProbe: (VpnTunnelProbe) -> Unit = {},
+): VpnTunnelProbe {
+    var last = VpnTunnelProbe(false, attempt, "traffic", "no_probe_endpoint")
+    for ((index, url) in SKRYON_PROBE_URLS.withIndex()) {
+        val stage = if (index == 0) "skryon_health_via_socks" else "skryon_home_via_socks"
+        val result = probe(url, attempt, stage)
+        onProbe(result)
+        if (result.ok) {
+            return VpnTunnelProbe(true, attempt, "traffic", "vpn_https_verified_via_socks")
+        }
+        last = result
+    }
+    return last
+}
+
+internal val SKRYON_PROBE_URLS: List<String> =
+    listOf("https://skryon.ru/health", "https://skryon.ru/")
+
 internal class VpnTunnelTrafficVerifier(context: Context) {
     private val connectivityManager =
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -48,13 +74,14 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
                 continue
             }
 
-            val primary = probeThroughLocalSocks(PRIMARY_PROBE_URL, attempt, "skryon_health_via_socks")
-            onProbe(primary)
-            if (primary.ok) {
-                return@withContext VpnTunnelProbe(true, attempt, "traffic", "vpn_https_verified_via_socks")
-            }
+            val result = probeSkryonEndpoints(
+                attempt = attempt,
+                probe = ::probeThroughLocalSocks,
+                onProbe = onProbe,
+            )
+            if (result.ok) return@withContext result
 
-            last = primary
+            last = result
             delay(RETRY_DELAY_MS)
         }
         last
@@ -163,6 +190,5 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
         const val CONNECT_TIMEOUT_MS = 2_500
         const val READ_TIMEOUT_MS = 2_500
         const val MAX_CAUSE_DEPTH = 4
-        const val PRIMARY_PROBE_URL = "https://skryon.ru/health"
     }
 }
