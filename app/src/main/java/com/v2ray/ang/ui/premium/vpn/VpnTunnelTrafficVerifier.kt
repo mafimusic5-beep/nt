@@ -154,7 +154,10 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
     }
 
     private companion object {
-        const val MAX_ATTEMPTS = 8
+        // Android may expose TRANSPORT_VPN after the core has already signalled start.
+        // Eight 200-ms checks give the first cold start only ~1.6 seconds to settle.
+        // The ViewModel's 12-second tunnel-verification timeout is the overall bound.
+        const val MAX_ATTEMPTS = 40
         const val RETRY_DELAY_MS = 200L
         const val SOCKS_CONNECT_TIMEOUT_MS = 1_000
         const val CONNECT_TIMEOUT_MS = 2_500

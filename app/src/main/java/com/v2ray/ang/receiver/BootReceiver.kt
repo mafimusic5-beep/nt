@@ -6,15 +6,10 @@ import android.content.Intent
 import android.util.Log
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.EmeryAccessManager
-import com.v2ray.ang.handler.EmeryVpnSync
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SkryonVpnConnectionIntent
+import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.V2RayServiceManager
-import com.v2ray.ang.network.EmeryBackendClient
-import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 class BootReceiver : BroadcastReceiver() {
     /**
@@ -37,6 +32,13 @@ class BootReceiver : BroadcastReceiver() {
 
         val applicationContext = context.applicationContext
         val premiumProfile = EmeryAccessManager.loadProfile()
+        // Preserve the explicit OFF action, including after a device reboot.
+        // For premium VPN, auto-start is only allowed after an explicit
+        // connection was armed by the user. Manual profiles keep old behavior.
+        if (premiumProfile != null && !SkryonVpnConnectionIntent.isArmed()) {
+            Log.i(AppConfig.TAG, "BootReceiver: User explicitly disconnected premium VPN")
+            return
+        }
         if (premiumProfile == null) {
             if (MmkvManager.getSelectServer().isNullOrEmpty()) {
                 Log.w(AppConfig.TAG, "BootReceiver: No server selected")
@@ -47,46 +49,11 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        val pendingResult = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                val verification = EmeryBackendClient.fetchProfile(
-                    accessKey = premiumProfile.accessKey,
-                    requireDeviceInventory = true,
-                )
-                verification.fold(
-                    onSuccess = { confirmedProfile ->
-                        EmeryAccessManager.saveProfile(confirmedProfile)
-                        var serverId = MmkvManager.decodeSettingsLong(SKRYON_SERVER_ID_PREF, -1L)
-                        if (serverId <= 0L) {
-                            serverId = EmeryBackendClient.fetchVpnServers()
-                                .getOrNull()
-                                ?.firstOrNull { it.isAvailable }
-                                ?.id ?: -1L
-                        }
-                        if (serverId <= 0L) {
-                            Log.w(AppConfig.TAG, "BootReceiver: No premium server available")
-                            return@fold
-                        }
-                        val session = EmeryVpnSync.connectToServer(confirmedProfile.accessKey, serverId)
-                        if (session.isSuccess) {
-                            Log.i(AppConfig.TAG, "BootReceiver: Premium session acquired; starting VPN")
-                            V2RayServiceManager.startVService(applicationContext)
-                        } else {
-                            Log.w(AppConfig.TAG, "BootReceiver: Premium session acquire failed; VPN remains stopped")
-                        }
-                    },
-                    onFailure = { error ->
-                        Log.e(
-                            AppConfig.TAG,
-                            "BootReceiver: Premium device verification failed; VPN remains stopped",
-                            error,
-                        )
-                    },
-                )
-            } finally {
-                pendingResult.finish()
-            }
-        }
+        // WorkManager waits for actual network availability. Directly
+        // requesting a premium session here fails when Wi-Fi starts later
+        // (especially common on Android TV after a reboot).
+        SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
+        Log.i(AppConfig.TAG, "BootReceiver: Queued premium auto-connect with network constraint")
+
     }
 }

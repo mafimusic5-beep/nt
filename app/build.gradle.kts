@@ -219,23 +219,77 @@ val libv2rayAar = layout.projectDirectory.file("libs/libv2ray.aar").asFile
 val libv2rayVersionProperty =
     (project.findProperty("libv2ray.version") as String?)?.trim()?.takeIf { it.isNotEmpty() } ?: "v26.3.9"
 
+/**
+ * Validate the AAR using ZipInputStream, already used by the HEV extractor
+ * below. This avoids Gradle Kotlin DSL / Windows resolver issues with ZipFile.
+ */
+fun containsAarManifest(archive: java.io.File): Boolean {
+    return ZipInputStream(archive.inputStream().buffered()).use { zip ->
+        var entry = zip.nextEntry
+        while (entry != null) {
+            if (!entry.isDirectory && entry.name == "AndroidManifest.xml") {
+                return@use true
+            }
+            entry = zip.nextEntry
+        }
+        false
+    }
+}
+
 val downloadLibv2ray = tasks.register("downloadLibv2ray") {
     group = "setup"
-    description = "Downloads libv2ray.aar from AndroidLibXrayLite if app/libs/libv2ray.aar is missing."
+    description = "Restores the bundled libv2ray.aar from Git, falling back to upstream only when absent."
     onlyIf { !libv2rayAar.exists() }
     doLast {
         libv2rayAar.parentFile?.mkdirs()
-        val url =
-            URI(
+
+        // The 54 MB binary is already COMMITTED in this repository. Some
+        // Windows/Android Studio worktrees omit it (e.g. sparse checkouts).
+        // Restore it from the local Git object first, so Java's TLS handshake
+        // with GitHub is not needed for a normal local build.
+        val staged = libv2rayAar.resolveSibling("libv2ray.aar.restore.tmp")
+        try {
+            val restoredFromGit = runCatching {
+                val process = ProcessBuilder("git", "show", "HEAD:app/libs/libv2ray.aar")
+                    .directory(rootProject.projectDir)
+                    .redirectOutput(staged)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start()
+                process.waitFor() == 0 && staged.length() > 1_000_000L &&
+                    containsAarManifest(staged)
+            }.getOrDefault(false)
+            if (restoredFromGit) {
+                staged.copyTo(libv2rayAar, overwrite = true)
+                logger.lifecycle("Restored libv2ray.aar from this Git checkout ({})", libv2rayAar.absolutePath)
+            }
+        } finally {
+            staged.delete()
+        }
+
+        if (!libv2rayAar.exists()) {
+            // Keep the previous upstream fallback for genuine shallow/partial
+            // clones that do not contain the binary Git object.
+            val url = URI(
                 "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libv2rayVersionProperty/libv2ray.aar",
             ).toURL()
-        logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
-        url.openStream().use { input: InputStream ->
-            libv2rayAar.outputStream().use { output: OutputStream ->
-                input.copyTo(output)
+            logger.lifecycle("Downloading libv2ray.aar ({}) вЂ¦", libv2rayVersionProperty)
+            val incoming = libv2rayAar.resolveSibling("libv2ray.aar.download.tmp")
+            try {
+                url.openStream().use { input: InputStream ->
+                    incoming.outputStream().use { output: OutputStream ->
+                        input.copyTo(output)
+                    }
+                }
+                require(incoming.length() > 1_000_000L &&
+                    containsAarManifest(incoming)) {
+                    "Downloaded libv2ray.aar is incomplete or invalid"
+                }
+                incoming.copyTo(libv2rayAar, overwrite = true)
+                logger.lifecycle("Saved to {}", libv2rayAar.absolutePath)
+            } finally {
+                incoming.delete()
             }
         }
-        logger.lifecycle("Saved to {}", libv2rayAar.absolutePath)
     }
 }
 
