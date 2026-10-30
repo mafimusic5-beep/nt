@@ -1127,7 +1127,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             )
         ) {
             SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
-            SkryonVpnAutoConnectScheduler.requestOnce(getApplication())
+            SkryonVpnAutoConnectScheduler.requestAfterUnexpectedStop(getApplication())
         }
     }
 
