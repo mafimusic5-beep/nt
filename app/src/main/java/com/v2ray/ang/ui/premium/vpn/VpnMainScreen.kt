@@ -1177,7 +1177,7 @@ private fun SubscriptionCodeCard(
                 code = sanitizeSkryonActivationCode(it)
                 statusText = ""
             },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvRemoteHighlight(RoundedCornerShape(12.dp)),
             enabled = !isLoading,
             singleLine = true,
             label = { Text("Новый код") },
@@ -1214,7 +1214,7 @@ private fun SubscriptionCodeCard(
                 }
             },
             enabled = !isLoading,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvRemoteHighlight(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = AppUiColors.TextPrimary,
                 contentColor = Color.White,
@@ -1443,7 +1443,7 @@ private fun DnsSettingsCard(
         OutlinedTextField(
             value = dnsValue,
             onValueChange = onDnsChange,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvRemoteHighlight(RoundedCornerShape(12.dp)),
             singleLine = true,
             label = { Text("DNS сервер") },
             placeholder = { Text("1.1.1.1,8.8.8.8") },
@@ -1458,7 +1458,10 @@ private fun DnsSettingsCard(
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
         Button(
             onClick = onSaveClick,
-            modifier = Modifier.fillMaxWidth().height(if (tight) 50.dp else 54.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (tight) 50.dp else 54.dp)
+                .tvRemoteHighlight(RoundedCornerShape(if (compact) 18.dp else 22.dp)),
             shape = RoundedCornerShape(if (compact) 18.dp else 22.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = AppUiColors.TextPrimary,
