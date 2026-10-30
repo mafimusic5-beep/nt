@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.v2ray.ang.ui.premium.vpn.tvRemoteHighlight
 import com.v2ray.ang.util.QRCodeDecoder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
