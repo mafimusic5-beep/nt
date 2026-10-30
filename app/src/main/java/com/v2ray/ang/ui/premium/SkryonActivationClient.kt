@@ -689,7 +689,12 @@ private fun activationReasonText(reason: String): String {
         "device_limit", "device_limit_reached" -> "Сервер вернул устаревшее ограничение доступа"
         "device_signature_invalid", "device_signature_missing",
         "device_signature_algorithm_invalid", "device_public_key_invalid",
-        "device_key_binding_invalid" -> "Не удалось подтвердить подлинность устройства"
+        "device_key_binding_invalid", "device_proof_mismatch" ->
+            "Не удалось подтвердить подлинность устройства"
+        "device_timestamp_invalid" ->
+            "Проверьте дату и время на телевизоре и включите автоматическую синхронизацию"
+        "device_nonce_invalid", "device_replay_detected" ->
+            "Ошибка проверки запроса. Повторите активацию"
         "device_keystore_error" -> "Устройство не смогло создать защищённый ключ. Проверьте Android Keystore"
         "client_activation_exception" -> "Ошибка обработки регистрации. Проверьте Logcat: SKRYON_ACTIVATION"
         "device_key_rotation_requires_reset" -> "Требуется безопасное восстановление этого устройства"
