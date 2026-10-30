@@ -204,7 +204,7 @@ button:disabled{opacity:.5}#status{margin-top:16px}small{color:#535d6b}
 placeholder="XXXXXXXXXXX" maxlength="30" required>
 <button id="send" type="submit">Активировать телевизор</button></form>
 <p id="status" role="status">Подключаем телевизор…</p>
-<small>Код шифруется прямо на телефоне и не хранится на сервере.
+<small>Телефон шифрует код до отправки. Сервис QR-подключения видит только зашифрованные данные.
 Ссылка действительна 5 минут. Если время вышло, обновите QR на ТВ.</small>
 <script>
 (function(){
