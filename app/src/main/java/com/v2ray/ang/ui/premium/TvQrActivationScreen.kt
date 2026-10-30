@@ -81,9 +81,8 @@ internal fun TvQrActivationScreen(
             creating = false
             status = "Отсканируйте QR-код телефоном"
             var received = false
-            while (isActive && System.currentTimeMillis() < active.expiresAt) {
-                secondsRemaining = ((active.expiresAt - System.currentTimeMillis())
-                    .coerceAtLeast(0L) / 1_000L).toInt()
+            while (isActive && !tvQrTicketExpired(active.expiresAt, System.currentTimeMillis())) {
+                secondsRemaining = tvQrSecondsRemaining(active.expiresAt, System.currentTimeMillis())
                 val polled = try {
                     TvPairingClient.poll(active)
                 } catch (cancelled: CancellationException) {
