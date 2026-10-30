@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,6 +36,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TextButton
 import com.v2ray.ang.ui.premium.vpn.TvCrispText as Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,7 +56,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -68,6 +72,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
@@ -634,14 +639,17 @@ private fun ActivationScreen(
     val context = LocalContext.current
     val tv = remember(context) { isSkryonTelevision(context) }
     val codeFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(tv) {
-        if (tv) codeFocusRequester.requestFocus()
-    }
     var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var diagnostic by remember { mutableStateOf<SkryonActivationDiagnostic?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    if (tv) {
+        // TV onboarding is QR-only. Phone/handset manual code entry stays intact.
+        TvQrActivationScreen(onActivated = onActivated)
+        return
+    }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -650,13 +658,16 @@ private fun ActivationScreen(
             .navigationBarsPadding(),
     ) {
         val compact = maxHeight < 850.dp
+        val pantherHeight = if (compact) maxHeight * 0.68f else maxHeight * 0.72f
+        val pantherTop = if (compact) 92.dp else 112.dp
+        val pantherOffsetX = if (compact) 64.dp else 86.dp
         val showDeveloperLogs = developerActivationLogsEnabled() && error.isNotBlank() && diagnostic != null
-        val cardHeight = when {
+        val cardHeight = (when {
             showDeveloperLogs && compact -> 356.dp
             showDeveloperLogs -> 420.dp
             compact -> 306.dp
             else -> 368.dp
-        }
+        })
 
         Text(
             text = "Skryon",
@@ -671,6 +682,20 @@ private fun ActivationScreen(
                 color = Color(0xFF07080A),
             ),
             maxLines = 1,
+        )
+
+        // Original Skryon panther artwork, restored to activation.
+        // Keep it behind the opaque activation form and its white gradient,
+        // so the image never obstructs the code or primary action.
+        Image(
+            painter = painterResource(id = R.drawable.skryon_panther_activation),
+            contentDescription = null,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(x = pantherOffsetX, y = pantherTop)
+                .width(maxWidth * 1.62f)
+                .height(pantherHeight),
+            contentScale = ContentScale.Fit,
         )
 
         Box(
