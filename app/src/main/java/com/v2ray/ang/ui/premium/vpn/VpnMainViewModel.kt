@@ -138,7 +138,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     stateWaiter?.complete(false)
                     stateWaiter = null
                     trafficVerificationJob?.cancel()
-                    releaseCurrentVpnSession()
+                    releaseLeaseUnlessAutoRecovery()
                     if (_uiState.value.connectionState != VpnConnectionState.Disconnected) {
                         setDisconnectedWithError("VPN-сервис остановился. Восстанавливаем подключение")
                     } else {
@@ -214,6 +214,22 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
                 requestServiceState()
             }
+        }
+    }
+
+    /**
+     * When auto-reconnect owns recovery, leave the persisted lease in MMKV.
+     * Its worker releases it synchronously BEFORE acquiring the next one.
+     * A detached ViewModel release could otherwise race with reacquisition
+     * and revoke the freshly reused server-side session ID.
+     */
+    private fun releaseLeaseUnlessAutoRecovery() {
+        if (!SkryonVpnConnectionIntent.shouldRetry(
+                networkAvailable = true,
+                vpnAlreadyRunning = false,
+            )
+        ) {
+            releaseCurrentVpnSession()
         }
     }
 
@@ -355,7 +371,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
         trafficVerificationJob?.cancel()
         timerJob?.cancel()
-        releaseCurrentVpnSession()
+        releaseLeaseUnlessAutoRecovery()
 
         if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
             VpnUiDebugLogger.log(
@@ -960,7 +976,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         state.copy(selectedLocation = location)
                     }
                     if (!stopStaleRuntimeBeforeProfileStart(attempt)) {
-                        releaseCurrentVpnSession()
+                        releaseLeaseUnlessAutoRecovery()
                         setDisconnectedWithError("Не удалось остановить предыдущий VPN-сеанс")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -972,7 +988,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         return@fold
                     }
                     if (attempt != connectionAttempt || _uiState.value.connectionState != VpnConnectionState.Connecting) {
-                        releaseCurrentVpnSession()
+                        releaseLeaseUnlessAutoRecovery()
                         return@fold
                     }
 
@@ -991,7 +1007,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     }
                     if (!serviceStartRequested) {
                         awaitingStartConfirmation = false
-                        releaseCurrentVpnSession()
+                        releaseLeaseUnlessAutoRecovery()
                         setDisconnectedWithError("Не удалось запустить VPN-сервис")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
