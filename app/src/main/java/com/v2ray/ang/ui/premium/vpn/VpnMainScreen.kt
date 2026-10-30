@@ -16,6 +16,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -70,6 +71,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -144,6 +147,9 @@ fun VpnMainScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val isTelevision = remember(context) { isSkryonTelevision(context) }
+    val homeConnectFocus = remember { FocusRequester() }
+    val advancedFirstFocus = remember { FocusRequester() }
     val policyScope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
     var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
@@ -158,6 +164,19 @@ fun VpnMainScreen(
     }
     var physicalLinkAvailable by remember(connectivity) {
         mutableStateOf(connectivity?.let(::hasPhysicalInternetLink) ?: true)
+    }
+
+    // A TV remote has DPAD/Enter, not a touchscreen. Entering a tab places
+    // keyboard focus on its first relevant action. Focus highlights and
+    // automatic BringIntoView prevent invisible targets on a long settings page.
+    LaunchedEffect(selectedTab, uiState.connectButtonEnabled, isTelevision) {
+        if (isTelevision) {
+            if (selectedTab == MainTab.Home && uiState.connectButtonEnabled) {
+                homeConnectFocus.requestFocus()
+            } else if (selectedTab == MainTab.Advanced && !regionalPolicyUpdating) {
+                advancedFirstFocus.requestFocus()
+            }
+        }
     }
 
     // Observe the actual Wi-Fi/cellular underlay, NOT the VPN interface.
@@ -364,6 +383,7 @@ fun VpnMainScreen(
                     checkingConnection = false,
                     compact = compact,
                     tight = tight,
+                    modifier = Modifier.focusRequester(homeConnectFocus),
                     onClick = {
                         if (uiState.connectionState == VpnConnectionState.Connected) {
                             onDisconnectClick()
@@ -392,6 +412,7 @@ fun VpnMainScreen(
                 Spacer(Modifier.height(if (tight) 16.dp else 22.dp))
                 AdvancedPage(
                     selectedPolicyMode = regionalPolicyMode,
+                    firstFocusRequester = advancedFirstFocus,
                     policyUpdateInProgress = regionalPolicyUpdating,
                     policyUpdateError = regionalPolicyError,
                     onRegionalPolicyConfirmed = { mode ->
@@ -682,6 +703,7 @@ private fun RegionSelectorCard(
                 .clip(cardShape)
                 .background(Color.White.copy(alpha = 0.96f))
                 .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
+                .tvRemoteHighlight(cardShape)
                 .clickable(enabled = locations.isNotEmpty()) {
                     expanded = true
                 }
@@ -791,6 +813,7 @@ private fun RegionChip(
             .clip(shape)
             .background(background)
             .border(1.dp, borderColor, shape)
+            .tvRemoteHighlight(shape)
             .clickable { onClick() }
             .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 8.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -843,6 +866,7 @@ private fun AutoConnectCard(
             .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
             .background(Color.White.copy(alpha = 0.94f))
             .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .tvRemoteHighlight(RoundedCornerShape(if (compact) 18.dp else 22.dp))
             .clickable { onCheckedChange(!enabled) }
             .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -869,9 +893,10 @@ private fun AutoConnectCard(
             )
         }
         Spacer(Modifier.width(12.dp))
+        // Parent row is the sole remote-focus target: centre/Enter toggles it.
         Switch(
             checked = enabled,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
         )
     }
 }
@@ -919,6 +944,7 @@ private fun PrivacyNoticeRow(
             .fillMaxWidth()
             .height(if (compact) 30.dp else 34.dp)
             .clip(RoundedCornerShape(12.dp))
+            .tvRemoteHighlight(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -963,6 +989,7 @@ private fun BottomNavItem(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .background(background)
+            .tvRemoteHighlight(RoundedCornerShape(18.dp))
             .clickable { onClick() }
             .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -984,6 +1011,7 @@ private fun BottomNavItem(
 @Composable
 private fun AdvancedPage(
     selectedPolicyMode: RegionalPolicyMode?,
+    firstFocusRequester: FocusRequester,
     policyUpdateInProgress: Boolean,
     policyUpdateError: String,
     onRegionalPolicyConfirmed: (RegionalPolicyMode) -> Unit,
@@ -997,9 +1025,17 @@ private fun AdvancedPage(
 ) {
     var dnsValue by remember { mutableStateOf(readDnsSetting()) }
     var statusText by remember { mutableStateOf("") }
+    val settingsScroll = rememberScrollState()
+    val scrollScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val isTv = remember(context) { isSkryonTelevision(context) }
 
+    Box(modifier = modifier) {
     Column(
-        modifier = modifier.verticalScroll(rememberScrollState()),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(end = if (isTv) 54.dp else 0.dp)
+            .verticalScroll(settingsScroll),
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
@@ -1020,6 +1056,7 @@ private fun AdvancedPage(
 
         RegionalPolicyCard(
             selectedMode = selectedPolicyMode,
+            firstFocusRequester = firstFocusRequester,
             updateInProgress = policyUpdateInProgress,
             updateError = policyUpdateError,
             compact = compact,
@@ -1071,6 +1108,31 @@ private fun AdvancedPage(
         )
 
         Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
+    }
+    // Explicit, always-visible TV scroll controls supplement automatic
+    // focus-based scrolling. Physical remote DPAD selects arrows, Enter scrolls.
+    if (isTv) {
+        Column(
+            modifier = Modifier.align(Alignment.CenterEnd).width(46.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            TextButton(
+                onClick = {
+                    scrollScope.launch { settingsScroll.animateScrollBy(-280.dp.value * context.resources.displayMetrics.density) }
+                },
+                enabled = settingsScroll.canScrollBackward,
+                modifier = Modifier.tvRemoteHighlight(RoundedCornerShape(12.dp)),
+            ) { Text("↑", style = MaterialTheme.typography.headlineSmall) }
+            TextButton(
+                onClick = {
+                    scrollScope.launch { settingsScroll.animateScrollBy(280.dp.value * context.resources.displayMetrics.density) }
+                },
+                enabled = settingsScroll.canScrollForward,
+                modifier = Modifier.tvRemoteHighlight(RoundedCornerShape(12.dp)),
+            ) { Text("↓", style = MaterialTheme.typography.headlineSmall) }
+        }
+    }
     }
 }
 
@@ -1174,6 +1236,7 @@ private fun SubscriptionCodeCard(
 @Composable
 private fun RegionalPolicyCard(
     selectedMode: RegionalPolicyMode?,
+    firstFocusRequester: FocusRequester,
     updateInProgress: Boolean,
     updateError: String,
     compact: Boolean,
@@ -1218,6 +1281,7 @@ private fun RegionalPolicyCard(
         Spacer(Modifier.height(if (tight) 10.dp else 14.dp))
         PolicyChoiceRow(
             selected = selectedMode == RegionalPolicyMode.International,
+            modifier = Modifier.focusRequester(firstFocusRequester),
             enabled = !updateInProgress,
             title = "Международный",
             description = "Для использования за пределами Российской Федерации",
@@ -1309,10 +1373,11 @@ private fun PolicyChoiceRow(
     title: String,
     description: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(14.dp)
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(shape)
             .background(if (selected) AppUiColors.SelectedSurface else Color.Transparent)
@@ -1321,6 +1386,7 @@ private fun PolicyChoiceRow(
                 color = if (selected) AppUiColors.TextPrimary.copy(alpha = 0.22f) else AppUiColors.Border,
                 shape = shape,
             )
+            .tvRemoteHighlight(shape)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
