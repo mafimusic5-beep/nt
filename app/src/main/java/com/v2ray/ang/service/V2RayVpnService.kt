@@ -181,7 +181,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
             }
             SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
-            SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
+            SkryonVpnAutoConnectScheduler.requestAfterUnexpectedStop(applicationContext)
         }
     }
 
