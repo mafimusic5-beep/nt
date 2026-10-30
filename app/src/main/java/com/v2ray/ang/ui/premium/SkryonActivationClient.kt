@@ -248,8 +248,15 @@ internal suspend fun validateSkryonCode(
         SkryonActivationResult(ok = true, code = confirmedCode)
     } catch (_: IOException) {
         activationFailure("Нет соединения с сервером", "network_io_error")
-    } catch (_: Exception) {
-        activationFailure("Ошибка проверки кода", "client_validation_exception")
+    } catch (error: Exception) {
+        // No access code, auth signature, device ID or server response is logged.
+        // Android TV emulators can fail in Keystore and in crypto providers.
+        val category = classifyActivationClientFailure(error)
+        android.util.Log.e("SKRYON_ACTIVATION", "validation failed: $category")
+        activationFailure(
+            error = activationReasonText(category),
+            reason = category,
+        )
     }
 }
 
@@ -423,10 +430,12 @@ internal suspend fun activateSkryonCode(
             error = "Нет соединения с сервером",
             reason = "network_io_error",
         )
-    } catch (_: Exception) {
+    } catch (error: Exception) {
+        val category = classifyActivationClientFailure(error)
+        android.util.Log.e("SKRYON_ACTIVATION", "registration failed: $category")
         activationFailure(
-            error = "Ошибка регистрации устройства",
-            reason = "client_activation_exception",
+            error = activationReasonText(category),
+            reason = category,
         )
     }
 }
@@ -644,6 +653,31 @@ private fun JSONObject.serverReason(): String {
         .ifBlank { optString("detail") }
 }
 
+/** Expose safe server reason codes without echoing messages, access keys or headers. */
+internal fun activationSupportCode(reason: String): String {
+    val normalized = reason.trim().lowercase(Locale.ROOT)
+    return normalized.takeIf { it.length in 1..48 && it.matches(Regex("[a-z0-9_]+")) }
+        ?: "unknown"
+}
+
+/**
+ * Only classify local exceptions by type, never show exception messages:
+ * providers may attach sensitive data to messages or nested causes.
+ */
+internal fun classifyActivationClientFailure(error: Throwable): String {
+    var cause: Throwable? = error
+    var depth = 0
+    while (cause != null && depth < 6) {
+        if (cause is java.security.GeneralSecurityException ||
+            cause is java.security.ProviderException ||
+            cause.javaClass.simpleName.contains("keystore", ignoreCase = true)
+        ) return "device_keystore_error"
+        cause = cause.cause
+        depth += 1
+    }
+    return "client_activation_exception"
+}
+
 private fun activationReasonText(reason: String): String {
     return when (reason) {
         "not_found" -> "Код не найден"
@@ -653,7 +687,11 @@ private fun activationReasonText(reason: String): String {
         "already_bound" -> "Код уже активирован на другом устройстве"
         "concurrent_limit_reached" -> "Достигнут лимит одновременных VPN-подключений для тарифа"
         "device_limit", "device_limit_reached" -> "Сервер вернул устаревшее ограничение доступа"
-        "device_signature_invalid", "device_signature_missing" -> "Не удалось подтвердить подлинность устройства"
+        "device_signature_invalid", "device_signature_missing",
+        "device_signature_algorithm_invalid", "device_public_key_invalid",
+        "device_key_binding_invalid" -> "Не удалось подтвердить подлинность устройства"
+        "device_keystore_error" -> "Устройство не смогло создать защищённый ключ. Проверьте Android Keystore"
+        "client_activation_exception" -> "Ошибка обработки регистрации. Проверьте Logcat: SKRYON_ACTIVATION"
         "device_key_rotation_requires_reset" -> "Требуется безопасное восстановление этого устройства"
         "play_integrity_not_configured", "device_recovery_unavailable" ->
             "Безопасное восстановление временно недоступно. Попробуйте позже"
@@ -690,6 +728,6 @@ private fun activationReasonText(reason: String): String {
         "too_many_attempts" -> "Слишком много попыток. Попробуйте позже"
         "upgrade_required" -> "Версия приложения устарела. Обновите приложение."
         "network" -> "Нет соединения с сервером регистрации"
-        else -> "Ошибка регистрации устройства"
+        else -> "Ошибка регистрации устройства (код: ${activationSupportCode(reason)})"
     }
 }
