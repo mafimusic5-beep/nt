@@ -41,9 +41,16 @@ internal object SkryonVpnConnectionIntent {
      * Otherwise the periodic and one-off WorkManager jobs may race and both
      * replace the selected VPN profile during startup.
      */
-    fun markAutoConnectionStarting() {
-        if (isArmed()) {
-            MmkvManager.encodeSettings(KEY_CONNECT_IN_PROGRESS_SINCE, System.currentTimeMillis())
+    fun markAutoConnectionStarting(): Long? {
+        if (!isArmed()) return null
+        val startedAt = System.currentTimeMillis()
+        MmkvManager.encodeSettings(KEY_CONNECT_IN_PROGRESS_SINCE, startedAt)
+        return startedAt
+    }
+
+    fun finishConnectionAttemptIfStartedAt(startedAt: Long) {
+        if (MmkvManager.decodeSettingsLong(KEY_CONNECT_IN_PROGRESS_SINCE, 0L) == startedAt) {
+            finishUserConnectionAttempt()
         }
     }
 
