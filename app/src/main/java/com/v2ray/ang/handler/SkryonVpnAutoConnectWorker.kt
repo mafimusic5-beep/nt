@@ -112,7 +112,7 @@ internal class SkryonVpnAutoConnectWorker(
 
     private fun vpnNetworkPresent(): Boolean? = runCatching {
         val manager = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE)
-            as? ConnectivityManager ?: return null
+            as? ConnectivityManager ?: return@runCatching null
         manager.allNetworks.any { network ->
             manager.getNetworkCapabilities(network)
                 ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
