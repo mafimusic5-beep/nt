@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from checkout_routes import router as checkout_router
-from tv_pairing import router as tv_pair_router, ensure_tv_pair_storage
+from tv_pairing import router as tv_pair_router, phone_router as tv_phone_router, ensure_tv_pair_storage
 from config import (
     APP_UPDATE_MESSAGE,
     DEFAULT_SERVER_CONFIG,
@@ -49,6 +49,7 @@ from storage import clear_device_pool_assignment, get_server_snapshot, init_stor
 app = FastAPI(title='Skryon Orchestrator API')
 app.include_router(checkout_router)
 app.include_router(tv_pair_router)
+app.include_router(tv_phone_router)
 
 RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMIT_MAX_ATTEMPTS = 12
