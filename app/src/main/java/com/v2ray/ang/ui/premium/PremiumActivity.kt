@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -736,7 +737,8 @@ private fun ActivationScreen(
             )
             Spacer(Modifier.height(if (tvLandscape) 32.dp else if (compact) 24.dp else 34.dp))
             ActivationCodeInput(
-                modifier = if (tvLandscape) Modifier.widthIn(max = 410.dp) else Modifier.fillMaxWidth(),
+                modifier = if (tvLandscape) Modifier.widthIn(max = 410.dp).fillMaxWidth() else Modifier.fillMaxWidth(),
+                tvLayout = tvLandscape,
                 code = code,
                 onCodeChange = {
                     code = it
@@ -818,7 +820,9 @@ private fun ActivationCodeInput(
     onCodeChange: (String) -> Unit,
     compact: Boolean,
     modifier: Modifier = Modifier.fillMaxWidth(),
+    tvLayout: Boolean = false,
 ) {
+    var fieldFocused by remember { mutableStateOf(false) }
     BasicTextField(
         value = code,
         onValueChange = { value ->
@@ -831,7 +835,13 @@ private fun ActivationCodeInput(
             capitalization = KeyboardCapitalization.Characters,
             keyboardType = KeyboardType.Ascii,
         ),
-        modifier = modifier,
+        modifier = modifier
+            .onFocusChanged { fieldFocused = it.isFocused }
+            .border(
+                width = if (tvLayout && fieldFocused) 2.dp else 0.dp,
+                color = Color(0xFF74C84F),
+                shape = RoundedCornerShape(12.dp),
+            ),
         decorationBox = { innerTextField ->
             Box(
                 modifier = Modifier
