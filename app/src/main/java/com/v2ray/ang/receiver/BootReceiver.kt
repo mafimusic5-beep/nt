@@ -53,6 +53,7 @@ class BootReceiver : BroadcastReceiver() {
         // requesting a premium session here fails when Wi-Fi starts later
         // (especially common on Android TV after a reboot).
         SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
+        SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
         Log.i(AppConfig.TAG, "BootReceiver: Queued premium auto-connect with network constraint")
 
     }
