@@ -423,6 +423,9 @@ fun VpnMainScreen(
                             // Manual OFF remains authoritative: enabling the
                             // toggle does not secretly re-arm a stopped VPN.
                             SkryonVpnAutoConnectScheduler.ensureScheduled(context)
+                            // If the user already requested an active VPN, restore
+                            // it promptly when this toggle is re-enabled.
+                            SkryonVpnAutoConnectScheduler.requestOnce(context)
                         } else {
                             SkryonVpnAutoConnectScheduler.cancel(context)
                         }
