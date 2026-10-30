@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,12 +28,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.v2ray.ang.R
 import com.v2ray.ang.ui.premium.vpn.tvRemoteHighlight
 import com.v2ray.ang.util.QRCodeDecoder
 import kotlinx.coroutines.delay
@@ -102,10 +107,23 @@ internal fun TvQrActivationScreen(
         session?.url?.let { QRCodeDecoder.createQRCode(it, 460)?.asImageBitmap() }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier.fillMaxSize().background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
+        // Skryon's original panther stays on the activation screen.
+        // It's decorative, beside (and behind) the QR form so it cannot
+        // replace the QR or intercept remote focus / pointer clicks.
+        Image(
+            painter = painterResource(id = R.drawable.skryon_panther_activation),
+            contentDescription = null,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .size(width = maxWidth * 0.40f, height = maxHeight * 0.82f)
+                .alpha(0.55f),
+            contentScale = ContentScale.Fit,
+        )
+
         Text(
             text = "Skryon",
             modifier = Modifier.align(Alignment.TopStart).padding(start = 32.dp, top = 22.dp),
