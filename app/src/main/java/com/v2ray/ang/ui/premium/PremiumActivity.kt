@@ -49,6 +49,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -76,6 +78,8 @@ import com.v2ray.ang.ui.premium.vpn.VpnConnectionDiagnosticsOverlay
 import com.v2ray.ang.ui.premium.vpn.VpnMainRoute
 import com.v2ray.ang.ui.premium.vpn.VpnMainViewModel
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
+import com.v2ray.ang.ui.premium.vpn.isSkryonTelevision
+import com.v2ray.ang.ui.premium.vpn.tvRemoteHighlight
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -521,7 +525,8 @@ private fun RegionalPolicyOnboardingScreen(
                 enabled = selectedMode != null && !saving,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (compact) 54.dp else 60.dp),
+                    .height(if (compact) 54.dp else 60.dp)
+                    .tvRemoteHighlight(RoundedCornerShape(20.dp)),
                 shape = RoundedCornerShape(20.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF111319),
@@ -564,6 +569,7 @@ private fun OnboardingPolicyChoice(
                 color = if (selected) Color(0xFF067A6F).copy(alpha = 0.45f) else Color(0xFFE3E6EA),
                 shape = shape,
             )
+            .tvRemoteHighlight(shape)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -625,6 +631,12 @@ private fun SplashScreen(onFinish: () -> Unit) {
 private fun ActivationScreen(
     onActivated: suspend (String) -> SkryonActivationResult,
 ) {
+    val context = LocalContext.current
+    val tv = remember(context) { isSkryonTelevision(context) }
+    val codeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(tv) {
+        if (tv) codeFocusRequester.requestFocus()
+    }
     var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var diagnostic by remember { mutableStateOf<SkryonActivationDiagnostic?>(null) }
@@ -716,6 +728,7 @@ private fun ActivationScreen(
             Spacer(Modifier.height(if (compact) 24.dp else 34.dp))
             ActivationCodeInput(
                 code = code,
+                focusRequester = codeFocusRequester,
                 onCodeChange = {
                     code = it
                     error = ""
@@ -768,7 +781,8 @@ private fun ActivationScreen(
                 enabled = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (compact) 56.dp else 64.dp),
+                    .height(if (compact) 56.dp else 64.dp)
+                    .tvRemoteHighlight(RoundedCornerShape(18.dp)),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF08090B),
@@ -794,6 +808,7 @@ private fun ActivationCodeInput(
     code: String,
     onCodeChange: (String) -> Unit,
     compact: Boolean,
+    focusRequester: FocusRequester,
 ) {
     BasicTextField(
         value = code,
@@ -807,7 +822,10 @@ private fun ActivationCodeInput(
             capitalization = KeyboardCapitalization.Characters,
             keyboardType = KeyboardType.Ascii,
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focusRequester)
+            .tvRemoteHighlight(RoundedCornerShape(12.dp)),
         decorationBox = { innerTextField ->
             Box(
                 modifier = Modifier

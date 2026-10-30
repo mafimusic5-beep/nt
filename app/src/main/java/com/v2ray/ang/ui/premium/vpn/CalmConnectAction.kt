@@ -50,6 +50,7 @@ internal fun CalmConnectAction(
                 color = Color(0xFF9EA3AD),
                 shape = shape,
             )
+            .tvRemoteHighlight(shape)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
