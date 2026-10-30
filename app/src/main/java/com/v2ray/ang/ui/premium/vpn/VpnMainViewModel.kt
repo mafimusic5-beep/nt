@@ -138,9 +138,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     stateWaiter?.complete(false)
                     stateWaiter = null
                     trafficVerificationJob?.cancel()
-                    releaseCurrentVpnSession()
-                    if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
-                        setDisconnectedWithError("Не удалось запустить VPN-сервис")
+                    releaseLeaseUnlessAutoRecovery()
+                    if (_uiState.value.connectionState != VpnConnectionState.Disconnected) {
+                        setDisconnectedWithError("VPN-сервис остановился. Восстанавливаем подключение")
+                    } else {
+                        scheduleAutomaticRecovery()
                     }
                 }
             }
@@ -212,6 +214,22 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
                 requestServiceState()
             }
+        }
+    }
+
+    /**
+     * When auto-reconnect owns recovery, leave the persisted lease in MMKV.
+     * Its worker releases it synchronously BEFORE acquiring the next one.
+     * A detached ViewModel release could otherwise race with reacquisition
+     * and revoke the freshly reused server-side session ID.
+     */
+    private fun releaseLeaseUnlessAutoRecovery() {
+        if (!SkryonVpnConnectionIntent.shouldRetry(
+                networkAvailable = true,
+                vpnAlreadyRunning = false,
+            )
+        ) {
+            releaseCurrentVpnSession()
         }
     }
 
@@ -353,7 +371,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
         trafficVerificationJob?.cancel()
         timerJob?.cancel()
-        releaseCurrentVpnSession()
+        releaseLeaseUnlessAutoRecovery()
 
         if (_uiState.value.connectionState == VpnConnectionState.Connecting) {
             VpnUiDebugLogger.log(
@@ -379,6 +397,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 locationsError = if (preserveConnectionFailure) state.locationsError else "",
             )
         }
+        scheduleAutomaticRecovery()
     }
 
     private fun startSkryonConfigSync() {
@@ -858,6 +877,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         // Only an explicit user connect (or approved automatic retry) may
         // re-arm background reconnection after a manual disconnect.
         SkryonVpnConnectionIntent.markUserConnected()
+        // Recurring fallback must exist even if the FIRST connection fails
+        // before a verified tunnel is established.
+        SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
         connectionAttempt += 1L
         val attempt = connectionAttempt
         preserveConnectionFailure = false
@@ -954,7 +976,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         state.copy(selectedLocation = location)
                     }
                     if (!stopStaleRuntimeBeforeProfileStart(attempt)) {
-                        releaseCurrentVpnSession()
+                        releaseLeaseUnlessAutoRecovery()
                         setDisconnectedWithError("Не удалось остановить предыдущий VPN-сеанс")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -966,7 +988,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         return@fold
                     }
                     if (attempt != connectionAttempt || _uiState.value.connectionState != VpnConnectionState.Connecting) {
-                        releaseCurrentVpnSession()
+                        releaseLeaseUnlessAutoRecovery()
                         return@fold
                     }
 
@@ -985,7 +1007,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     }
                     if (!serviceStartRequested) {
                         awaitingStartConfirmation = false
-                        releaseCurrentVpnSession()
+                        releaseLeaseUnlessAutoRecovery()
                         setDisconnectedWithError("Не удалось запустить VPN-сервис")
                         VpnUiDebugLogger.log(
                             hypothesisId = "H8",
@@ -1114,6 +1136,17 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun scheduleAutomaticRecovery() {
+        if (SkryonVpnConnectionIntent.shouldRetry(
+                networkAvailable = true,
+                vpnAlreadyRunning = false,
+            )
+        ) {
+            SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
+            SkryonVpnAutoConnectScheduler.requestAfterUnexpectedStop(getApplication())
+        }
+    }
+
     private fun setDisconnectedWithError(message: String) {
         SkryonVpnConnectionIntent.finishUserConnectionAttempt()
         timerJob?.cancel()
@@ -1125,6 +1158,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 locationsError = message,
             )
         }
+        scheduleAutomaticRecovery()
     }
 
     private suspend fun connectSelectedLocation(
@@ -1219,6 +1253,9 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     override fun onCleared() {
+        if (_uiState.value.connectionState == VpnConnectionState.Connecting && daemonRunning != true) {
+            scheduleAutomaticRecovery()
+        }
         connectionAttempt += 1L
         connectJob?.cancel()
         autoReconnectJob?.cancel()
