@@ -11,8 +11,21 @@ import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
 import com.v2ray.ang.ui.premium.SKRYON_VPN_IMPORT_FINGERPRINT_PREF
 import com.v2ray.ang.service.vpnImportFingerprint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+
+/**
+ * Only retry explicit, non-committed preparation states. Do not blindly repeat
+ * acquire on a network timeout / HTTP 5xx: the server might already have
+ * created a signed session whose response was lost.
+ */
+internal fun shouldRetrySkryonAcquire(reason: String?, retriesDone: Int): Boolean =
+    retriesDone < 2 && reason?.trim()?.lowercase() in setOf(
+        "assignment_install_in_progress",
+        "assignment_maintenance_in_progress",
+        "assignment_state_changed_retry",
+    )
 
 object EmeryVpnSync {
 
@@ -119,7 +132,17 @@ object EmeryVpnSync {
         val trafficPolicy = (
             RegionalPolicyManager.readMode() ?: RegionalPolicyMode.International
         ).storageValue
-        val connectResult = EmeryBackendClient.connectServer(accessKey, serverId, trafficPolicy)
+        var connectResult = EmeryBackendClient.connectServer(accessKey, serverId, trafficPolicy)
+        var retriesDone = 0
+        while (connectResult.isFailure &&
+            shouldRetrySkryonAcquire(connectResult.exceptionOrNull()?.message, retriesDone)
+        ) {
+            retriesDone++
+            // Wait for backend assignment preparation to settle without requiring
+            // a second user tap. Bounded to two retries (1 s + 2 s).
+            delay(1_000L * retriesDone)
+            connectResult = EmeryBackendClient.connectServer(accessKey, serverId, trafficPolicy)
+        }
         val payload = connectResult.getOrElse { err ->
             val code = when (err.message) {
                 "server_config_unavailable" -> ManualDiagnosticCodes.SERVER_CONFIG_UNAVAILABLE
