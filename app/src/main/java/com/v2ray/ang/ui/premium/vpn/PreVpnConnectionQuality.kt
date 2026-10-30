@@ -25,6 +25,20 @@ enum class PreVpnConnectionQuality {
         get() = this == Critical || this == Offline
 }
 
+/**
+ * The quality badge describes the underlying network, NOT VPN tunnel health.
+ * VPN connectivity is verified separately before "Connected" can be shown.
+ * A missing/failed probe must never be presented as proof that VPN is broken.
+ */
+internal fun connectionQualityLabel(quality: PreVpnConnectionQuality?): String = when (quality) {
+    null -> "Проверяем качество исходной сети…"
+    PreVpnConnectionQuality.Good -> "Исходная сеть: скорость от 8 Мбит/с"
+    PreVpnConnectionQuality.Unstable -> "Исходная сеть: нестабильная связь"
+    PreVpnConnectionQuality.Critical -> "Исходная сеть: скорость ниже 8 Мбит/с"
+    PreVpnConnectionQuality.Offline -> "Не удалось проверить исходную сеть"
+    PreVpnConnectionQuality.Unknown -> "Скорость исходной сети не определена"
+}
+
 data class PreVpnConnectionAssessment(
     val quality: PreVpnConnectionQuality,
 )
@@ -123,7 +137,21 @@ internal class PreVpnConnectionQualityChecker(context: Context) {
     private suspend fun assessCurrentNetwork(): PreVpnConnectionAssessment {
         val manager = connectivityManager
             ?: return PreVpnConnectionAssessment(PreVpnConnectionQuality.Unknown)
-        val network = manager.activeNetwork
+        val active = manager.activeNetwork
+        val activeCapabilities = active?.let(manager::getNetworkCapabilities)
+        // Once SKRYON is connected, activeNetwork may itself be the VPN.
+        // A physical-link quality advisory must sample the underlying network,
+        // never use the newly established VPN as its own "pre-VPN" baseline.
+        val network = if (activeCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true) {
+            manager.allNetworks.firstOrNull { candidate ->
+                val caps = manager.getNetworkCapabilities(candidate)
+                caps != null &&
+                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            }
+        } else {
+            active
+        }
         val capabilities = network?.let(manager::getNetworkCapabilities)
         val hasActiveNetwork = network != null && capabilities != null
         val hasInternetCapability =
