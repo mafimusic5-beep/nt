@@ -14,16 +14,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -38,69 +34,93 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.R
-import com.v2ray.ang.ui.premium.vpn.tvRemoteHighlight
 import com.v2ray.ang.util.QRCodeDecoder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
- * TV-first sign-in: scan QR on the phone, type the activation code on the
- * phone, and the TV executes its normal device-bound validation.
- * Regular remote code entry remains available as an explicit fallback.
+ * TV-only activation via QR: a scoped coroutine automatically requests a new
+ * one-time server ticket when the previous one expires after five minutes.
+ * The site must be deployed before the TV can display a valid QR, since a
+ * locally invented/offline QR would have no corresponding server session.
  */
 @Composable
 internal fun TvQrActivationScreen(
     onActivated: suspend (String) -> SkryonActivationResult,
-    onManualEntry: () -> Unit,
 ) {
-    var revision by remember { mutableIntStateOf(0) }
-    var session by remember(revision) { mutableStateOf<TvPairingClient.Session?>(null) }
-    var status by remember(revision) { mutableStateOf("Создаём безопасный QR-код…") }
-    var error by remember(revision) { mutableStateOf("") }
-    var activating by remember(revision) { mutableStateOf(false) }
+    var session by remember { mutableStateOf<TvPairingClient.Session?>(null) }
+    var status by remember { mutableStateOf("Подключаем QR-активацию…") }
+    var error by remember { mutableStateOf("") }
+    var creating by remember { mutableStateOf(true) }
+    var secondsRemaining by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(revision) {
-        val current = try {
-            TvPairingClient.start()
-        } catch (_: Exception) {
-            error = "Не удалось подключиться к серверу QR-активации"
-            return@LaunchedEffect
-        }
-        session = current
-        status = "Отсканируйте QR-код телефоном"
-        while (isActive && System.currentTimeMillis() < current.expiresAt) {
-            delay(2_500)
-            val result = try {
-                TvPairingClient.poll(current)
+    // Lifecycle-aware: retries stop when the TV screen is no longer visible.
+    // A failed server request is retried automatically, with a fixed delay;
+    // it must never become a permanent spinner with a fake/offline QR.
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            session = null
+            secondsRemaining = 0
+            error = ""
+            creating = true
+            status = "Готовим защищённый QR-код…"
+            val active = try {
+                TvPairingClient.start()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
-                // Transient Wi-Fi loss must not discard a still-valid pairing.
-                status = "Ожидаем интернет для активации…"
+                creating = false
+                error = "Сервер QR-активации недоступен. Повторяем подключение автоматически…"
+                delay(15_000)
                 continue
             }
-            when (result) {
-                TvPairingClient.PollResult.Waiting -> status = "Ожидаем ввод кода на телефоне…"
-                TvPairingClient.PollResult.Expired -> {
-                    error = "QR-код устарел. Обновите его."
-                    return@LaunchedEffect
+
+            session = active
+            creating = false
+            status = "Отсканируйте QR-код телефоном"
+            var received = false
+            while (isActive && System.currentTimeMillis() < active.expiresAt) {
+                secondsRemaining = ((active.expiresAt - System.currentTimeMillis())
+                    .coerceAtLeast(0L) / 1_000L).toInt()
+                val polled = try {
+                    TvPairingClient.poll(active)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    status = "Соединение прервалось. Ожидаем восстановление интернета…"
+                    delay(2_500)
+                    continue
                 }
-                is TvPairingClient.PollResult.Received -> {
-                    activating = true
-                    status = "Проверяем код и привязываем телевизор…"
-                    val activation = try {
-                        onActivated(result.activationCode)
-                    } catch (_: Exception) {
-                        SkryonActivationResult(ok = false, error = "Ошибка активации")
+                when (polled) {
+                    TvPairingClient.PollResult.Waiting -> {
+                        status = "Ожидаем код с телефона…"
                     }
-                    if (!activation.ok) {
+                    TvPairingClient.PollResult.Expired -> break
+                    is TvPairingClient.PollResult.Received -> {
+                        received = true
+                        session = null // Do not display a used/consumed QR ticket.
+                        creating = true
+                        status = "Проверяем код активации…"
+                        val activation = try {
+                            onActivated(polled.activationCode)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            SkryonActivationResult(ok = false, error = "Ошибка активации")
+                        }
+                        creating = false
+                        if (activation.ok) return@LaunchedEffect
                         error = activation.error.ifBlank { "Не удалось активировать телевизор" }
-                        activating = false
+                        delay(4_000)
+                        break // Generate a fresh ticket after a failed code.
                     }
-                    // Success navigates to the existing activation policy flow.
-                    return@LaunchedEffect
                 }
+                if (isActive && !received) delay(2_500)
             }
+            // QR expired, was consumed or activation failed. Request a fresh
+            // server-side ticket immediately; never reuse a stale QR.
         }
-        if (isActive && !activating) error = "Время QR-кода истекло. Обновите его."
     }
 
     val qrBitmap = remember(session?.url) {
@@ -163,8 +183,14 @@ internal fun TvQrActivationScreen(
                         contentDescription = "QR-код для активации телевизора",
                         modifier = Modifier.size(218.dp),
                     )
-                } else {
+                } else if (creating) {
                     CircularProgressIndicator(color = Color(0xFF176B43))
+                } else {
+                    Text(
+                        text = "QR недоступен",
+                        color = Color(0xFF7D828D),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -174,20 +200,18 @@ internal fun TvQrActivationScreen(
                 textAlign = TextAlign.Center,
                 color = if (error.isNotBlank()) Color(0xFFB42318) else Color(0xFF535D6B),
             )
-            Spacer(Modifier.height(18.dp))
-            if (error.isNotBlank()) {
-                Button(
-                    onClick = { revision++ },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111319)),
-                    modifier = Modifier.tvRemoteHighlight(),
-                ) { Text("Обновить QR-код") }
-            }
-            TextButton(
-                onClick = onManualEntry,
-                modifier = Modifier.tvRemoteHighlight(),
-            ) {
-                Text("Ввести код пультом", color = Color(0xFF111319))
-            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = if (session != null) {
+                    "QR автоматически обновится через " +
+                        "%02d:%02d".format(secondsRemaining / 60, secondsRemaining % 60)
+                } else {
+                    "Новый QR появится автоматически после подключения к серверу"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                color = Color(0xFF7D828D),
+            )
         }
     }
 }
