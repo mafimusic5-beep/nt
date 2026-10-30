@@ -23,6 +23,7 @@ from config import DATABASE_PATH
 
 router = APIRouter(prefix="/api/tv/pair", tags=["tv-pairing"])
 PAIR_TTL_SECONDS = 300
+MAX_PENDING_TICKETS = 2000  # bound memory/storage use for an unauthenticated public endpoint
 TICKET_BYTES = 24
 POLL_SECRET_BYTES = 32
 
@@ -97,7 +98,11 @@ def start_pairing(payload: StartPairRequest):
     poll_secret = secrets.token_urlsafe(POLL_SECRET_BYTES)
     expiry = int(time.time()) + PAIR_TTL_SECONDS
     with _db() as db:
-        db.execute("DELETE FROM tv_pairing WHERE expires_at < ?", (int(time.time()),))
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM tv_pairing WHERE expires_at <= ?", (int(time.time()),))
+        active = db.execute("SELECT COUNT(*) FROM tv_pairing").fetchone()[0]
+        if active >= MAX_PENDING_TICKETS:
+            return _error("pairing_busy", 503)
         db.execute(
             "INSERT INTO tv_pairing(ticket, poll_secret_hash, public_key, expires_at) VALUES(?, ?, ?, ?)",
             (ticket, hashlib.sha256(poll_secret.encode("ascii")).hexdigest(), payload.public_key, expiry),
