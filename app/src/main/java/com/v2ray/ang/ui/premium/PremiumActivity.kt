@@ -634,14 +634,23 @@ private fun ActivationScreen(
     val context = LocalContext.current
     val tv = remember(context) { isSkryonTelevision(context) }
     val codeFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(tv) {
-        if (tv) codeFocusRequester.requestFocus()
+    var useTvQr by remember(tv) { mutableStateOf(tv) }
+    LaunchedEffect(tv, useTvQr) {
+        if (tv && !useTvQr) codeFocusRequester.requestFocus()
     }
     var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var diagnostic by remember { mutableStateOf<SkryonActivationDiagnostic?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    if (tv && useTvQr) {
+        TvQrActivationScreen(
+            onActivated = onActivated,
+            onManualEntry = { useTvQr = false },
+        )
+        return
+    }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -725,6 +734,12 @@ private fun ActivationScreen(
                 ),
                 maxLines = 1,
             )
+            if (tv) {
+                TextButton(
+                    onClick = { useTvQr = true },
+                    modifier = Modifier.tvRemoteHighlight(),
+                ) { Text("Войти через QR-код") }
+            }
             Spacer(Modifier.height(if (compact) 24.dp else 34.dp))
             ActivationCodeInput(
                 code = code,
