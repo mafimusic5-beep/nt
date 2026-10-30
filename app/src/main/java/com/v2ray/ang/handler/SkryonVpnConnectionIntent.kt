@@ -23,13 +23,31 @@ internal fun isPremiumVpnServiceStartAllowed(
     explicitUserStart: Boolean,
 ): Boolean = userRequestedConnection && (explicitUserStart || autoConnectEnabled)
 
+/** Protect a live VPN daemon from a worker running in another Android process. */
+internal fun isRecentSkryonServiceHeartbeat(lastSeenAt: Long, now: Long): Boolean =
+    lastSeenAt > 0 && now - lastSeenAt in 0..20_000L
+
 internal object SkryonVpnConnectionIntent {
     const val EXTRA_EXPLICIT_VPN_CONNECT = "com.v2ray.ang.extra.EXPLICIT_VPN_CONNECT"
+    private const val KEY_SERVICE_ALIVE_AT = "SKRYON_VPN_SERVICE_ALIVE_AT"
     private const val KEY_USER_REQUESTED_VPN = "SKRYON_USER_REQUESTED_VPN"
     private const val KEY_CONNECT_IN_PROGRESS_SINCE = "SKRYON_CONNECT_IN_PROGRESS_SINCE"
     private const val MANUAL_CONNECT_GRACE_MS = 60_000L
 
     fun isArmed(): Boolean = MmkvManager.decodeSettingsBool(KEY_USER_REQUESTED_VPN, false)
+
+    fun markVpnServiceAlive() {
+        MmkvManager.encodeSettings(KEY_SERVICE_ALIVE_AT, System.currentTimeMillis())
+    }
+
+    fun clearVpnServiceHeartbeat() {
+        MmkvManager.encodeSettings(KEY_SERVICE_ALIVE_AT, 0L)
+    }
+
+    fun isVpnServiceAlive(): Boolean = isRecentSkryonServiceHeartbeat(
+        lastSeenAt = MmkvManager.decodeSettingsLong(KEY_SERVICE_ALIVE_AT, 0L),
+        now = System.currentTimeMillis(),
+    )
 
     fun markUserConnected() {
         MmkvManager.encodeSettings(KEY_USER_REQUESTED_VPN, true)
