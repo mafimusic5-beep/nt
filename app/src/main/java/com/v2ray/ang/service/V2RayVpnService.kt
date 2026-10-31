@@ -62,6 +62,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Distinguish a platform Always-on restart from an app/manual start. */
+internal fun shouldEnterHeadlessBootRecovery(
+    bootBroadcastRequested: Boolean,
+    systemAlwaysOnRestart: Boolean,
+): Boolean = bootBroadcastRequested || systemAlwaysOnRestart
+
 @SuppressLint("VpnServicePolicy")
 class V2RayVpnService : VpnService(), ServiceControl {
     private lateinit var mInterface: ParcelFileDescriptor
@@ -209,8 +215,11 @@ class V2RayVpnService : VpnService(), ServiceControl {
             // Promote to foreground immediately to avoid FGS timeout
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
 
-            val isBootRecovery = intent?.getBooleanExtra(EXTRA_BOOT_RECOVERY_START, false) == true ||
-                (intent == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlwaysOn)
+            val isBootRecovery = shouldEnterHeadlessBootRecovery(
+                bootBroadcastRequested = intent?.getBooleanExtra(EXTRA_BOOT_RECOVERY_START, false) == true,
+                systemAlwaysOnRestart = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    isAlwaysOn && intent?.hasExtra(SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT) != true,
+            )
             if (isBootRecovery && EmeryAccessManager.loadProfile() != null && !isRunning) {
                 // A BOOT_COMPLETED exemption permits starting THIS VPN service
                 // now. Starting it later from WorkManager would be prohibited
