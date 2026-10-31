@@ -55,6 +55,9 @@ class AngApplication : Application() {
         // This callback makes Wi-Fi/LTE recovery prompt while the app's
         // process is alive, including TV resume without reopening the UI.
         SkryonVpnAutoConnectScheduler.ensureScheduled(this)
+        // Reopening the app after a reboot must also trigger recovery when
+        // the OEM blocked or delayed BOOT_COMPLETED delivery.
+        SkryonVpnAutoConnectScheduler.requestOnce(this)
         runCatching {
             val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
             val callback = object : ConnectivityManager.NetworkCallback() {
