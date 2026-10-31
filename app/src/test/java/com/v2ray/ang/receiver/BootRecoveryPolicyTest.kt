@@ -30,6 +30,16 @@ class BootRecoveryPolicyTest {
     }
 
     @Test
+    fun `only boot and app update can directly start the foreground recovery service`() {
+        assertTrue(shouldStartForegroundRecoveryFromBoot(Intent.ACTION_BOOT_COMPLETED))
+        assertTrue(shouldStartForegroundRecoveryFromBoot(Intent.ACTION_MY_PACKAGE_REPLACED))
+        // USER_UNLOCKED is not an Android 12+ FGS launch exemption.
+        assertFalse(shouldStartForegroundRecoveryFromBoot(Intent.ACTION_USER_UNLOCKED))
+        assertFalse(shouldStartForegroundRecoveryFromBoot(Intent.ACTION_SCREEN_OFF))
+        assertFalse(shouldStartForegroundRecoveryFromBoot(null))
+    }
+
+    @Test
     fun `unrelated intents do not start background VPN`() {
         assertFalse(shouldScheduleSkryonRecoveryOnBootEvent(null))
         assertFalse(shouldScheduleSkryonRecoveryOnBootEvent(Intent.ACTION_SCREEN_OFF))
