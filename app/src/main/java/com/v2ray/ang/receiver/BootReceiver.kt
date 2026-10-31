@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.core.content.ContextCompat
+import com.v2ray.ang.service.SkryonBootRecoveryService
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.MmkvManager
@@ -15,6 +17,11 @@ import com.v2ray.ang.handler.V2RayServiceManager
 internal fun shouldScheduleSkryonRecoveryOnBootEvent(action: String?): Boolean =
     action == Intent.ACTION_BOOT_COMPLETED ||
         action == Intent.ACTION_USER_UNLOCKED ||
+        action == Intent.ACTION_MY_PACKAGE_REPLACED
+
+/** Events exempt from Android 12+ background FGS start restrictions. */
+internal fun shouldStartForegroundRecoveryFromBoot(action: String?): Boolean =
+    action == Intent.ACTION_BOOT_COMPLETED ||
         action == Intent.ACTION_MY_PACKAGE_REPLACED
 
 internal fun shouldResumePremiumVpnAtBoot(
@@ -91,6 +98,23 @@ class BootReceiver : BroadcastReceiver() {
         // background jobs can retain an old 10s delay or remain in a terminal
         // state when Android kills processes during system startup.
         SkryonVpnAutoConnectScheduler.requestAfterBoot(applicationContext)
+
+        // Starting the foreground coordinator DIRECTLY while BOOT_COMPLETED
+        // exemption is active is crucial. A WorkManager job that fires 10-60s
+        // later is already background-restricted on Android 12+.
+        // USER_UNLOCKED is not a permitted FGS start exemption; its receiver
+        // only queues WorkManager. A system Always-on VPN remains supported.
+        if (shouldStartForegroundRecoveryFromBoot(action)) {
+            try {
+                ContextCompat.startForegroundService(
+                    applicationContext,
+                    Intent(applicationContext, SkryonBootRecoveryService::class.java),
+                )
+                Log.i(AppConfig.TAG, "BootReceiver: Started foreground boot recovery")
+            } catch (error: Exception) {
+                Log.e(AppConfig.TAG, "BootReceiver: Foreground boot launch rejected; WorkManager fallback queued", error)
+            }
+        }
         Log.i(AppConfig.TAG, "BootReceiver: Queued premium boot recovery: $action")
 
     }
