@@ -77,7 +77,6 @@ internal object SkryonVpnAutoConnectScheduler {
         if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setInitialDelay(10, TimeUnit.SECONDS)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         WorkManager.getInstance(context.applicationContext)
