@@ -32,9 +32,9 @@ class BootReceiver : BroadcastReceiver() {
 
         val applicationContext = context.applicationContext
         val premiumProfile = EmeryAccessManager.loadProfile()
-        // Preserve the explicit OFF action, including after a device reboot.
-        // For premium VPN, auto-start is only allowed after an explicit
-        // connection was armed by the user. Manual profiles keep old behavior.
+        // Restore a previously requested VPN after reboot, but never override
+        // an explicit user disconnect. Enabling the boot toggle alone does not
+        // silently reconnect a VPN the user intentionally turned off.
         if (premiumProfile != null && !SkryonVpnConnectionIntent.isArmed()) {
             Log.i(AppConfig.TAG, "BootReceiver: User explicitly disconnected premium VPN")
             return
