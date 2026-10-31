@@ -152,7 +152,6 @@ fun VpnMainScreen(
     val advancedFirstFocus = remember { FocusRequester() }
     val policyScope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
-    var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
     var regionalPolicyMode by remember { mutableStateOf(RegionalPolicyManager.readMode()) }
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
@@ -433,21 +432,6 @@ fun VpnMainScreen(
                                 },
                             )
                         }
-                    },
-                    autoConnectEnabled = autoConnectEnabled,
-                    onAutoConnectChange = { enabled ->
-                        autoConnectEnabled = enabled
-                        MmkvManager.encodeStartOnBoot(enabled)
-                        if (enabled) {
-                            // Manual OFF remains authoritative: enabling the
-                            // toggle does not secretly re-arm a stopped VPN.
-                            SkryonVpnAutoConnectScheduler.ensureScheduled(context)
-                            // If the user already requested an active VPN, restore
-                            // it promptly when this toggle is re-enabled.
-                            SkryonVpnAutoConnectScheduler.requestOnce(context)
-                        }
-                        // Disabling start-on-boot must not cancel recovery
-                        // while the currently requested VPN is still running.
                     },
                     connectionState = uiState.connectionState,
                     onActivationCodeSubmit = onActivationCodeSubmit,
@@ -856,25 +840,19 @@ private fun countryFlagEmoji(code: String): String {
 
 
 @Composable
-private fun AutoConnectCard(
-    enabled: Boolean,
-    compact: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
+private fun AutoConnectCard(compact: Boolean, connectedIntent: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
             .background(Color.White.copy(alpha = 0.94f))
             .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 18.dp else 22.dp))
-            .tvRemoteHighlight(RoundedCornerShape(if (compact) 18.dp else 22.dp))
-            .clickable { onCheckedChange(!enabled) }
             .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Запуск после перезагрузки",
+                text = "Автовосстановление VPN",
                 style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
                 color = AppUiColors.TextPrimary,
                 fontWeight = FontWeight.Medium,
@@ -882,23 +860,17 @@ private fun AutoConnectCard(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = when {
-                    !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную"
-                    enabled -> "После перезагрузки запускать VPN автоматически"
-                    else -> "После перезагрузки не запускать. Обрывы восстанавливаются"
+                text = if (connectedIntent) {
+                    "Всегда восстанавливаем VPN после обрывов. Остановить можно кнопкой «Выключить»"
+                } else {
+                    "Нажмите «Включить VPN». После этого соединение будет восстанавливаться автоматически"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
-                maxLines = 2,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(12.dp))
-        // Parent row is the sole remote-focus target: centre/Enter toggles it.
-        Switch(
-            checked = enabled,
-            onCheckedChange = null,
-        )
     }
 }
 
@@ -1016,8 +988,6 @@ private fun AdvancedPage(
     policyUpdateInProgress: Boolean,
     policyUpdateError: String,
     onRegionalPolicyConfirmed: (RegionalPolicyMode) -> Unit,
-    autoConnectEnabled: Boolean,
-    onAutoConnectChange: (Boolean) -> Unit,
     connectionState: VpnConnectionState,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     compact: Boolean,
@@ -1084,9 +1054,8 @@ private fun AdvancedPage(
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
         AutoConnectCard(
-            enabled = autoConnectEnabled,
             compact = compact,
-            onCheckedChange = onAutoConnectChange,
+            connectedIntent = SkryonVpnConnectionIntent.isArmed(),
         )
 
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
