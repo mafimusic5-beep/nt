@@ -14,6 +14,22 @@ class BootRecoveryPolicyTest {
     }
 
     @Test
+    fun `disabled autostart blocks reboot even when VPN was previously connected`() {
+        assertFalse(shouldResumePremiumVpnAtBoot(
+            startOnBootEnabled = false,
+            userRequestedConnection = true,
+        ))
+        assertFalse(shouldResumePremiumVpnAtBoot(
+            startOnBootEnabled = true,
+            userRequestedConnection = false,
+        ))
+        assertTrue(shouldResumePremiumVpnAtBoot(
+            startOnBootEnabled = true,
+            userRequestedConnection = true,
+        ))
+    }
+
+    @Test
     fun `unrelated intents do not start background VPN`() {
         assertFalse(shouldScheduleSkryonRecoveryOnBootEvent(null))
         assertFalse(shouldScheduleSkryonRecoveryOnBootEvent(Intent.ACTION_SCREEN_OFF))
