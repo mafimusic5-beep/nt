@@ -9,7 +9,7 @@ class SkryonWorkManagerConfigurationTest {
     fun `main process schedules WorkManager jobs after reboot and on app launch`() {
         val appId = "com.skryon.shield"
         assertEquals(appId, skryonWorkManagerPrimaryProcess(appId))
-        assertNotEquals("$" + "{appId}:bg", skryonWorkManagerPrimaryProcess(appId))
-        assertNotEquals("$" + "{appId}:RunSoLibV2RayDaemon", skryonWorkManagerPrimaryProcess(appId))
+        assertNotEquals(appId + ":bg", skryonWorkManagerPrimaryProcess(appId))
+        assertNotEquals(appId + ":RunSoLibV2RayDaemon", skryonWorkManagerPrimaryProcess(appId))
     }
 }
