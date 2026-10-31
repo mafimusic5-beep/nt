@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.v2ray.ang.service.SkryonBootRecoveryService
+import com.v2ray.ang.service.V2RayVpnService
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.MmkvManager
@@ -99,18 +99,20 @@ class BootReceiver : BroadcastReceiver() {
         // state when Android kills processes during system startup.
         SkryonVpnAutoConnectScheduler.requestAfterBoot(applicationContext)
 
-        // Starting the foreground coordinator DIRECTLY while BOOT_COMPLETED
-        // exemption is active is crucial. A WorkManager job that fires 10-60s
-        // later is already background-restricted on Android 12+.
+        // Start the ACTUAL VPN foreground service directly under BOOT_COMPLETED
+        // exemption; it will acquire signed device-bound session asynchronously
+        // once the network comes up. No Activity or second FGS start is needed.
         // USER_UNLOCKED is not a permitted FGS start exemption; its receiver
         // only queues WorkManager. A system Always-on VPN remains supported.
         if (shouldStartForegroundRecoveryFromBoot(action)) {
             try {
                 ContextCompat.startForegroundService(
                     applicationContext,
-                    Intent(applicationContext, SkryonBootRecoveryService::class.java),
+                    Intent(applicationContext, V2RayVpnService::class.java).apply {
+                        putExtra(V2RayVpnService.EXTRA_BOOT_RECOVERY_START, true)
+                    },
                 )
-                Log.i(AppConfig.TAG, "BootReceiver: Started foreground boot recovery")
+                Log.i(AppConfig.TAG, "BootReceiver: Started headless VpnService recovery")
             } catch (error: Exception) {
                 Log.e(AppConfig.TAG, "BootReceiver: Foreground boot launch rejected; WorkManager fallback queued", error)
             }
