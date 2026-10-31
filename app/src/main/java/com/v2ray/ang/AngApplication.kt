@@ -15,6 +15,12 @@ import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.ui.premium.vpn.VpnServiceDiagnosticsObserver
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
 
+/**
+ * WorkManager's primary scheduler must match a real Android application
+ * process; the former ":bg" process did not exist in our manifest.
+ */
+internal fun skryonWorkManagerPrimaryProcess(applicationId: String): String = applicationId
+
 class AngApplication : Application() {
     companion object {
         lateinit var application: AngApplication
@@ -35,7 +41,7 @@ class AngApplication : Application() {
     // skip its scheduler / force-stop recovery in the process Android actually
     // launches. The Xray VPN daemon deliberately runs in its own process.
     private val workManagerConfiguration: Configuration = Configuration.Builder()
-        .setDefaultProcessName(ANG_PACKAGE)
+        .setDefaultProcessName(skryonWorkManagerPrimaryProcess(ANG_PACKAGE))
         .build()
 
     /**
