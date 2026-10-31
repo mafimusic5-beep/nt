@@ -157,9 +157,11 @@ internal class SkryonVpnAutoConnectWorker(
         if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return Result.success()
         val networkPresent = vpnNetworkPresent() ?: return Result.retry()
         if (networkPresent) {
-            // The VPN service owns its current session even when its Xray
-            // core runs in a different process from this WorkManager worker.
-            return Result.success()
+            // Android can leave an old VPN network registered briefly after
+            // the service process died. Do not replace it, but do NOT treat
+            // this as recovered either: retry when that network disappears.
+            // This also avoids interfering with another VPN app's network.
+            return Result.retry()
         }
 
         val profile = EmeryAccessManager.loadProfile() ?: return Result.success()
