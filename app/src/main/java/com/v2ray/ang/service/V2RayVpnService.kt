@@ -148,9 +148,10 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     override fun onRevoke() {
         Log.w(AppConfig.TAG, "StartCore-VPN: Permission revoked")
-        // Android revoked our permission, therefore this is not a transient
-        // internet outage and the app must not attempt to restart silently.
-        SkryonVpnConnectionIntent.markUserDisconnected()
+        // Revocation is a PLATFORM event, not a press of the app's OFF button.
+        // Keep the user's desired state intact, but stop the tunnel now.
+        // The recovery worker must not start again until Android explicitly
+        // grants VPN consent (VpnService.prepare(...) == null).
         stopAllService()
     }
 
