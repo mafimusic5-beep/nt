@@ -14,6 +14,9 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.multiprocess.RemoteWorkManager
+import android.app.Application
+import android.os.Build
 import androidx.work.WorkerParameters
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.network.EmeryBackendClient
@@ -57,6 +60,12 @@ internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
 internal object SkryonVpnAutoConnectScheduler {
     private const val ONE_TIME_WORK = "skryon_vpn_auto_connect_once"
     private const val PERIODIC_WORK = "skryon_vpn_auto_connect_periodic"
+
+    // VPN daemon has its own Android process. The scheduler must run in the
+    // primary process, and secondary processes must use RemoteWorkManager.
+    private fun inMainProcess(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+            Application.getProcessName() == context.packageName
 
     fun ensureScheduled(context: Context) {
         if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
