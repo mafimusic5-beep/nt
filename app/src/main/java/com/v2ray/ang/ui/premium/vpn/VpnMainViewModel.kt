@@ -876,7 +876,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
         // Only an explicit user connect (or approved automatic retry) may
         // re-arm background reconnection after a manual disconnect.
-        SkryonVpnConnectionIntent.markUserConnected()
+        SkryonVpnConnectionIntent.markUserConnected(getApplication())
         // Recurring fallback must exist even if the FIRST connection fails
         // before a verified tunnel is established.
         SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
