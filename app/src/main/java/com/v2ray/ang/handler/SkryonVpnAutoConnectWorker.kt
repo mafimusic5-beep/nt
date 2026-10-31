@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
+import android.os.Build
 import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
@@ -11,6 +12,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -55,6 +57,7 @@ internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
 }
 
 internal object SkryonVpnAutoConnectScheduler {
+    private const val BOOT_WORK = "skryon_vpn_boot_recovery"
     private const val ONE_TIME_WORK = "skryon_vpn_auto_connect_once"
     private const val PERIODIC_WORK = "skryon_vpn_auto_connect_periodic"
 
@@ -101,8 +104,33 @@ internal object SkryonVpnAutoConnectScheduler {
             .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 
+    /**
+     * Recover as soon as the OS supplies Internet after boot, unlock, or a
+     * package update. Android's scheduled work may otherwise delay the first
+     * one-off retry until much later, especially on televisions.
+     *
+     * Expedited JobScheduler work on Android 12+ requests prompt execution,
+     * with a safe fallback if expedited quota is exhausted. Older Android
+     * versions use a normal immediate WorkManager job to avoid requiring
+     * getForegroundInfo() for the pre-Android-12 expedited implementation.
+     */
+    fun requestAfterBoot(context: Context) {
+        if (!SkryonVpnConnectionIntent.isArmed()) return
+        val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                }
+            }.build()
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(BOOT_WORK, ExistingWorkPolicy.KEEP, request)
+    }
+
     fun cancel(context: Context) {
         WorkManager.getInstance(context.applicationContext).apply {
+            cancelUniqueWork(BOOT_WORK)
             cancelUniqueWork(ONE_TIME_WORK)
             cancelUniqueWork(PERIODIC_WORK)
         }
