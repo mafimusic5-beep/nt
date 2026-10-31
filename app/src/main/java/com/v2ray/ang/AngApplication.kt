@@ -15,6 +15,12 @@ import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.ui.premium.vpn.VpnServiceDiagnosticsObserver
 import com.v2ray.ang.ui.premium.vpn.VpnUiDebugLogger
 
+/**
+ * WorkManager's primary scheduler must match a real Android application
+ * process; the former ":bg" process did not exist in our manifest.
+ */
+internal fun skryonWorkManagerPrimaryProcess(applicationId: String): String = applicationId
+
 class AngApplication : Application() {
     companion object {
         lateinit var application: AngApplication
@@ -29,8 +35,13 @@ class AngApplication : Application() {
         application = this
     }
 
+    // WorkManager's SystemJobService and the premium activities run in the
+    // normal application process. The old configuration named a fictitious
+    // :bg process that has NO component in AndroidManifest; WorkManager would
+    // skip its scheduler / force-stop recovery in the process Android actually
+    // launches. The Xray VPN daemon deliberately runs in its own process.
     private val workManagerConfiguration: Configuration = Configuration.Builder()
-        .setDefaultProcessName("${ANG_PACKAGE}:bg")
+        .setDefaultProcessName(skryonWorkManagerPrimaryProcess(ANG_PACKAGE))
         .build()
 
     /**
@@ -55,6 +66,13 @@ class AngApplication : Application() {
         // This callback makes Wi-Fi/LTE recovery prompt while the app's
         // process is alive, including TV resume without reopening the UI.
         SkryonVpnAutoConnectScheduler.ensureScheduled(this)
+        // Reopening the app after a reboot must also trigger recovery when
+        // the OEM blocked or delayed BOOT_COMPLETED delivery.
+        // Kick a network-constrained immediate retry whenever the app process
+        // returns. In particular, this repairs missed OEM boot broadcasts.
+        // isArmed() checks saved autostart + boot-count, so an OFF toggle
+        // cannot be overridden by opening the application.
+        SkryonVpnAutoConnectScheduler.requestAfterBoot(this)
         runCatching {
             val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
             val callback = object : ConnectivityManager.NetworkCallback() {

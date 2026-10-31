@@ -95,7 +95,6 @@ import com.v2ray.ang.handler.RegionalPolicyManager
 import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.SkryonRegionPreference
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
-import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
@@ -152,7 +151,7 @@ fun VpnMainScreen(
     val advancedFirstFocus = remember { FocusRequester() }
     val policyScope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
-    var autoConnectEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
+    var autoStartOnBootEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
     var regionalPolicyMode by remember { mutableStateOf(RegionalPolicyManager.readMode()) }
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
@@ -207,12 +206,11 @@ fun VpnMainScreen(
         }
     }
 
-    // When the physical network comes back, retry the last selected pool once
-    // during this online period. Never restart when the user manually pressed
-    // OFF, and never compete with an already running connection.
+    // While the user wants CONNECTED, an involuntary disconnect is temporary.
+    // The toggle below only affects reboot behavior; it must not block
+    // recovery after Wi-Fi drops or the Android service crashes.
     LaunchedEffect(
         physicalLinkAvailable,
-        autoConnectEnabled,
         uiState.connectionState,
         uiState.connectButtonEnabled,
     ) {
@@ -222,7 +220,6 @@ fun VpnMainScreen(
             !automaticRetryAttemptedThisOnlinePeriod &&
             uiState.connectButtonEnabled &&
             shouldAutoReconnectVpn(
-                enabled = autoConnectEnabled,
                 userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
                 networkAvailable = physicalLinkAvailable,
                 vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected,
@@ -436,20 +433,13 @@ fun VpnMainScreen(
                             )
                         }
                     },
-                    autoConnectEnabled = autoConnectEnabled,
-                    onAutoConnectChange = { enabled ->
-                        autoConnectEnabled = enabled
+                    autoStartOnBootEnabled = autoStartOnBootEnabled,
+                    onAutoStartOnBootChange = { enabled ->
+                        autoStartOnBootEnabled = enabled
                         MmkvManager.encodeStartOnBoot(enabled)
-                        if (enabled) {
-                            // Manual OFF remains authoritative: enabling the
-                            // toggle does not secretly re-arm a stopped VPN.
-                            SkryonVpnAutoConnectScheduler.ensureScheduled(context)
-                            // If the user already requested an active VPN, restore
-                            // it promptly when this toggle is re-enabled.
-                            SkryonVpnAutoConnectScheduler.requestOnce(context)
-                        } else {
-                            SkryonVpnAutoConnectScheduler.cancel(context)
-                        }
+                        // This setting concerns reboot only; it neither
+                        // starts a manually stopped VPN nor interrupts current
+                        // tunnel recovery on the same device boot.
                     },
                     connectionState = uiState.connectionState,
                     onActivationCodeSubmit = onActivationCodeSubmit,
@@ -863,20 +853,24 @@ private fun AutoConnectCard(
     compact: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .clip(shape)
             .background(Color.White.copy(alpha = 0.94f))
-            .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 18.dp else 22.dp))
-            .tvRemoteHighlight(RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .border(1.dp, AppUiColors.Border, shape)
+            .tvRemoteHighlight(shape)
             .clickable { onCheckedChange(!enabled) }
-            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 10.dp else 12.dp),
+            .padding(
+                horizontal = if (compact) 14.dp else 18.dp,
+                vertical = if (compact) 10.dp else 12.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Автоподключение",
+                text = "Автозапуск VPN",
                 style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
                 color = AppUiColors.TextPrimary,
                 fontWeight = FontWeight.Medium,
@@ -884,10 +878,10 @@ private fun AutoConnectCard(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = when {
-                    !enabled -> "Автовосстановление отключено"
-                    !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную. Включите кнопкой"
-                    else -> "После сети, перезагрузки и сна ТВ"
+                text = if (enabled) {
+                    "После перезагрузки возобновлять ранее включённый VPN"
+                } else {
+                    "После перезагрузки VPN останется выключенным"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
@@ -896,11 +890,8 @@ private fun AutoConnectCard(
             )
         }
         Spacer(Modifier.width(12.dp))
-        // Parent row is the sole remote-focus target: centre/Enter toggles it.
-        Switch(
-            checked = enabled,
-            onCheckedChange = null,
-        )
+        // The whole card is a single remote-focus target.
+        Switch(checked = enabled, onCheckedChange = null)
     }
 }
 
@@ -1018,8 +1009,8 @@ private fun AdvancedPage(
     policyUpdateInProgress: Boolean,
     policyUpdateError: String,
     onRegionalPolicyConfirmed: (RegionalPolicyMode) -> Unit,
-    autoConnectEnabled: Boolean,
-    onAutoConnectChange: (Boolean) -> Unit,
+    autoStartOnBootEnabled: Boolean,
+    onAutoStartOnBootChange: (Boolean) -> Unit,
     connectionState: VpnConnectionState,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     compact: Boolean,
@@ -1086,9 +1077,9 @@ private fun AdvancedPage(
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
         AutoConnectCard(
-            enabled = autoConnectEnabled,
+            enabled = autoStartOnBootEnabled,
             compact = compact,
-            onCheckedChange = onAutoConnectChange,
+            onCheckedChange = onAutoStartOnBootChange,
         )
 
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))

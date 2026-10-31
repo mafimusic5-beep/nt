@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
+import android.os.Build
 import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
@@ -11,6 +12,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -55,11 +57,13 @@ internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
 }
 
 internal object SkryonVpnAutoConnectScheduler {
+    private const val BOOT_WORK = "skryon_vpn_boot_recovery"
+    private const val POST_START_WORK = "skryon_vpn_post_start_verify"
     private const val ONE_TIME_WORK = "skryon_vpn_auto_connect_once"
     private const val PERIODIC_WORK = "skryon_vpn_auto_connect_periodic"
 
     fun ensureScheduled(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -74,7 +78,7 @@ internal object SkryonVpnAutoConnectScheduler {
     }
 
     fun requestOnce(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
@@ -91,7 +95,7 @@ internal object SkryonVpnAutoConnectScheduler {
      * KEEP to avoid flooding the queue.
      */
     fun requestAfterUnexpectedStop(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
@@ -101,24 +105,75 @@ internal object SkryonVpnAutoConnectScheduler {
             .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 
+    /**
+     * Recover as soon as the OS supplies Internet after boot, unlock, or a
+     * package update. Android's scheduled work may otherwise delay the first
+     * one-off retry until much later, especially on televisions.
+     *
+     * Expedited JobScheduler work on Android 12+ requests prompt execution,
+     * with a safe fallback if expedited quota is exhausted. Older Android
+     * versions use a normal immediate WorkManager job to avoid requiring
+     * getForegroundInfo() for the pre-Android-12 expedited implementation.
+     */
+    fun requestAfterBoot(context: Context) {
+        if (!SkryonVpnConnectionIntent.isArmed()) return
+        val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                }
+            }.build()
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(BOOT_WORK, ExistingWorkPolicy.KEEP, request)
+    }
+
+    /**
+     * startForegroundService() can return before Android actually launches the
+     * VPN service. If Android denies the background start, there is no service
+     * callback to request a retry. Recheck the daemon after the 60-second
+     * startup grace, instead of waiting for the next 15-minute periodic job.
+     */
+    fun requestPostStartVerification(context: Context) {
+        if (!SkryonVpnConnectionIntent.isArmed()) return
+        val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setInitialDelay(75, TimeUnit.SECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(POST_START_WORK, ExistingWorkPolicy.REPLACE, request)
+    }
+
     fun cancel(context: Context) {
         WorkManager.getInstance(context.applicationContext).apply {
+            cancelUniqueWork(POST_START_WORK)
+            cancelUniqueWork(BOOT_WORK)
             cancelUniqueWork(ONE_TIME_WORK)
             cancelUniqueWork(PERIODIC_WORK)
         }
     }
 }
 
-internal class SkryonVpnAutoConnectWorker(
-    context: Context,
-    params: WorkerParameters,
-) : CoroutineWorker(context, params) {
+/**
+ * Shared, serialized, signed VPN recovery. Boot-time foreground coordinator
+ * and WorkManager use this SAME session acquisition logic, avoiding races.
+ *
+ * Returns true when the attempt is retryable. Authentication, entitlement and
+ * Android VPN permission checks remain mandatory in either launch path.
+ */
+internal class SkryonVpnRecoveryRunner(
+    private val applicationContext: Context,
+    private val launchVpnService: suspend () -> Boolean = {
+        V2RayServiceManager.startVService(applicationContext)
+    },
+) {
     private companion object {
-        // Periodic and one-time workers run concurrently in the same app process.
-        private val connectMutex = Mutex()
+        val connectMutex = Mutex()
     }
 
-    override suspend fun doWork(): Result {
+    suspend fun run(): Boolean {
         connectMutex.lock()
         return try {
             reconnectIfRequested()
@@ -136,33 +191,44 @@ internal class SkryonVpnAutoConnectWorker(
         }
     }.getOrNull()
 
-    private suspend fun reconnectIfRequested(): Result {
+    private suspend fun reconnectIfRequested(): Boolean {
         if (!SkryonVpnConnectionIntent.shouldRetry(
                 networkAvailable = true,
                 vpnAlreadyRunning = V2RayServiceManager.isRunning(),
             )
-        ) return Result.success()
+        ) return false
 
         // Manual Connect has priority. The normal worker runs in a different
         // process and cannot inspect a Compose ViewModel's in-flight state.
-        if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return Result.retry()
+        if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return true
 
         // Never prompt for VPN consent from a background worker, and never
         // attempt to replace another running VPN app.
-        if (VpnService.prepare(applicationContext) != null) return Result.success()
+        if (VpnService.prepare(applicationContext) != null) {
+            // An old ON preference is not a replacement for Android's VPN
+            // consent. Do not repeatedly prompt from a background worker.
+            Log.w(AppConfig.TAG, "Skryon recovery blocked: Android VPN permission is not granted")
+            return false
+        }
 
         // The service core lives in another process. Android may hide the
         // disallowed VPN app's own network from ConnectivityManager; its
         // short-lived daemon pulse prevents a false "stale session" cleanup.
-        if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return Result.success()
-        val networkPresent = vpnNetworkPresent() ?: return Result.retry()
+        if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return false
+        val networkPresent = vpnNetworkPresent() ?: return true
         if (networkPresent) {
-            // The VPN service owns its current session even when its Xray
-            // core runs in a different process from this WorkManager worker.
-            return Result.success()
+            Log.i(AppConfig.TAG, "Skryon recovery waiting: VPN interface still registered")
+            // Android can leave an old VPN network registered briefly after
+            // the service process died. Do not replace it, but do NOT treat
+            // this as recovered either: retry when that network disappears.
+            // This also avoids interfering with another VPN app's network.
+            return true
         }
 
-        val profile = EmeryAccessManager.loadProfile() ?: return Result.success()
+        val profile = EmeryAccessManager.loadProfile() ?: run {
+            Log.w(AppConfig.TAG, "Skryon recovery skipped: no activated local profile")
+            return false
+        }
         val session = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
             ?.trim().orEmpty()
         if (shouldRecoverStaleVpnLease(
@@ -178,27 +244,27 @@ internal class SkryonVpnAutoConnectWorker(
             val released = EmeryBackendClient.releaseVpnSession(profile.accessKey, session)
             val reason = released.exceptionOrNull()?.message.orEmpty()
             if (released.isFailure && reason !in setOf("vpn_session_mismatch", "vpn_session_expired")) {
-                return if (isRetryableSkryonReconnectFailure(reason)) Result.retry() else Result.success()
+                return if (isRetryableSkryonReconnectFailure(reason)) true else false
             }
-            if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return Result.retry()
+            if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return true
             if (SkryonVpnConnectionIntent.isVpnServiceAlive() || vpnNetworkPresent() != false) {
-                return Result.retry()
+                return true
             }
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == session) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
             } else {
                 // Another connection has acquired a newer lease; never clear it.
-                return Result.retry()
+                return true
             }
         }
 
-        if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return Result.retry()
+        if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return true
         if (!SkryonVpnConnectionIntent.shouldRetry(true, V2RayServiceManager.isRunning())) {
-            return Result.success()
+            return false
         }
 
         val startedAt = SkryonVpnConnectionIntent.markAutoConnectionStarting()
-            ?: return Result.success()
+            ?: return false
         var startRequested = false
         try {
         val confirmed = EmeryBackendClient.fetchProfile(
@@ -206,10 +272,10 @@ internal class SkryonVpnAutoConnectWorker(
             requireDeviceInventory = true,
         ).getOrElse { error ->
             Log.w(AppConfig.TAG, "Auto-connect device check failed: ${error.message}")
-            return if (isRetryableSkryonReconnectFailure(error.message)) Result.retry() else Result.success()
+            return if (isRetryableSkryonReconnectFailure(error.message)) true else false
         }
         if (!SkryonVpnConnectionIntent.shouldRetry(true, V2RayServiceManager.isRunning())) {
-            return Result.success()
+            return false
         }
 
         // Only a manual region choice is sticky. "Random region" draws a new
@@ -220,15 +286,15 @@ internal class SkryonVpnAutoConnectWorker(
             emptyList()
         } else {
             EmeryBackendClient.fetchVpnServers()
-                .getOrElse { return Result.retry() }
+                .getOrElse { return true }
                 .filter { it.isAvailable }
                 .map { it.id }
         }
-        val nextPoolId = chooseRegionPoolId(pinnedId, availableIds) ?: return Result.retry()
+        val nextPoolId = chooseRegionPoolId(pinnedId, availableIds) ?: return true
         val connection = EmeryVpnSync.connectToServer(confirmed.accessKey, nextPoolId)
             .getOrElse { error ->
                 Log.w(AppConfig.TAG, "Auto-connect pool acquire failed: ${error.message}")
-                return if (isRetryableSkryonReconnectFailure(error.message)) Result.retry() else Result.success()
+                return if (isRetryableSkryonReconnectFailure(error.message)) true else false
             }
 
         if (!SkryonVpnConnectionIntent.shouldRetry(true, V2RayServiceManager.isRunning())) {
@@ -236,26 +302,46 @@ internal class SkryonVpnAutoConnectWorker(
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == connection.sessionId) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
             }
-            return Result.success()
+            return false
         }
 
         // This is a background auto-start, NOT a new manual user action.
         // Starting without a GUID keeps the explicit/automatic service gate
         // active; EmeryVpnSync has already selected the desired profile.
-        val started = V2RayServiceManager.startVService(applicationContext)
+        val started = launchVpnService()
         if (!started) {
+            Log.w(AppConfig.TAG, "Skryon recovery failed: foreground VPN service start rejected")
             EmeryBackendClient.releaseVpnSession(confirmed.accessKey, connection.sessionId)
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == connection.sessionId) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
             }
-            return Result.retry()
+            return true
         }
         startRequested = true
-        return Result.success()
+        SkryonVpnAutoConnectScheduler.requestPostStartVerification(applicationContext)
+        return false
         } finally {
             if (!startRequested) {
                 SkryonVpnConnectionIntent.finishConnectionAttemptIfStartedAt(startedAt)
             }
         }
+    }
+}
+
+/**
+ * WorkManager is a fallback for network recovery and process death.
+ * BOOT_COMPLETED also creates a short-lived foreground coordinator, because
+ * Android 12+ can reject startForegroundService() from a background worker.
+ */
+internal class SkryonVpnAutoConnectWorker(
+    context: Context,
+    params: WorkerParameters,
+) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        // A boot-started VPN foreground service owns the signed acquisition
+        // until completion. Do not race its lease from the app process.
+        if (SkryonVpnConnectionIntent.isBootRecoveryActive()) return Result.retry()
+        return if (SkryonVpnRecoveryRunner(applicationContext).run()) Result.retry()
+        else Result.success()
     }
 }
