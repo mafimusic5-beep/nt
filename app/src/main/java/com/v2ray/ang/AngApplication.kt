@@ -29,8 +29,13 @@ class AngApplication : Application() {
         application = this
     }
 
+    // WorkManager's SystemJobService and the premium activities run in the
+    // normal application process. The old configuration named a fictitious
+    // :bg process that has NO component in AndroidManifest; WorkManager would
+    // skip its scheduler / force-stop recovery in the process Android actually
+    // launches. The Xray VPN daemon deliberately runs in its own process.
     private val workManagerConfiguration: Configuration = Configuration.Builder()
-        .setDefaultProcessName("${ANG_PACKAGE}:bg")
+        .setDefaultProcessName(ANG_PACKAGE)
         .build()
 
     /**
@@ -57,7 +62,11 @@ class AngApplication : Application() {
         SkryonVpnAutoConnectScheduler.ensureScheduled(this)
         // Reopening the app after a reboot must also trigger recovery when
         // the OEM blocked or delayed BOOT_COMPLETED delivery.
-        SkryonVpnAutoConnectScheduler.requestOnce(this)
+        // Kick a network-constrained immediate retry whenever the app process
+        // returns. In particular, this repairs missed OEM boot broadcasts.
+        // isArmed() checks saved autostart + boot-count, so an OFF toggle
+        // cannot be overridden by opening the application.
+        SkryonVpnAutoConnectScheduler.requestAfterBoot(this)
         runCatching {
             val connectivity = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
             val callback = object : ConnectivityManager.NetworkCallback() {
