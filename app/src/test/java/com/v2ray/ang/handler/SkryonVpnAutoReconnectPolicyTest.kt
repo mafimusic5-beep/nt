@@ -57,6 +57,40 @@ class SkryonVpnAutoReconnectPolicyTest {
     }
 
     @Test
+    fun `watchdog never restarts during transient outage manual OFF or a pending startup`() {
+        assertFalse(shouldRestartUnhealthyVpnTunnel(
+            userRequestedConnection = true,
+            physicalNetworkAvailable = false,
+            connectionStarting = false,
+            consecutiveFailedChecks = 99,
+        ))
+        assertFalse(shouldRestartUnhealthyVpnTunnel(
+            userRequestedConnection = false,
+            physicalNetworkAvailable = true,
+            connectionStarting = false,
+            consecutiveFailedChecks = 99,
+        ))
+        assertFalse(shouldRestartUnhealthyVpnTunnel(
+            userRequestedConnection = true,
+            physicalNetworkAvailable = true,
+            connectionStarting = true,
+            consecutiveFailedChecks = 99,
+        ))
+        assertFalse(shouldRestartUnhealthyVpnTunnel(
+            userRequestedConnection = true,
+            physicalNetworkAvailable = true,
+            connectionStarting = false,
+            consecutiveFailedChecks = 2,
+        ))
+        assertTrue(shouldRestartUnhealthyVpnTunnel(
+            userRequestedConnection = true,
+            physicalNetworkAvailable = true,
+            connectionStarting = false,
+            consecutiveFailedChecks = 3,
+        ))
+    }
+
+    @Test
     fun `daemon heartbeat has a bounded crash recovery window`() {
         assertTrue(isRecentSkryonServiceHeartbeat(lastSeenAt = 10_000L, now = 15_000L))
         assertTrue(isRecentSkryonServiceHeartbeat(lastSeenAt = 10_000L, now = 30_000L))

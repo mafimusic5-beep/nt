@@ -59,7 +59,7 @@ internal object SkryonVpnAutoConnectScheduler {
     private const val PERIODIC_WORK = "skryon_vpn_auto_connect_periodic"
 
     fun ensureScheduled(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -74,7 +74,7 @@ internal object SkryonVpnAutoConnectScheduler {
     }
 
     fun requestOnce(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
@@ -91,7 +91,7 @@ internal object SkryonVpnAutoConnectScheduler {
      * KEEP to avoid flooding the queue.
      */
     fun requestAfterUnexpectedStop(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
@@ -157,9 +157,11 @@ internal class SkryonVpnAutoConnectWorker(
         if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return Result.success()
         val networkPresent = vpnNetworkPresent() ?: return Result.retry()
         if (networkPresent) {
-            // The VPN service owns its current session even when its Xray
-            // core runs in a different process from this WorkManager worker.
-            return Result.success()
+            // Android can leave an old VPN network registered briefly after
+            // the service process died. Do not replace it, but do NOT treat
+            // this as recovered either: retry when that network disappears.
+            // This also avoids interfering with another VPN app's network.
+            return Result.retry()
         }
 
         val profile = EmeryAccessManager.loadProfile() ?: return Result.success()

@@ -33,6 +33,7 @@ import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.isPremiumVpnServiceStartAllowed
+import com.v2ray.ang.handler.shouldRestartUnhealthyVpnTunnel
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
@@ -40,6 +41,7 @@ import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
 import com.v2ray.ang.ui.premium.SKRYON_VPN_SESSION_ID_PREF
 import com.v2ray.ang.ui.premium.SKRYON_VPN_IMPORT_FINGERPRINT_PREF
 import com.v2ray.ang.ui.premium.SKRYON_SERVER_ID_PREF
+import com.v2ray.ang.ui.premium.vpn.VpnTunnelTrafficVerifier
 import com.v2ray.ang.security.DeviceBoundVlessProxy
 import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.util.MyContextWrapper
@@ -70,6 +72,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var sessionHeartbeatJob: Job? = null
     private var serviceLivenessJob: Job? = null
+    private var tunnelWatchdogJob: Job? = null
     @Volatile
     private var serviceLeaseId: String = ""
     // Network callbacks wake the retry loop immediately when Wi-Fi/mobile
@@ -161,6 +164,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         deviceGateProxy = null
         sessionHeartbeatJob?.cancel()
         serviceLivenessJob?.cancel()
+        tunnelWatchdogJob?.cancel()
         SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
         underlayChanges.close()
         sessionScope.cancel()
@@ -186,14 +190,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
         if (EmeryAccessManager.loadProfile() != null) {
-            val explicitStart = intent?.getBooleanExtra(
-                SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT,
-                false,
-            ) == true
             if (!isPremiumVpnServiceStartAllowed(
                     userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
-                    autoConnectEnabled = MmkvManager.decodeStartOnBoot(),
-                    explicitUserStart = explicitStart,
                 )
             ) {
                 Log.i(AppConfig.TAG, "StartCore-VPN: Auto-start blocked by user settings")
@@ -263,6 +261,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         }
         startServiceLivenessHeartbeat()
         startSessionHeartbeat()
+        startTunnelTrafficWatchdog()
     }
 
     override fun stopService() {
@@ -556,6 +555,71 @@ class V2RayVpnService : VpnService(), ServiceControl {
     }
 
     /**
+     * In some failures Android keeps the VPN TUN interface and Xray service
+     * running even though SOCKS traffic no longer reaches the Internet.
+     * A worker will not restart an apparently live service, so detect the
+     * broken tunnel here and stop it to hand off recovery to the durable
+     * WorkManager scheduler. Verify via Xray's local SOCKS proxy, never a
+     * direct socket that could falsely pass while VPN traffic is broken.
+     *
+     * Three consecutive failures are required; a second independent HTTPS
+     * endpoint avoids restarting merely because skryon.ru is unavailable.
+     * While Wi-Fi/mobile is gone, we preserve the tunnel and wait.
+     */
+    private fun startTunnelTrafficWatchdog() {
+        tunnelWatchdogJob?.cancel()
+        if (EmeryAccessManager.loadProfile() == null) return
+        tunnelWatchdogJob = sessionScope.launch {
+            delay(75_000L) // first connection + signed lease verification grace
+            val verifier = VpnTunnelTrafficVerifier(applicationContext)
+            var failedChecks = 0
+            while (isActive && isRunning && !stopInProgress) {
+                if (!SkryonVpnConnectionIntent.isArmed()) break
+                if (!hasUnderlyingInternetNetwork() ||
+                    SkryonVpnConnectionIntent.isUserConnectionStarting()
+                ) {
+                    failedChecks = 0
+                    delay(30_000L)
+                    continue
+                }
+
+                val firstPartyOk = runCatching {
+                    withTimeoutOrNull(18_000L) { verifier.verify().ok } == true
+                }.getOrDefault(false)
+                val tunnelOk = if (firstPartyOk) {
+                    true
+                } else {
+                    runCatching {
+                        withTimeoutOrNull(7_000L) { verifier.independentTunnelCheck() } == true
+                    }.getOrDefault(false)
+                }
+                if (!isActive || !isRunning || stopInProgress) break
+                failedChecks = if (tunnelOk || !hasUnderlyingInternetNetwork()) {
+                    0
+                } else {
+                    failedChecks + 1
+                }
+                if (shouldRestartUnhealthyVpnTunnel(
+                        userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
+                        physicalNetworkAvailable = hasUnderlyingInternetNetwork(),
+                        connectionStarting = SkryonVpnConnectionIntent.isUserConnectionStarting(),
+                        consecutiveFailedChecks = failedChecks,
+                    )
+                ) {
+                    Log.w(AppConfig.TAG, "StartCore-VPN: Repeated tunnel traffic failures; restarting VPN")
+                    withContext(Dispatchers.Main) {
+                        if (isRunning && !stopInProgress && SkryonVpnConnectionIntent.isArmed()) {
+                            stopAllService()
+                        }
+                    }
+                    break
+                }
+                delay(30_000L)
+            }
+        }
+    }
+
+    /**
      * Keep the Android VPN/TUN interface alive through Wi-Fi/mobile dropouts.
      *
      * A transport failure is not a revoked subscription. The backend's session
@@ -733,6 +797,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
             sessionHeartbeatJob = null
             serviceLivenessJob?.cancel()
             serviceLivenessJob = null
+            tunnelWatchdogJob?.cancel()
+            tunnelWatchdogJob = null
             SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {

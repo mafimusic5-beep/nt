@@ -3,25 +3,41 @@ package com.v2ray.ang.handler
 /**
  * Persistent USER intent, separate from Android's connection status.
  *
- * Turning on auto-connect is permission to retry an explicitly requested
- * connection, NOT permission to undo an explicit manual disconnect.
+ * Once Connect is pressed, the user's durable desired state is CONNECTED.
+ * No background lifecycle event or loss of Wi-Fi may turn that into OFF.
+ * Explicit Disconnect clears the request. Platform VPN permission
+ * revocation is also terminal because Android forbids silent reauthorization.
+ * Premium VPN resumes across reboot while its last explicit intent is ON.
  */
 internal fun shouldAutoReconnectVpn(
-    enabled: Boolean,
     userRequestedConnection: Boolean,
     networkAvailable: Boolean,
     vpnAlreadyRunning: Boolean,
-): Boolean = enabled && userRequestedConnection && networkAvailable && !vpnAlreadyRunning
+): Boolean = userRequestedConnection && networkAvailable && !vpnAlreadyRunning
 
 /**
- * Explicit start from the Connect button is distinct from an OS-triggered
- * restart. OS restart requires auto-connect to remain enabled.
+ * An OS restart of the VPN daemon must respect the same durable user intent.
+ * The legacy/manual-profile boot toggle cannot suppress recovery from
+ * an unexpected process death or a lost connection in a premium VPN.
  */
 internal fun isPremiumVpnServiceStartAllowed(
     userRequestedConnection: Boolean,
-    autoConnectEnabled: Boolean,
-    explicitUserStart: Boolean,
-): Boolean = userRequestedConnection && (explicitUserStart || autoConnectEnabled)
+): Boolean = userRequestedConnection
+
+/**
+ * Restore a frozen-but-still-running Xray tunnel only after repeated failures,
+ * when the underlying network exists and the user did not request OFF.
+ * Never restart while a new connection is still being established.
+ */
+internal fun shouldRestartUnhealthyVpnTunnel(
+    userRequestedConnection: Boolean,
+    physicalNetworkAvailable: Boolean,
+    connectionStarting: Boolean,
+    consecutiveFailedChecks: Int,
+): Boolean = userRequestedConnection &&
+    physicalNetworkAvailable &&
+    !connectionStarting &&
+    consecutiveFailedChecks >= 3
 
 /** Protect a live VPN daemon from a worker running in another Android process. */
 internal fun isRecentSkryonServiceHeartbeat(lastSeenAt: Long, now: Long): Boolean =
@@ -89,7 +105,6 @@ internal object SkryonVpnConnectionIntent {
 
     fun shouldRetry(networkAvailable: Boolean, vpnAlreadyRunning: Boolean): Boolean =
         shouldAutoReconnectVpn(
-            enabled = MmkvManager.decodeStartOnBoot(),
             userRequestedConnection = isArmed(),
             networkAvailable = networkAvailable,
             vpnAlreadyRunning = vpnAlreadyRunning,

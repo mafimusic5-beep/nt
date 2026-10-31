@@ -87,6 +87,23 @@ internal class VpnTunnelTrafficVerifier(context: Context) {
         last
     }
 
+    /**
+     * An independent endpoint is only a SECOND opinion for the long-running
+     * service watchdog. An outage of skryon.ru alone must not disconnect a
+     * perfectly healthy VPN tunnel.
+     *
+     * The request still uses the protected local Xray SOCKS proxy; no
+     * direct/network-bypass fallback is permitted.
+     */
+    suspend fun independentTunnelCheck(): Boolean = withContext(Dispatchers.IO) {
+        checkLocalSocks(attempt = 1) == null &&
+            probeThroughLocalSocks(
+                "https://cp.cloudflare.com/generate_204",
+                attempt = 1,
+                stage = "external_https_via_socks",
+            ).ok
+    }
+
     private fun findVpnNetwork(manager: ConnectivityManager): Network? {
         return manager.allNetworks.firstOrNull { network ->
             val capabilities = manager.getNetworkCapabilities(network) ?: return@firstOrNull false

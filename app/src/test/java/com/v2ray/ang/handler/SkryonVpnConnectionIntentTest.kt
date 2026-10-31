@@ -5,75 +5,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SkryonVpnConnectionIntentTest {
-    @Test
-    fun `user manually stopped VPN never auto reconnects after wifi returns`() {
-        assertFalse(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = false,
-            networkAvailable = true, vpnAlreadyRunning = false,
-        ))
+    @Test fun `explicit manual OFF is the only user decision that prevents automatic restart`() {
+        // Boot preference does not enter the recovery policy.
+            assertFalse(shouldAutoReconnectVpn(
+                userRequestedConnection = false,
+                networkAvailable = true, vpnAlreadyRunning = false,
+            ))
+            assertFalse(isPremiumVpnServiceStartAllowed(userRequestedConnection = false))
+            assertTrue(shouldAutoReconnectVpn(
+                userRequestedConnection = true,
+                networkAvailable = true, vpnAlreadyRunning = false,
+            ))
+            assertTrue(isPremiumVpnServiceStartAllowed(userRequestedConnection = true))
     }
 
-    @Test
-    fun `saved intent plus enabled auto connect reconnects when network returns`() {
+    @Test fun `involuntary disconnect always retries after a user has connected even with boot disabled`() {
         assertTrue(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = true,
+            userRequestedConnection = true,
             networkAvailable = true, vpnAlreadyRunning = false,
         ))
     }
 
-    @Test
-    fun `offline network cannot trigger a new VPN session`() {
+    @Test fun `temporary network outage waits for Internet instead of clearing user intent`() {
         assertFalse(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = true,
+            userRequestedConnection = true,
             networkAvailable = false, vpnAlreadyRunning = false,
         ))
-    }
-
-    @Test
-    fun `already running VPN must not be restarted by network callback`() {
-        assertFalse(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = true,
-            networkAvailable = true, vpnAlreadyRunning = true,
-        ))
-    }
-
-    @Test
-    fun `system must not restart after a manual disconnect`() {
-        assertFalse(isPremiumVpnServiceStartAllowed(
-            userRequestedConnection = false,
-            autoConnectEnabled = true,
-            explicitUserStart = false,
-        ))
-    }
-
-    @Test
-    fun `OS restart requires auto-connect setting enabled`() {
-        assertFalse(isPremiumVpnServiceStartAllowed(
+        assertTrue(shouldAutoReconnectVpn(
             userRequestedConnection = true,
-            autoConnectEnabled = false,
-            explicitUserStart = false,
-        ))
-        assertTrue(isPremiumVpnServiceStartAllowed(
-            userRequestedConnection = true,
-            autoConnectEnabled = true,
-            explicitUserStart = false,
-        ))
-    }
-
-    @Test
-    fun `manual connect works with auto-connect setting off`() {
-        assertTrue(isPremiumVpnServiceStartAllowed(
-            userRequestedConnection = true,
-            autoConnectEnabled = false,
-            explicitUserStart = true,
-        ))
-    }
-
-    @Test
-    fun `auto-connect disabled never restarts after reconnecting wifi`() {
-        assertFalse(shouldAutoReconnectVpn(
-            enabled = false, userRequestedConnection = true,
             networkAvailable = true, vpnAlreadyRunning = false,
+        ))
+    }
+
+    @Test fun `running VPN stays connected without racing another acquire`() {
+        assertFalse(shouldAutoReconnectVpn(
+            userRequestedConnection = true,
+            networkAvailable = true, vpnAlreadyRunning = true,
         ))
     }
 }
