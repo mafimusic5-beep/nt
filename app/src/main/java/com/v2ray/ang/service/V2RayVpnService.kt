@@ -32,6 +32,7 @@ import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.EmeryAccessManager
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
+import com.v2ray.ang.handler.SkryonVpnRecoveryRunner
 import com.v2ray.ang.handler.isPremiumVpnServiceStartAllowed
 import com.v2ray.ang.handler.shouldRestartUnhealthyVpnTunnel
 import com.v2ray.ang.handler.SettingsManager
@@ -73,6 +74,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private var sessionHeartbeatJob: Job? = null
     private var serviceLivenessJob: Job? = null
     private var tunnelWatchdogJob: Job? = null
+    private var bootRecoveryJob: Job? = null
     @Volatile
     private var serviceLeaseId: String = ""
     // Network callbacks wake the retry loop immediately when Wi-Fi/mobile
@@ -166,6 +168,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         sessionHeartbeatJob?.cancel()
         serviceLivenessJob?.cancel()
         tunnelWatchdogJob?.cancel()
+        bootRecoveryJob?.cancel()
         SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
         underlayChanges.close()
         sessionScope.cancel()
@@ -205,6 +208,19 @@ class V2RayVpnService : VpnService(), ServiceControl {
                 ?.trim().orEmpty()
             // Promote to foreground immediately to avoid FGS timeout
             NotificationManager.showNotification(MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it) })
+
+            val isBootRecovery = intent?.getBooleanExtra(EXTRA_BOOT_RECOVERY_START, false) == true ||
+                (intent == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlwaysOn)
+            if (isBootRecovery && EmeryAccessManager.loadProfile() != null && !isRunning) {
+                // A BOOT_COMPLETED exemption permits starting THIS VPN service
+                // now. Starting it later from WorkManager would be prohibited
+                // on Android 12+ once the app is backgrounded. Acquire signed
+                // configuration inside this already-foreground service.
+                beginBackgroundBootRecovery()
+                return START_STICKY
+            }
+            if (isBootRecovery && isRunning) return START_STICKY
+
             if (!RegionalPolicyManager.isPolicyReadyForServiceStart(this)) {
                 Log.e(AppConfig.TAG, "StartCore-VPN: Russia policy data is stale or incomplete")
                 MessageUtil.sendMsg2UI(this, AppConfig.MSG_STATE_START_FAILURE, "")
@@ -233,6 +249,76 @@ class V2RayVpnService : VpnService(), ServiceControl {
         }
         return START_STICKY
         //return super.onStartCommand(intent, flags, startId)
+    }
+
+    /**
+     * Boot recovery runs directly INSIDE the already-foreground VpnService,
+     * with no Activity and no second foreground-service launch.
+     * The shared runner enforces paid access, registered device proof,
+     * authenticated leases, region policy and an exclusive startup grace.
+     * A boot preference of OFF or manual Disconnect cancels all attempts.
+     */
+    private fun beginBackgroundBootRecovery() {
+        if (bootRecoveryJob?.isActive == true) return
+        bootRecoveryJob = sessionScope.launch {
+            val deadline = SystemClock.elapsedRealtime() + BOOT_RECOVERY_MAX_MS
+            var attempts = 0
+            try {
+                while (isActive && !stopInProgress && !isRunning &&
+                    attempts < BOOT_RECOVERY_MAX_ATTEMPTS &&
+                    SystemClock.elapsedRealtime() < deadline
+                ) {
+                    if (!MmkvManager.decodeStartOnBoot() ||
+                        !SkryonVpnConnectionIntent.isArmed() ||
+                        EmeryAccessManager.loadProfile() == null
+                    ) break
+
+                    if (VpnService.prepare(applicationContext) != null) {
+                        Log.w(AppConfig.TAG, "StartCore-VPN: Boot recovery blocked by missing VPN consent")
+                        break
+                    }
+                    if (!hasUnderlyingInternetNetwork()) {
+                        delay(5_000L)
+                        continue
+                    }
+
+                    attempts += 1
+                    val retry = try {
+                        SkryonVpnRecoveryRunner(applicationContext, launchVpnService = {
+                            withContext(Dispatchers.Main) {
+                                if (stopInProgress || isRunning ||
+                                    !SkryonVpnConnectionIntent.isArmed()
+                                ) {
+                                    false
+                                } else if (!RegionalPolicyManager.isPolicyReadyForServiceStart(
+                                        this@V2RayVpnService
+                                    ) || !prepareDeviceGate() || !setupVpnService()
+                                ) {
+                                    false
+                                } else {
+                                    startService()
+                                    isRunning && !stopInProgress && V2RayServiceManager.isRunning()
+                                }
+                            }
+                        }).run()
+                    } catch (error: Exception) {
+                        Log.w(AppConfig.TAG, "StartCore-VPN: Signed boot recovery attempt failed", error)
+                        true
+                    }
+                    if (isRunning && !stopInProgress && V2RayServiceManager.isRunning()) {
+                        Log.i(AppConfig.TAG, "StartCore-VPN: Boot recovery started tunnel without UI")
+                        break
+                    }
+                    delay(if (retry) 15_000L else 10_000L)
+                }
+            } finally {
+                if (isActive && !isRunning && !stopInProgress) {
+                    withContext(Dispatchers.Main) {
+                        if (!isRunning && !stopInProgress) stopAllService()
+                    }
+                }
+            }
+        }
     }
 
     override fun getService(): Service {
@@ -793,8 +879,11 @@ class V2RayVpnService : VpnService(), ServiceControl {
         }
     }
 
-    private companion object {
-        const val SESSION_HEARTBEAT_NORMAL_INTERVAL_MS = 30_000L
+    companion object {
+        const val EXTRA_BOOT_RECOVERY_START = "com.skryon.shield.extra.BOOT_RECOVERY_START"
+        private const val BOOT_RECOVERY_MAX_MS = 180_000L
+        private const val BOOT_RECOVERY_MAX_ATTEMPTS = 9
+        private const val SESSION_HEARTBEAT_NORMAL_INTERVAL_MS = 30_000L
         const val SESSION_HEARTBEAT_RETRY_INTERVAL_MS = 5_000L
         const val MIN_HEARTBEAT_GAP_MS = 2_000L
     }
@@ -816,6 +905,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
             serviceLivenessJob = null
             tunnelWatchdogJob?.cancel()
             tunnelWatchdogJob = null
+            bootRecoveryJob?.cancel()
+            bootRecoveryJob = null
             SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {
