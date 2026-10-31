@@ -30,7 +30,7 @@ class AngApplication : Application() {
     }
 
     private val workManagerConfiguration: Configuration = Configuration.Builder()
-        .setDefaultProcessName("${ANG_PACKAGE}:bg")
+        .setDefaultProcessName(ANG_PACKAGE)
         .build()
 
     /**
