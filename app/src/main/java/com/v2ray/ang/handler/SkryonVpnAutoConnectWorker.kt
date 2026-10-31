@@ -337,7 +337,11 @@ internal class SkryonVpnAutoConnectWorker(
     context: Context,
     params: WorkerParameters,
 ) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result =
-        if (SkryonVpnRecoveryRunner(applicationContext).run()) Result.retry()
+    override suspend fun doWork(): Result {
+        // A boot-started VPN foreground service owns the signed acquisition
+        // until completion. Do not race its lease from the app process.
+        if (SkryonVpnConnectionIntent.isBootRecoveryActive()) return Result.retry()
+        return if (SkryonVpnRecoveryRunner(applicationContext).run()) Result.retry()
         else Result.success()
+    }
 }
