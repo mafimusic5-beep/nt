@@ -225,6 +225,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
      */
     private fun releaseLeaseUnlessAutoRecovery() {
         if (!SkryonVpnConnectionIntent.shouldRetry(
+                context = getApplication(),
                 networkAvailable = true,
                 vpnAlreadyRunning = false,
             )
@@ -1138,6 +1139,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
     private fun scheduleAutomaticRecovery() {
         if (SkryonVpnConnectionIntent.shouldRetry(
+                context = getApplication(),
                 networkAvailable = true,
                 vpnAlreadyRunning = false,
             )
