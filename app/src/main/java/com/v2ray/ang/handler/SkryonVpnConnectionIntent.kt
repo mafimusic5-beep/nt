@@ -5,8 +5,9 @@ package com.v2ray.ang.handler
  *
  * Once Connect is pressed, the user's durable desired state is CONNECTED.
  * No background lifecycle event or loss of Wi-Fi may turn that into OFF.
- * Explicit Disconnect clears the request. Platform VPN permission
- * revocation is also terminal because Android forbids silent reauthorization.
+ * Explicit Disconnect clears the request. Android can revoke VPN consent,
+ * which blocks background reconnect until the user reauthorizes it, but
+ * this platform event must not silently rewrite the user's ON decision.
  * Premium VPN resumes across reboot while its last explicit intent is ON.
  */
 internal fun shouldAutoReconnectVpn(
