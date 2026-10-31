@@ -93,17 +93,16 @@ class BootReceiver : BroadcastReceiver() {
         // WorkManager waits for actual network availability. Directly
         // requesting a premium session here fails when Wi-Fi starts later
         // (especially common on Android TV after a reboot).
-        SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
-        // Force a fresh immediate request after reboot/update/unlock. Ordinary
-        // background jobs can retain an old 10s delay or remain in a terminal
-        // state when Android kills processes during system startup.
-        SkryonVpnAutoConnectScheduler.requestAfterBoot(applicationContext)
+        // Start the ACTUAL VPN foreground service before invoking any
+        // WorkManager / SQLite setup, while the OS boot exemption is active.
+        // WorkManager remains a network/process death fallback.
 
         // Start the ACTUAL VPN foreground service directly under BOOT_COMPLETED
         // exemption; it will acquire signed device-bound session asynchronously
         // once the network comes up. No Activity or second FGS start is needed.
         // USER_UNLOCKED is not a permitted FGS start exemption; its receiver
         // only queues WorkManager. A system Always-on VPN remains supported.
+        var directBootStarted = false
         if (shouldStartForegroundRecoveryFromBoot(action)) {
             try {
                 ContextCompat.startForegroundService(
@@ -112,12 +111,20 @@ class BootReceiver : BroadcastReceiver() {
                         putExtra(V2RayVpnService.EXTRA_BOOT_RECOVERY_START, true)
                     },
                 )
+                directBootStarted = true
                 Log.i(AppConfig.TAG, "BootReceiver: Started headless VpnService recovery")
             } catch (error: Exception) {
-                Log.e(AppConfig.TAG, "BootReceiver: Foreground boot launch rejected; WorkManager fallback queued", error)
+                Log.e(AppConfig.TAG, "BootReceiver: Direct VPN boot launch rejected", error)
             }
         }
-        Log.i(AppConfig.TAG, "BootReceiver: Queued premium boot recovery: $action")
+        SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
+        // Avoid racing a WorkManager lease acquire against the boot-started
+        // foreground VpnService. The latter schedules its own fallback when
+        // it stops without a tunnel; periodic work remains installed.
+        if (!directBootStarted) {
+            SkryonVpnAutoConnectScheduler.requestAfterBoot(applicationContext)
+        }
+        Log.i(AppConfig.TAG, "BootReceiver: Headless VPN boot handled: $action")
 
     }
 }
