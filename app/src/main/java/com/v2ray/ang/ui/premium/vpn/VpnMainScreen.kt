@@ -96,7 +96,6 @@ import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.SkryonRegionPreference
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
-import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.util.Utils
@@ -158,7 +157,6 @@ fun VpnMainScreen(
     var regionalPolicyError by remember { mutableStateOf("") }
     var reconnectAfterPolicyChange by remember { mutableStateOf(false) }
     var connectionQuality by remember { mutableStateOf<PreVpnConnectionQuality?>(null) }
-    var automaticRetryAttemptedThisOnlinePeriod by remember { mutableStateOf(false) }
     val connectivity = remember(context) {
         context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     }
@@ -207,29 +205,14 @@ fun VpnMainScreen(
         }
     }
 
-    // When the physical network comes back, retry the last selected pool once
-    // during this online period. Never restart when the user manually pressed
-    // OFF, and never compete with an already running connection.
-    LaunchedEffect(
-        physicalLinkAvailable,
-        autoConnectEnabled,
-        uiState.connectionState,
-        uiState.connectButtonEnabled,
-    ) {
-        if (!physicalLinkAvailable) {
-            automaticRetryAttemptedThisOnlinePeriod = false
-        } else if (
-            !automaticRetryAttemptedThisOnlinePeriod &&
-            uiState.connectButtonEnabled &&
-            shouldAutoReconnectVpn(
-                enabled = autoConnectEnabled,
-                userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
-                networkAvailable = physicalLinkAvailable,
-                vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected,
-            )
+    // Never compete with the WorkManager background lease acquisition.
+    // The UI only wakes the serialized recovery job when network returns.
+    LaunchedEffect(physicalLinkAvailable, uiState.connectionState) {
+        if (physicalLinkAvailable &&
+            uiState.connectionState == VpnConnectionState.Disconnected &&
+            SkryonVpnConnectionIntent.isArmedForCurrentBoot(context)
         ) {
-            automaticRetryAttemptedThisOnlinePeriod = true
-            onAutoReconnectClick()
+            SkryonVpnAutoConnectScheduler.requestOnce(context)
         }
     }
 
@@ -441,12 +424,12 @@ fun VpnMainScreen(
                         autoConnectEnabled = enabled
                         MmkvManager.encodeStartOnBoot(enabled)
                         if (enabled) {
-                            // Manual OFF remains authoritative: enabling the
-                            // toggle does not secretly re-arm a stopped VPN.
+                            SkryonVpnConnectionIntent.markBootAutoConnectRequested(context)
                             SkryonVpnAutoConnectScheduler.ensureScheduled(context)
-                            // If the user already requested an active VPN, restore
-                            // it promptly when this toggle is re-enabled.
                             SkryonVpnAutoConnectScheduler.requestOnce(context)
+                        } else if (SkryonVpnConnectionIntent.isArmedForCurrentBoot(context)) {
+                            // Boot autostart OFF does not disable current-session recovery.
+                            SkryonVpnAutoConnectScheduler.ensureScheduled(context)
                         } else {
                             SkryonVpnAutoConnectScheduler.cancel(context)
                         }
