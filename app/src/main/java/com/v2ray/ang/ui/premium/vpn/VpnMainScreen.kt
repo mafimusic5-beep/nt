@@ -207,12 +207,11 @@ fun VpnMainScreen(
         }
     }
 
-    // When the physical network comes back, retry the last selected pool once
-    // during this online period. Never restart when the user manually pressed
-    // OFF, and never compete with an already running connection.
+    // While the user wants CONNECTED, an involuntary disconnect is temporary.
+    // The toggle below only affects reboot behavior; it must not block
+    // recovery after Wi-Fi drops or the Android service crashes.
     LaunchedEffect(
         physicalLinkAvailable,
-        autoConnectEnabled,
         uiState.connectionState,
         uiState.connectButtonEnabled,
     ) {
@@ -222,7 +221,6 @@ fun VpnMainScreen(
             !automaticRetryAttemptedThisOnlinePeriod &&
             uiState.connectButtonEnabled &&
             shouldAutoReconnectVpn(
-                enabled = autoConnectEnabled,
                 userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
                 networkAvailable = physicalLinkAvailable,
                 vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected,
@@ -447,9 +445,9 @@ fun VpnMainScreen(
                             // If the user already requested an active VPN, restore
                             // it promptly when this toggle is re-enabled.
                             SkryonVpnAutoConnectScheduler.requestOnce(context)
-                        } else {
-                            SkryonVpnAutoConnectScheduler.cancel(context)
                         }
+                        // Disabling start-on-boot must not cancel recovery
+                        // while the currently requested VPN is still running.
                     },
                     connectionState = uiState.connectionState,
                     onActivationCodeSubmit = onActivationCodeSubmit,
@@ -876,7 +874,7 @@ private fun AutoConnectCard(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Автоподключение",
+                text = "Запуск после перезагрузки",
                 style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
                 color = AppUiColors.TextPrimary,
                 fontWeight = FontWeight.Medium,
@@ -885,9 +883,9 @@ private fun AutoConnectCard(
             Spacer(Modifier.height(2.dp))
             Text(
                 text = when {
-                    !enabled -> "Автовосстановление отключено"
-                    !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную. Включите кнопкой"
-                    else -> "После сети, перезагрузки и сна ТВ"
+                    !SkryonVpnConnectionIntent.isArmed() -> "VPN выключен вручную"
+                    enabled -> "После перезагрузки запускать VPN автоматически"
+                    else -> "После перезагрузки не запускать. Обрывы восстанавливаются"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
