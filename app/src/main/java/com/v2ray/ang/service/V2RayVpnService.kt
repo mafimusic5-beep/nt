@@ -217,8 +217,10 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
             val isBootRecovery = shouldEnterHeadlessBootRecovery(
                 bootBroadcastRequested = intent?.getBooleanExtra(EXTRA_BOOT_RECOVERY_START, false) == true,
-                systemAlwaysOnRestart = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                    isAlwaysOn && intent?.hasExtra(SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT) != true,
+                systemAlwaysOnRestart = intent == null ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        isAlwaysOn &&
+                        intent.hasExtra(SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT) != true),
             )
             if (isBootRecovery && EmeryAccessManager.loadProfile() != null && !isRunning) {
                 // A BOOT_COMPLETED exemption permits starting THIS VPN service
@@ -277,8 +279,11 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     attempts < BOOT_RECOVERY_MAX_ATTEMPTS &&
                     SystemClock.elapsedRealtime() < deadline
                 ) {
-                    if (!MmkvManager.decodeStartOnBoot() ||
-                        !SkryonVpnConnectionIntent.isArmed() ||
+                    // isArmed() enforces the saved boot switch across reboot
+                    // via BOOT_COUNT. Unlike a boot toggle, an ordinary
+                    // START_STICKY restart in the SAME boot must recover even
+                    // when start-on-boot is disabled.
+                    if (!SkryonVpnConnectionIntent.isArmed() ||
                         EmeryAccessManager.loadProfile() == null
                     ) break
 
