@@ -165,6 +165,9 @@ internal object SkryonVpnAutoConnectScheduler {
  */
 internal class SkryonVpnRecoveryRunner(
     private val applicationContext: Context,
+    private val launchVpnService: suspend () -> Boolean = {
+        V2RayServiceManager.startVService(applicationContext)
+    },
 ) {
     private companion object {
         val connectMutex = Mutex()
@@ -305,7 +308,7 @@ internal class SkryonVpnRecoveryRunner(
         // This is a background auto-start, NOT a new manual user action.
         // Starting without a GUID keeps the explicit/automatic service gate
         // active; EmeryVpnSync has already selected the desired profile.
-        val started = V2RayServiceManager.startVService(applicationContext)
+        val started = launchVpnService()
         if (!started) {
             Log.w(AppConfig.TAG, "Skryon recovery failed: foreground VPN service start rejected")
             EmeryBackendClient.releaseVpnSession(confirmed.accessKey, connection.sessionId)
