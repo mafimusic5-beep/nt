@@ -47,11 +47,13 @@ class BootReceiver : BroadcastReceiver() {
                 action == Intent.ACTION_USER_UNLOCKED
             ) {
                 if (!startOnBootEnabled) {
-                    // User opted out of reconnecting after a reboot. A stale
-                    // WorkManager job must not resurrect the previous session.
-                    SkryonVpnConnectionIntent.markUserDisconnected()
-                    SkryonVpnAutoConnectScheduler.cancel(applicationContext)
-                    Log.i(AppConfig.TAG, "BootReceiver: Premium auto-start disabled by user")
+                    // Disarm only a PREVIOUS-boot request. If the user has
+                    // already pressed Connect during this boot, a delayed
+                    // BOOT_COMPLETED broadcast must not undo their action.
+                    if (SkryonVpnConnectionIntent.disarmPreviousBootRequestIfDisabled()) {
+                        SkryonVpnAutoConnectScheduler.cancel(applicationContext)
+                    }
+                    Log.i(AppConfig.TAG, "BootReceiver: Premium start-on-boot disabled by user")
                     return
                 }
             }
