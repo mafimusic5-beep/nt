@@ -186,14 +186,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
         if (EmeryAccessManager.loadProfile() != null) {
-            val explicitStart = intent?.getBooleanExtra(
-                SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT,
-                false,
-            ) == true
             if (!isPremiumVpnServiceStartAllowed(
                     userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
-                    autoConnectEnabled = MmkvManager.decodeStartOnBoot(),
-                    explicitUserStart = explicitStart,
                 )
             ) {
                 Log.i(AppConfig.TAG, "StartCore-VPN: Auto-start blocked by user settings")
