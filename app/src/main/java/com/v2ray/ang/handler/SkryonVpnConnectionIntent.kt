@@ -154,6 +154,21 @@ internal object SkryonVpnConnectionIntent {
         finishUserConnectionAttempt()
     }
 
+    /**
+     * BOOT_COMPLETED may arrive after the user has already opened the app and
+     * clicked Connect. Never clear a NEW connection created in this boot.
+     * Returns true only when a previous-boot intent was disarmed.
+     */
+    fun disarmPreviousBootRequestIfDisabled(): Boolean {
+        if (MmkvManager.decodeStartOnBoot()) return false
+        if (!MmkvManager.decodeSettingsBool(KEY_USER_REQUESTED_VPN, false)) return false
+        val savedBoot = MmkvManager.decodeSettingsLong(KEY_ARMED_BOOT_COUNT, -1L)
+        val currentBoot = bootCount()
+        if (savedBoot >= 0L && savedBoot == currentBoot) return false
+        markUserDisconnected()
+        return true
+    }
+
     fun shouldRetry(networkAvailable: Boolean, vpnAlreadyRunning: Boolean): Boolean =
         shouldAutoReconnectVpn(
             userRequestedConnection = isArmed(),
