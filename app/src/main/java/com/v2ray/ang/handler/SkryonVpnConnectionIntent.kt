@@ -23,6 +23,21 @@ internal fun isPremiumVpnServiceStartAllowed(
     userRequestedConnection: Boolean,
 ): Boolean = userRequestedConnection
 
+/**
+ * Restore a frozen-but-still-running Xray tunnel only after repeated failures,
+ * when the underlying network exists and the user did not request OFF.
+ * Never restart while a new connection is still being established.
+ */
+internal fun shouldRestartUnhealthyVpnTunnel(
+    userRequestedConnection: Boolean,
+    physicalNetworkAvailable: Boolean,
+    connectionStarting: Boolean,
+    consecutiveFailedChecks: Int,
+): Boolean = userRequestedConnection &&
+    physicalNetworkAvailable &&
+    !connectionStarting &&
+    consecutiveFailedChecks >= 3
+
 /** Protect a live VPN daemon from a worker running in another Android process. */
 internal fun isRecentSkryonServiceHeartbeat(lastSeenAt: Long, now: Long): Boolean =
     lastSeenAt > 0 && now - lastSeenAt in 0..20_000L
