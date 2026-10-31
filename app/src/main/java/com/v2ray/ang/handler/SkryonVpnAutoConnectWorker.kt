@@ -58,6 +58,7 @@ internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
 
 internal object SkryonVpnAutoConnectScheduler {
     private const val BOOT_WORK = "skryon_vpn_boot_recovery"
+    private const val POST_START_WORK = "skryon_vpn_post_start_verify"
     private const val ONE_TIME_WORK = "skryon_vpn_auto_connect_once"
     private const val PERIODIC_WORK = "skryon_vpn_auto_connect_periodic"
 
@@ -128,8 +129,26 @@ internal object SkryonVpnAutoConnectScheduler {
             .enqueueUniqueWork(BOOT_WORK, ExistingWorkPolicy.KEEP, request)
     }
 
+    /**
+     * startForegroundService() can return before Android actually launches the
+     * VPN service. If Android denies the background start, there is no service
+     * callback to request a retry. Recheck the daemon after the 60-second
+     * startup grace, instead of waiting for the next 15-minute periodic job.
+     */
+    fun requestPostStartVerification(context: Context) {
+        if (!SkryonVpnConnectionIntent.isArmed()) return
+        val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setInitialDelay(75, TimeUnit.SECONDS)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(POST_START_WORK, ExistingWorkPolicy.REPLACE, request)
+    }
+
     fun cancel(context: Context) {
         WorkManager.getInstance(context.applicationContext).apply {
+            cancelUniqueWork(POST_START_WORK)
             cancelUniqueWork(BOOT_WORK)
             cancelUniqueWork(ONE_TIME_WORK)
             cancelUniqueWork(PERIODIC_WORK)
@@ -281,6 +300,7 @@ internal class SkryonVpnAutoConnectWorker(
             return Result.retry()
         }
         startRequested = true
+        SkryonVpnAutoConnectScheduler.requestPostStartVerification(applicationContext)
         return Result.success()
         } finally {
             if (!startRequested) {
