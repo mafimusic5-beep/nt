@@ -196,7 +196,12 @@ internal class SkryonVpnAutoConnectWorker(
 
         // Never prompt for VPN consent from a background worker, and never
         // attempt to replace another running VPN app.
-        if (VpnService.prepare(applicationContext) != null) return Result.success()
+        if (VpnService.prepare(applicationContext) != null) {
+            // An old ON preference is not a replacement for Android's VPN
+            // consent. Do not repeatedly prompt from a background worker.
+            Log.w(AppConfig.TAG, "Skryon recovery blocked: Android VPN permission is not granted")
+            return Result.success()
+        }
 
         // The service core lives in another process. Android may hide the
         // disallowed VPN app's own network from ConnectivityManager; its
@@ -204,6 +209,7 @@ internal class SkryonVpnAutoConnectWorker(
         if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return Result.success()
         val networkPresent = vpnNetworkPresent() ?: return Result.retry()
         if (networkPresent) {
+            Log.i(AppConfig.TAG, "Skryon recovery waiting: VPN interface still registered")
             // Android can leave an old VPN network registered briefly after
             // the service process died. Do not replace it, but do NOT treat
             // this as recovered either: retry when that network disappears.
@@ -211,7 +217,10 @@ internal class SkryonVpnAutoConnectWorker(
             return Result.retry()
         }
 
-        val profile = EmeryAccessManager.loadProfile() ?: return Result.success()
+        val profile = EmeryAccessManager.loadProfile() ?: run {
+            Log.w(AppConfig.TAG, "Skryon recovery skipped: no activated local profile")
+            return Result.success()
+        }
         val session = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
             ?.trim().orEmpty()
         if (shouldRecoverStaleVpnLease(
@@ -293,6 +302,7 @@ internal class SkryonVpnAutoConnectWorker(
         // active; EmeryVpnSync has already selected the desired profile.
         val started = V2RayServiceManager.startVService(applicationContext)
         if (!started) {
+            Log.w(AppConfig.TAG, "Skryon recovery failed: foreground VPN service start rejected")
             EmeryBackendClient.releaseVpnSession(confirmed.accessKey, connection.sessionId)
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == connection.sessionId) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
