@@ -17,6 +17,11 @@ internal fun shouldScheduleSkryonRecoveryOnBootEvent(action: String?): Boolean =
         action == Intent.ACTION_USER_UNLOCKED ||
         action == Intent.ACTION_MY_PACKAGE_REPLACED
 
+internal fun shouldResumePremiumVpnAtBoot(
+    startOnBootEnabled: Boolean,
+    userRequestedConnection: Boolean,
+): Boolean = startOnBootEnabled && userRequestedConnection
+
 class BootReceiver : BroadcastReceiver() {
     /**
      * Starts a saved manual profile immediately. Premium profiles are fail-closed:
@@ -34,19 +39,36 @@ class BootReceiver : BroadcastReceiver() {
 
         val applicationContext = context.applicationContext
         val premiumProfile = EmeryAccessManager.loadProfile()
-        // A premium subscription explicitly requested CONNECTED is kept alive
-        // across Wi-Fi loss, process death, device sleep and reboot. Its one
-        // durable OFF decision is the user's Disconnect button. Legacy/manual
-        // V2Ray profiles retain the historical boot preference.
-        if (premiumProfile != null && !SkryonVpnConnectionIntent.isArmed()) {
-            Log.i(AppConfig.TAG, "BootReceiver: User explicitly disconnected premium VPN")
-            return
+        // Boot and unlock must honor the SAVED toggle; removing the UI switch
+        // previously made this user preference impossible to control.
+        val startOnBootEnabled = MmkvManager.decodeStartOnBoot()
+        if (premiumProfile != null) {
+            if (action == Intent.ACTION_BOOT_COMPLETED ||
+                action == Intent.ACTION_USER_UNLOCKED
+            ) {
+                if (!startOnBootEnabled) {
+                    // User opted out of reconnecting after a reboot. A stale
+                    // WorkManager job must not resurrect the previous session.
+                    SkryonVpnConnectionIntent.markUserDisconnected()
+                    SkryonVpnAutoConnectScheduler.cancel(applicationContext)
+                    Log.i(AppConfig.TAG, "BootReceiver: Premium auto-start disabled by user")
+                    return
+                }
+            }
+            if (!shouldResumePremiumVpnAtBoot(
+                    startOnBootEnabled = startOnBootEnabled || action == Intent.ACTION_MY_PACKAGE_REPLACED,
+                    userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
+                )
+            ) {
+                Log.i(AppConfig.TAG, "BootReceiver: Premium VPN is OFF or autostart disabled")
+                return
+            }
         }
         if (premiumProfile == null) {
             if (action != Intent.ACTION_BOOT_COMPLETED &&
                 action != Intent.ACTION_MY_PACKAGE_REPLACED
             ) return
-            if (!MmkvManager.decodeStartOnBoot()) {
+            if (!startOnBootEnabled) {
                 Log.i(AppConfig.TAG, "BootReceiver: Legacy start on boot disabled")
                 return
             }
