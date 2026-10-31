@@ -169,6 +169,18 @@
             android:name=".ui.AboutActivity"
             android:exported="false" />
 
+        <!-- Starts at BOOT_COMPLETED while Android grants FGS boot exemption.
+             Creates no UI; the signed backend and VPN permission still gate traffic. -->
+        <service
+            android:name=".service.SkryonBootRecoveryService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn_boot_recovery" />
+        </service>
+
         <service
             android:name=".service.V2RayVpnService"
             android:enabled="true"
