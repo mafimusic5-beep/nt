@@ -59,7 +59,7 @@ internal object SkryonVpnAutoConnectScheduler {
     private const val PERIODIC_WORK = "skryon_vpn_auto_connect_periodic"
 
     fun ensureScheduled(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -74,7 +74,7 @@ internal object SkryonVpnAutoConnectScheduler {
     }
 
     fun requestOnce(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
@@ -91,7 +91,7 @@ internal object SkryonVpnAutoConnectScheduler {
      * KEEP to avoid flooding the queue.
      */
     fun requestAfterUnexpectedStop(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmed()) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
