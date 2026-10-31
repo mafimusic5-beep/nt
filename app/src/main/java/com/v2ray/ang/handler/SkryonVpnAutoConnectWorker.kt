@@ -68,29 +68,39 @@ internal object SkryonVpnAutoConnectScheduler {
             Application.getProcessName() == context.packageName
 
     fun ensureScheduled(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmedForCurrentBoot(context)) return
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
         val periodic = PeriodicWorkRequestBuilder<SkryonVpnAutoConnectWorker>(15, TimeUnit.MINUTES)
             .setConstraints(constraints)
             .build()
-        WorkManager.getInstance(context.applicationContext)
-            .enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP, periodic)
+        if (inMainProcess(context)) {
+            WorkManager.getInstance(context.applicationContext)
+                .enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP, periodic)
+        } else {
+            RemoteWorkManager.getInstance(context.applicationContext)
+                .enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP, periodic)
+        }
         // Do not schedule an immediate second session while the user is
         // in the middle of the initial Connect flow. Network recovery is
         // handled immediately by the active service's callback.
     }
 
     fun requestOnce(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmedForCurrentBoot(context)) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        WorkManager.getInstance(context.applicationContext)
-            .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.KEEP, request)
+        if (inMainProcess(context)) {
+            WorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.KEEP, request)
+        } else {
+            RemoteWorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.KEEP, request)
+        }
     }
 
     /**
@@ -100,20 +110,32 @@ internal object SkryonVpnAutoConnectScheduler {
      * KEEP to avoid flooding the queue.
      */
     fun requestAfterUnexpectedStop(context: Context) {
-        if (!SkryonVpnConnectionIntent.isArmed() || !MmkvManager.decodeStartOnBoot()) return
+        if (!SkryonVpnConnectionIntent.isArmedForCurrentBoot(context)) return
         val request = OneTimeWorkRequestBuilder<SkryonVpnAutoConnectWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(10, TimeUnit.SECONDS)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        WorkManager.getInstance(context.applicationContext)
-            .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+        if (inMainProcess(context)) {
+            WorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+        } else {
+            RemoteWorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork(ONE_TIME_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+        }
     }
 
     fun cancel(context: Context) {
-        WorkManager.getInstance(context.applicationContext).apply {
-            cancelUniqueWork(ONE_TIME_WORK)
-            cancelUniqueWork(PERIODIC_WORK)
+        if (inMainProcess(context)) {
+            WorkManager.getInstance(context.applicationContext).apply {
+                cancelUniqueWork(ONE_TIME_WORK)
+                cancelUniqueWork(PERIODIC_WORK)
+            }
+        } else {
+            RemoteWorkManager.getInstance(context.applicationContext).apply {
+                cancelUniqueWork(ONE_TIME_WORK)
+                cancelUniqueWork(PERIODIC_WORK)
+            }
         }
     }
 }
@@ -147,6 +169,7 @@ internal class SkryonVpnAutoConnectWorker(
 
     private suspend fun reconnectIfRequested(): Result {
         if (!SkryonVpnConnectionIntent.shouldRetry(
+                context = applicationContext,
                 networkAvailable = true,
                 vpnAlreadyRunning = V2RayServiceManager.isRunning(),
             )
@@ -202,7 +225,7 @@ internal class SkryonVpnAutoConnectWorker(
         }
 
         if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return Result.retry()
-        if (!SkryonVpnConnectionIntent.shouldRetry(true, V2RayServiceManager.isRunning())) {
+        if (!SkryonVpnConnectionIntent.shouldRetry(applicationContext, true, V2RayServiceManager.isRunning())) {
             return Result.success()
         }
 
@@ -217,7 +240,7 @@ internal class SkryonVpnAutoConnectWorker(
             Log.w(AppConfig.TAG, "Auto-connect device check failed: ${error.message}")
             return if (isRetryableSkryonReconnectFailure(error.message)) Result.retry() else Result.success()
         }
-        if (!SkryonVpnConnectionIntent.shouldRetry(true, V2RayServiceManager.isRunning())) {
+        if (!SkryonVpnConnectionIntent.shouldRetry(applicationContext, true, V2RayServiceManager.isRunning())) {
             return Result.success()
         }
 
@@ -240,7 +263,7 @@ internal class SkryonVpnAutoConnectWorker(
                 return if (isRetryableSkryonReconnectFailure(error.message)) Result.retry() else Result.success()
             }
 
-        if (!SkryonVpnConnectionIntent.shouldRetry(true, V2RayServiceManager.isRunning())) {
+        if (!SkryonVpnConnectionIntent.shouldRetry(applicationContext, true, V2RayServiceManager.isRunning())) {
             EmeryBackendClient.releaseVpnSession(confirmed.accessKey, connection.sessionId)
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == connection.sessionId) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
