@@ -55,6 +55,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import com.v2ray.ang.ui.premium.vpn.TvCrispText as Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -150,6 +151,7 @@ fun VpnMainScreen(
     val advancedFirstFocus = remember { FocusRequester() }
     val policyScope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(MainTab.Home) }
+    var autoStartOnBootEnabled by remember { mutableStateOf(MmkvManager.decodeStartOnBoot()) }
     var regionalPolicyMode by remember { mutableStateOf(RegionalPolicyManager.readMode()) }
     var regionalPolicyUpdating by remember { mutableStateOf(false) }
     var regionalPolicyError by remember { mutableStateOf("") }
@@ -430,6 +432,14 @@ fun VpnMainScreen(
                                 },
                             )
                         }
+                    },
+                    autoStartOnBootEnabled = autoStartOnBootEnabled,
+                    onAutoStartOnBootChange = { enabled ->
+                        autoStartOnBootEnabled = enabled
+                        MmkvManager.encodeStartOnBoot(enabled)
+                        // This setting concerns reboot only; it neither
+                        // starts a manually stopped VPN nor interrupts current
+                        // tunnel recovery on the same device boot.
                     },
                     connectionState = uiState.connectionState,
                     onActivationCodeSubmit = onActivationCodeSubmit,
@@ -838,19 +848,29 @@ private fun countryFlagEmoji(code: String): String {
 
 
 @Composable
-private fun AutoConnectCard(compact: Boolean, connectedIntent: Boolean) {
+private fun AutoConnectCard(
+    enabled: Boolean,
+    compact: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .clip(shape)
             .background(Color.White.copy(alpha = 0.94f))
-            .border(1.dp, AppUiColors.Border, RoundedCornerShape(if (compact) 18.dp else 22.dp))
-            .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 10.dp else 12.dp),
+            .border(1.dp, AppUiColors.Border, shape)
+            .tvRemoteHighlight(shape)
+            .clickable { onCheckedChange(!enabled) }
+            .padding(
+                horizontal = if (compact) 14.dp else 18.dp,
+                vertical = if (compact) 10.dp else 12.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Автовосстановление VPN",
+                text = "Автозапуск VPN",
                 style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
                 color = AppUiColors.TextPrimary,
                 fontWeight = FontWeight.Medium,
@@ -858,17 +878,20 @@ private fun AutoConnectCard(compact: Boolean, connectedIntent: Boolean) {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = if (connectedIntent) {
-                    "Всегда восстанавливаем VPN после обрывов. Остановить можно кнопкой «Выключить»"
+                text = if (enabled) {
+                    "После перезагрузки возобновлять ранее включённый VPN"
                 } else {
-                    "Нажмите «Включить VPN». После этого соединение будет восстанавливаться автоматически"
+                    "После перезагрузки VPN останется выключенным"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppUiColors.TextSecondary,
-                maxLines = 3,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.width(12.dp))
+        // The whole card is a single remote-focus target.
+        Switch(checked = enabled, onCheckedChange = null)
     }
 }
 
@@ -986,6 +1009,8 @@ private fun AdvancedPage(
     policyUpdateInProgress: Boolean,
     policyUpdateError: String,
     onRegionalPolicyConfirmed: (RegionalPolicyMode) -> Unit,
+    autoStartOnBootEnabled: Boolean,
+    onAutoStartOnBootChange: (Boolean) -> Unit,
     connectionState: VpnConnectionState,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     compact: Boolean,
@@ -1052,8 +1077,9 @@ private fun AdvancedPage(
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
         AutoConnectCard(
+            enabled = autoStartOnBootEnabled,
             compact = compact,
-            connectedIntent = SkryonVpnConnectionIntent.isArmed(),
+            onCheckedChange = onAutoStartOnBootChange,
         )
 
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
