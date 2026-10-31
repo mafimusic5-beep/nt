@@ -175,6 +175,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         serviceLivenessJob?.cancel()
         tunnelWatchdogJob?.cancel()
         bootRecoveryJob?.cancel()
+        SkryonVpnConnectionIntent.clearBootRecoveryActive()
         SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
         underlayChanges.close()
         sessionScope.cancel()
@@ -271,6 +272,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
      */
     private fun beginBackgroundBootRecovery() {
         if (bootRecoveryJob?.isActive == true) return
+        SkryonVpnConnectionIntent.markBootRecoveryActive()
         bootRecoveryJob = sessionScope.launch {
             val deadline = SystemClock.elapsedRealtime() + BOOT_RECOVERY_MAX_MS
             var attempts = 0
@@ -279,6 +281,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     attempts < BOOT_RECOVERY_MAX_ATTEMPTS &&
                     SystemClock.elapsedRealtime() < deadline
                 ) {
+                    SkryonVpnConnectionIntent.markBootRecoveryActive()
                     // isArmed() enforces the saved boot switch across reboot
                     // via BOOT_COUNT. Unlike a boot toggle, an ordinary
                     // START_STICKY restart in the SAME boot must recover even
@@ -326,6 +329,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     delay(if (retry) 15_000L else 10_000L)
                 }
             } finally {
+                SkryonVpnConnectionIntent.clearBootRecoveryActive()
                 if (isActive && !isRunning && !stopInProgress) {
                     withContext(Dispatchers.Main) {
                         if (!isRunning && !stopInProgress) stopAllService()
@@ -921,6 +925,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             tunnelWatchdogJob = null
             bootRecoveryJob?.cancel()
             bootRecoveryJob = null
+            SkryonVpnConnectionIntent.clearBootRecoveryActive()
             SkryonVpnConnectionIntent.clearVpnServiceHeartbeat()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {
