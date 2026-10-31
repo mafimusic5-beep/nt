@@ -575,7 +575,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             var failedChecks = 0
             while (isActive && isRunning && !stopInProgress) {
                 if (!SkryonVpnConnectionIntent.isArmed()) break
-                if (!hasUnderlyingInternetNetwork() ||
+                if (!hasValidatedPhysicalInternet() ||
                     SkryonVpnConnectionIntent.isUserConnectionStarting()
                 ) {
                     failedChecks = 0
@@ -594,14 +594,14 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     }.getOrDefault(false)
                 }
                 if (!isActive || !isRunning || stopInProgress) break
-                failedChecks = if (tunnelOk || !hasUnderlyingInternetNetwork()) {
+                failedChecks = if (tunnelOk || !hasValidatedPhysicalInternet()) {
                     0
                 } else {
                     failedChecks + 1
                 }
                 if (shouldRestartUnhealthyVpnTunnel(
                         userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
-                        physicalNetworkAvailable = hasUnderlyingInternetNetwork(),
+                        physicalNetworkAvailable = hasValidatedPhysicalInternet(),
                         connectionStarting = SkryonVpnConnectionIntent.isUserConnectionStarting(),
                         consecutiveFailedChecks = failedChecks,
                     )
@@ -727,6 +727,22 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // allow the signed heartbeat to decide whether transport works.
         true
     }
+
+    /**
+     * VPN watchdog must not restart a functioning daemon merely because a
+     * Wi-Fi AP is still connected but has no route to the Internet.
+     * Android's VALIDATED flag distinguishes physical connectivity from
+     * an underlay whose Internet access is currently known to be broken.
+     */
+    private fun hasValidatedPhysicalInternet(): Boolean = runCatching {
+        connectivity.allNetworks.any { network ->
+            connectivity.getNetworkCapabilities(network)?.let { caps ->
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            } == true
+        }
+    }.getOrDefault(false)
 
     private suspend fun reacquireExpiredSession(
         accessKey: String,
