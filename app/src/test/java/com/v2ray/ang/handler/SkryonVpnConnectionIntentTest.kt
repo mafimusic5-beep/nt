@@ -6,74 +6,45 @@ import org.junit.Test
 
 class SkryonVpnConnectionIntentTest {
     @Test
-    fun `user manually stopped VPN never auto reconnects after wifi returns`() {
+    fun `manual OFF always prevents reconnect`() {
         assertFalse(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = false,
-            networkAvailable = true, vpnAlreadyRunning = false,
+            userRequestedConnection = false, networkAvailable = true,
+            vpnAlreadyRunning = false,
         ))
+        assertFalse(isPremiumVpnServiceStartAllowed(userRequestedConnection = false))
     }
 
     @Test
-    fun `saved intent plus enabled auto connect reconnects when network returns`() {
+    fun `connection recovers after failure even if boot autostart is off`() {
         assertTrue(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = true,
-            networkAvailable = true, vpnAlreadyRunning = false,
+            userRequestedConnection = true, networkAvailable = true,
+            vpnAlreadyRunning = false,
         ))
+        assertTrue(isPremiumVpnServiceStartAllowed(userRequestedConnection = true))
     }
 
     @Test
-    fun `offline network cannot trigger a new VPN session`() {
+    fun `no network and already running VPN do not trigger another connection`() {
         assertFalse(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = true,
-            networkAvailable = false, vpnAlreadyRunning = false,
+            userRequestedConnection = true, networkAvailable = false,
+            vpnAlreadyRunning = false,
         ))
-    }
-
-    @Test
-    fun `already running VPN must not be restarted by network callback`() {
         assertFalse(shouldAutoReconnectVpn(
-            enabled = true, userRequestedConnection = true,
-            networkAvailable = true, vpnAlreadyRunning = true,
+            userRequestedConnection = true, networkAvailable = true,
+            vpnAlreadyRunning = true,
         ))
     }
 
     @Test
-    fun `system must not restart after a manual disconnect`() {
-        assertFalse(isPremiumVpnServiceStartAllowed(
-            userRequestedConnection = false,
-            autoConnectEnabled = true,
-            explicitUserStart = false,
-        ))
+    fun `old boot cannot resume last session before BootReceiver`() {
+        assertFalse(isArmedForBoot(true, requestedBootCount = 11, currentBootCount = 12))
+        assertTrue(isArmedForBoot(true, requestedBootCount = 12, currentBootCount = 12))
+        assertFalse(isArmedForBoot(false, requestedBootCount = 12, currentBootCount = 12))
     }
 
     @Test
-    fun `OS restart requires auto-connect setting enabled`() {
-        assertFalse(isPremiumVpnServiceStartAllowed(
-            userRequestedConnection = true,
-            autoConnectEnabled = false,
-            explicitUserStart = false,
-        ))
-        assertTrue(isPremiumVpnServiceStartAllowed(
-            userRequestedConnection = true,
-            autoConnectEnabled = true,
-            explicitUserStart = false,
-        ))
-    }
-
-    @Test
-    fun `manual connect works with auto-connect setting off`() {
-        assertTrue(isPremiumVpnServiceStartAllowed(
-            userRequestedConnection = true,
-            autoConnectEnabled = false,
-            explicitUserStart = true,
-        ))
-    }
-
-    @Test
-    fun `auto-connect disabled never restarts after reconnecting wifi`() {
-        assertFalse(shouldAutoReconnectVpn(
-            enabled = false, userRequestedConnection = true,
-            networkAvailable = true, vpnAlreadyRunning = false,
-        ))
+    fun `boot counter unavailable retains active intent for compatibility`() {
+        assertTrue(isArmedForBoot(true, requestedBootCount = null, currentBootCount = 12))
+        assertTrue(isArmedForBoot(true, requestedBootCount = 12, currentBootCount = null))
     }
 }
