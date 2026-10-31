@@ -25,18 +25,16 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        if (!MmkvManager.decodeStartOnBoot()) {
-            Log.i(AppConfig.TAG, "BootReceiver: Auto-start on boot is disabled")
-            return
-        }
-
         val applicationContext = context.applicationContext
         val premiumProfile = EmeryAccessManager.loadProfile()
-        // Preserve the explicit OFF action, including after a device reboot.
-        // For premium VPN, auto-start is only allowed after an explicit
-        // connection was armed by the user. Manual profiles keep old behavior.
-        if (premiumProfile != null && !SkryonVpnConnectionIntent.isArmed()) {
-            Log.i(AppConfig.TAG, "BootReceiver: User explicitly disconnected premium VPN")
+        if (!MmkvManager.decodeStartOnBoot()) {
+            Log.i(AppConfig.TAG, "BootReceiver: Auto-start on boot is disabled")
+            // Do not carry a session from the previous boot into this boot.
+            // This does NOT affect healing while a manual session is running.
+            if (premiumProfile != null) {
+                SkryonVpnConnectionIntent.markUserDisconnected()
+                SkryonVpnAutoConnectScheduler.cancel(applicationContext)
+            }
             return
         }
         if (premiumProfile == null) {
@@ -49,6 +47,8 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
+        // Autostart ON must start a new session after reboot without any UI.
+        SkryonVpnConnectionIntent.markBootAutoConnectRequested(applicationContext)
         // WorkManager waits for actual network availability. Directly
         // requesting a premium session here fails when Wi-Fi starts later
         // (especially common on Android TV after a reboot).
