@@ -148,6 +148,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // Android revoked our permission, therefore this is not a transient
         // internet outage and the app must not attempt to restart silently.
         SkryonVpnConnectionIntent.markUserDisconnected()
+        SkryonVpnAutoConnectScheduler.cancel(applicationContext)
         stopAllService()
     }
 
@@ -172,6 +173,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // clearing it here would let a late server-side release revoke a
         // newly reacquired session for the same device.
         if (SkryonVpnConnectionIntent.shouldRetry(
+                context = applicationContext,
                 networkAvailable = true,
                 vpnAlreadyRunning = false,
             )
@@ -186,14 +188,8 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
         if (EmeryAccessManager.loadProfile() != null) {
-            val explicitStart = intent?.getBooleanExtra(
-                SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT,
-                false,
-            ) == true
             if (!isPremiumVpnServiceStartAllowed(
-                    userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
-                    autoConnectEnabled = MmkvManager.decodeStartOnBoot(),
-                    explicitUserStart = explicitStart,
+                    userRequestedConnection = SkryonVpnConnectionIntent.isArmedForCurrentBoot(this),
                 )
             ) {
                 Log.i(AppConfig.TAG, "StartCore-VPN: Auto-start blocked by user settings")
