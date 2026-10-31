@@ -1,27 +1,34 @@
 package com.v2ray.ang.handler
 
+import android.content.Context
+import android.provider.Settings
+
 /**
  * Persistent USER intent, separate from Android's connection status.
  *
- * Turning on auto-connect is permission to retry an explicitly requested
- * connection, NOT permission to undo an explicit manual disconnect.
+ * Boot autostart is separate from recovery of a user-enabled VPN.
+ * A network failure is never the same as a manual disconnect.
  */
 internal fun shouldAutoReconnectVpn(
-    enabled: Boolean,
     userRequestedConnection: Boolean,
     networkAvailable: Boolean,
     vpnAlreadyRunning: Boolean,
-): Boolean = enabled && userRequestedConnection && networkAvailable && !vpnAlreadyRunning
+): Boolean = userRequestedConnection && networkAvailable && !vpnAlreadyRunning
 
 /**
- * Explicit start from the Connect button is distinct from an OS-triggered
- * restart. OS restart requires auto-connect to remain enabled.
+ * Android may try sticky or always-on restart before BOOT_COMPLETED is
+ * dispatched. Do not restore an armed session from an earlier boot.
  */
+internal fun isArmedForBoot(
+    userRequestedConnection: Boolean,
+    requestedBootCount: Int?,
+    currentBootCount: Int?,
+): Boolean = userRequestedConnection &&
+    (requestedBootCount == null || currentBootCount == null || requestedBootCount == currentBootCount)
+
 internal fun isPremiumVpnServiceStartAllowed(
     userRequestedConnection: Boolean,
-    autoConnectEnabled: Boolean,
-    explicitUserStart: Boolean,
-): Boolean = userRequestedConnection && (explicitUserStart || autoConnectEnabled)
+): Boolean = userRequestedConnection
 
 /** Protect a live VPN daemon from a worker running in another Android process. */
 internal fun isRecentSkryonServiceHeartbeat(lastSeenAt: Long, now: Long): Boolean =
@@ -31,10 +38,36 @@ internal object SkryonVpnConnectionIntent {
     const val EXTRA_EXPLICIT_VPN_CONNECT = "com.v2ray.ang.extra.EXPLICIT_VPN_CONNECT"
     private const val KEY_SERVICE_ALIVE_AT = "SKRYON_VPN_SERVICE_ALIVE_AT"
     private const val KEY_USER_REQUESTED_VPN = "SKRYON_USER_REQUESTED_VPN"
+    private const val KEY_REQUESTED_BOOT = "SKRYON_VPN_REQUESTED_BOOT_COUNT"
     private const val KEY_CONNECT_IN_PROGRESS_SINCE = "SKRYON_CONNECT_IN_PROGRESS_SINCE"
     private const val MANUAL_CONNECT_GRACE_MS = 60_000L
 
     fun isArmed(): Boolean = MmkvManager.decodeSettingsBool(KEY_USER_REQUESTED_VPN, false)
+
+    private fun bootCount(context: Context): Int? = runCatching {
+        Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT)
+    }.getOrNull()
+
+    fun isArmedForCurrentBoot(context: Context): Boolean =
+        isArmedForBoot(
+            userRequestedConnection = isArmed(),
+            requestedBootCount = MmkvManager.decodeSettingsString(KEY_REQUESTED_BOOT, "")?.toIntOrNull(),
+            currentBootCount = bootCount(context),
+        )
+
+    private fun arm(context: Context) {
+        MmkvManager.encodeSettings(KEY_USER_REQUESTED_VPN, true)
+        bootCount(context)?.let {
+            MmkvManager.encodeSettings(KEY_REQUESTED_BOOT, it.toString())
+        }
+    }
+
+    /** Boot and an explicit auto-start toggle can arm a background session. */
+    fun markBootAutoConnectRequested(context: Context) {
+        val wasArmed = isArmedForCurrentBoot(context)
+        arm(context)
+        if (!wasArmed) finishUserConnectionAttempt()
+    }
 
     fun markVpnServiceAlive() {
         MmkvManager.encodeSettings(KEY_SERVICE_ALIVE_AT, System.currentTimeMillis())
@@ -49,8 +82,8 @@ internal object SkryonVpnConnectionIntent {
         now = System.currentTimeMillis(),
     )
 
-    fun markUserConnected() {
-        MmkvManager.encodeSettings(KEY_USER_REQUESTED_VPN, true)
+    fun markUserConnected(context: Context) {
+        arm(context)
         MmkvManager.encodeSettings(KEY_CONNECT_IN_PROGRESS_SINCE, System.currentTimeMillis())
     }
 
@@ -84,13 +117,13 @@ internal object SkryonVpnConnectionIntent {
 
     fun markUserDisconnected() {
         MmkvManager.encodeSettings(KEY_USER_REQUESTED_VPN, false)
+        MmkvManager.encodeSettings(KEY_REQUESTED_BOOT, "")
         finishUserConnectionAttempt()
     }
 
-    fun shouldRetry(networkAvailable: Boolean, vpnAlreadyRunning: Boolean): Boolean =
+    fun shouldRetry(context: Context, networkAvailable: Boolean, vpnAlreadyRunning: Boolean): Boolean =
         shouldAutoReconnectVpn(
-            enabled = MmkvManager.decodeStartOnBoot(),
-            userRequestedConnection = isArmed(),
+            userRequestedConnection = isArmedForCurrentBoot(context),
             networkAvailable = networkAvailable,
             vpnAlreadyRunning = vpnAlreadyRunning,
         )
