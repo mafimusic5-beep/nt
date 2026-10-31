@@ -25,21 +25,21 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        if (!MmkvManager.decodeStartOnBoot()) {
-            Log.i(AppConfig.TAG, "BootReceiver: Auto-start on boot is disabled")
-            return
-        }
-
         val applicationContext = context.applicationContext
         val premiumProfile = EmeryAccessManager.loadProfile()
-        // Preserve the explicit OFF action, including after a device reboot.
-        // For premium VPN, auto-start is only allowed after an explicit
-        // connection was armed by the user. Manual profiles keep old behavior.
+        // A premium subscription explicitly requested CONNECTED is kept alive
+        // across Wi-Fi loss, process death, device sleep and reboot. Its one
+        // durable OFF decision is the user's Disconnect button. Legacy/manual
+        // V2Ray profiles retain the historical boot preference.
         if (premiumProfile != null && !SkryonVpnConnectionIntent.isArmed()) {
             Log.i(AppConfig.TAG, "BootReceiver: User explicitly disconnected premium VPN")
             return
         }
         if (premiumProfile == null) {
+            if (!MmkvManager.decodeStartOnBoot()) {
+                Log.i(AppConfig.TAG, "BootReceiver: Legacy start on boot disabled")
+                return
+            }
             if (MmkvManager.getSelectServer().isNullOrEmpty()) {
                 Log.w(AppConfig.TAG, "BootReceiver: No server selected")
                 return
