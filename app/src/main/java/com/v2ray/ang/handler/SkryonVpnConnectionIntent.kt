@@ -65,6 +65,7 @@ internal fun isRecentSkryonServiceHeartbeat(lastSeenAt: Long, now: Long): Boolea
 internal object SkryonVpnConnectionIntent {
     const val EXTRA_EXPLICIT_VPN_CONNECT = "com.v2ray.ang.extra.EXPLICIT_VPN_CONNECT"
     private const val KEY_SERVICE_ALIVE_AT = "SKRYON_VPN_SERVICE_ALIVE_AT"
+    private const val KEY_BOOT_RECOVERY_ALIVE_AT = "SKRYON_BOOT_VPN_RECOVERY_ALIVE_AT"
     private const val KEY_USER_REQUESTED_VPN = "SKRYON_USER_REQUESTED_VPN"
     private const val KEY_ARMED_BOOT_COUNT = "SKRYON_VPN_ARMED_BOOT_COUNT"
     private const val KEY_CONNECT_IN_PROGRESS_SINCE = "SKRYON_CONNECT_IN_PROGRESS_SINCE"
@@ -100,6 +101,24 @@ internal object SkryonVpnConnectionIntent {
         }
         return true
     }
+
+    /**
+     * The boot-started VpnService owns the signed recovery until its daemon
+     * starts or it stops. WorkManager runs in a different Android process and
+     * must not concurrently release / replace this pending boot lease.
+     */
+    fun markBootRecoveryActive() {
+        MmkvManager.encodeSettings(KEY_BOOT_RECOVERY_ALIVE_AT, System.currentTimeMillis())
+    }
+
+    fun clearBootRecoveryActive() {
+        MmkvManager.encodeSettings(KEY_BOOT_RECOVERY_ALIVE_AT, 0L)
+    }
+
+    fun isBootRecoveryActive(): Boolean =
+        MmkvManager.decodeSettingsLong(KEY_BOOT_RECOVERY_ALIVE_AT, 0L).let {
+            it > 0L && System.currentTimeMillis() - it in 0..180_000L
+        }
 
     fun markVpnServiceAlive() {
         MmkvManager.encodeSettings(KEY_SERVICE_ALIVE_AT, System.currentTimeMillis())
