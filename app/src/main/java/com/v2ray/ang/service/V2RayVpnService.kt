@@ -191,6 +191,12 @@ class V2RayVpnService : VpnService(), ServiceControl {
             // Only the signed backend acquire flow in AutoConnectWorker may
             // launch a background premium session.
             if (intent?.hasExtra(SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT) != true) {
+                // A duplicate OS callback must never tear down an already-live
+                // tunnel. Its running lease is maintained by the heartbeat job.
+                if (isRunning) {
+                    Log.i(AppConfig.TAG, "StartCore-VPN: ignoring duplicate OS start on live tunnel")
+                    return START_STICKY
+                }
                 if (SkryonVpnConnectionIntent.shouldRetry(
                         networkAvailable = true,
                         vpnAlreadyRunning = false,
