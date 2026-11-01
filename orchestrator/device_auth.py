@@ -20,6 +20,9 @@ from storage import format_code, now_iso, parse_iso
 MAX_CLOCK_SKEW_SECONDS = 300
 NONCE_RETENTION_SECONDS = 24 * 60 * 60
 VPN_SESSION_TTL_SECONDS = 90
+VPN_ACQUIRE_WINDOW_SECONDS = 5 * 60
+VPN_ACQUIRE_LIMIT_PER_DEVICE = 30
+VPN_ACQUIRE_LIMIT_PER_CODE = 120
 SUPPORTED_SIGNATURE_ALGORITHM = 'SHA256withECDSA'
 DEFAULT_DEVICE_NAME = 'Android-устройство'
 
@@ -136,6 +139,23 @@ def ensure_device_auth_storage() -> None:
             ON code_devices(pool_assignment_id)
             WHERE pool_assignment_id IS NOT NULL
             '''
+        )
+        # Durable throttling of *authenticated* VPN acquires. An altered APK
+        # cannot bypass this limit by skipping client-side WorkManager backoff.
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vpn_session_acquire_windows (
+                code TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                window_started_epoch INTEGER NOT NULL,
+                attempts INTEGER NOT NULL,
+                PRIMARY KEY (code, device_id)
+            )
+            """
+        )
+        con.execute(
+            'DELETE FROM vpn_session_acquire_windows WHERE window_started_epoch < ?',
+            (int(time.time()) - 24 * 60 * 60,),
         )
         con.execute(
             '''
@@ -801,6 +821,49 @@ def authenticate_registered_device(
         con.close()
 
 
+def _consume_vpn_acquire_budget(
+    con: sqlite3.Connection,
+    *,
+    code: str,
+    device_id: str,
+    limit: int,
+    now_epoch: int,
+) -> None:
+    # Caller holds BEGIN IMMEDIATE. Both per-device and per-code budgets are
+    # updated in the same transaction as the session lease, so two simultaneous
+    # connection attempts cannot race around the quota.
+    row = con.execute(
+        '''
+        SELECT window_started_epoch, attempts
+        FROM vpn_session_acquire_windows
+        WHERE code = ? AND device_id = ?
+        ''',
+        (code, device_id),
+    ).fetchone()
+    if row and now_epoch - int(row['window_started_epoch']) < VPN_ACQUIRE_WINDOW_SECONDS:
+        if int(row['attempts']) >= limit:
+            raise DeviceAuthError('vpn_session_acquire_rate_limited', 429)
+        con.execute(
+            '''
+            UPDATE vpn_session_acquire_windows
+            SET attempts = attempts + 1
+            WHERE code = ? AND device_id = ?
+            ''',
+            (code, device_id),
+        )
+    else:
+        con.execute(
+            '''
+            INSERT INTO vpn_session_acquire_windows
+                (code, device_id, window_started_epoch, attempts)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(code, device_id) DO UPDATE
+            SET window_started_epoch = excluded.window_started_epoch, attempts = 1
+            ''',
+            (code, device_id, now_epoch),
+        )
+
+
 def acquire_vpn_session(raw_code: str, device_id: str) -> Dict[str, Any]:
     safe_device_id = device_id.strip()[:128]
     con = _connect()
@@ -824,6 +887,16 @@ def acquire_vpn_session(raw_code: str, device_id: str) -> Dict[str, Any]:
             raise DeviceAuthError('device_not_registered', 403)
 
         now_epoch = int(time.time())
+        _consume_vpn_acquire_budget(
+            con, code=code, device_id=safe_device_id,
+            limit=VPN_ACQUIRE_LIMIT_PER_DEVICE, now_epoch=now_epoch,
+        )
+        # Use a reserved marker for a code-wide limit, preventing bypass by
+        # registering many different device IDs using one stolen access code.
+        _consume_vpn_acquire_budget(
+            con, code=code, device_id='*',
+            limit=VPN_ACQUIRE_LIMIT_PER_CODE, now_epoch=now_epoch,
+        )
         stale_assignments = [
             {
                 'device_id': str(row['device_id']),
@@ -892,7 +965,10 @@ def acquire_vpn_session(raw_code: str, device_id: str) -> Dict[str, Any]:
             'stale_assignments': stale_assignments,
         }
     except DeviceAuthError as error:
-        if error.reason == 'expired':
+        if error.reason in {'expired', 'concurrent_limit_reached'}:
+            # Count authenticated acquires that fail due to an occupied slot.
+            # Otherwise a client could flood this endpoint without spending
+            # its retry budget. A quota rejection leaves counts unchanged.
             con.commit()
         else:
             con.rollback()
