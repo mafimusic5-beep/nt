@@ -30,7 +30,10 @@ class AngApplication : Application() {
     }
 
     private val workManagerConfiguration: Configuration = Configuration.Builder()
-        .setDefaultProcessName("${ANG_PACKAGE}:bg")
+        // WorkManager must schedule in the real default app process. There is
+        // no :bg component in the manifest; selecting it prevents boot recovery
+        // jobs from being scheduled by the process that receives BOOT_COMPLETED.
+        .setDefaultProcessName(ANG_PACKAGE)
         .build()
 
     /**
