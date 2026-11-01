@@ -40,6 +40,7 @@ class SkryonVpnAutoReconnectPolicyTest {
             "pool_backend_unreachable", "assignment_install_in_progress",
             "assignment_maintenance_in_progress", "assignment_state_changed_retry",
             "credential_install_failed", "http_502", "http_503",
+            "http_408", "http_429", "vpn_session_acquire_rate_limited",
         )) {
             assertTrue(error, isRetryableSkryonReconnectFailure(error))
         }
@@ -50,6 +51,7 @@ class SkryonVpnAutoReconnectPolicyTest {
         for (error in listOf(
             "expired", "banned", "blocked", "invalid_or_expired_key",
             "device_not_registered", "device_mismatch", "http_401", "http_403",
+            "device_inventory_invalid", "device_inventory_unavailable",
             null,
         )) {
             assertFalse(error, isRetryableSkryonReconnectFailure(error))
