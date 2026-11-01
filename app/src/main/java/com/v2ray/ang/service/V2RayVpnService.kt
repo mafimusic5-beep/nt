@@ -183,6 +183,17 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(AppConfig.TAG, "StartCore-VPN: Service command received")
+        // Never start a cached signed Skryon pool config in legacy/manual mode
+        // after the registered-device identity has been cleared or revoked.
+        val selectedGuid = MmkvManager.getSelectServer()
+        if (selectedGuid != null &&
+            selectedGuid in MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID) &&
+            EmeryAccessManager.loadProfile() == null
+        ) {
+            Log.w(AppConfig.TAG, "StartCore-VPN: Cached Skryon pool lacks registered device")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
         if (EmeryAccessManager.loadProfile() != null) {
