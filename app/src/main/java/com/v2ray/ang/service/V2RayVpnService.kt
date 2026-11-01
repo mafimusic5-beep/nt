@@ -186,6 +186,23 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
         if (EmeryAccessManager.loadProfile() != null) {
+            // Android Always-on / OS restarts do not carry the internal start
+            // marker. Do not boot a saved premium tunnel with an expired lease.
+            // Only the signed backend acquire flow in AutoConnectWorker may
+            // launch a background premium session.
+            if (intent?.hasExtra(SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT) != true) {
+                if (SkryonVpnConnectionIntent.shouldRetry(
+                        networkAvailable = true,
+                        vpnAlreadyRunning = false,
+                    )
+                ) {
+                    SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
+                    SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
+                }
+                Log.i(AppConfig.TAG, "StartCore-VPN: OS start delegated to authenticated recovery")
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
             val explicitStart = intent?.getBooleanExtra(
                 SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT,
                 false,
