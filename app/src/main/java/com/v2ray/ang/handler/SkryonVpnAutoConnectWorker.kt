@@ -48,6 +48,7 @@ internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
         "http_408",
         "http_425",
         "http_429",
+        "vpn_session_acquire_rate_limited",
         "server_capacity_unavailable",
         "pool_backend_unreachable",
         "credential_install_failed",
