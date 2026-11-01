@@ -40,8 +40,16 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
         if (premiumProfile == null) {
-            if (MmkvManager.getSelectServer().isNullOrEmpty()) {
+            val selectedGuid = MmkvManager.getSelectServer()
+            if (selectedGuid.isNullOrEmpty()) {
                 Log.w(AppConfig.TAG, "BootReceiver: No server selected")
+                return
+            }
+            // A cached premium VLESS profile must not be treated as a free
+            // manual configuration when its registered-device profile is gone.
+            // All Skryon pool starts require a newly signed backend lease.
+            if (selectedGuid in MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)) {
+                Log.w(AppConfig.TAG, "BootReceiver: Refusing unauthenticated cached Skryon pool profile")
                 return
             }
             Log.i(AppConfig.TAG, "BootReceiver: Starting saved non-premium V2Ray profile")
