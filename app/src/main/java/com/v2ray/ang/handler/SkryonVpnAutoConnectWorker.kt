@@ -43,6 +43,11 @@ internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
     return code in setOf(
         "network",
         "timeout",
+        "temporarily_unavailable",
+        "server_list_unavailable",
+        "http_408",
+        "http_425",
+        "http_429",
         "server_capacity_unavailable",
         "pool_backend_unreachable",
         "credential_install_failed",
@@ -148,7 +153,11 @@ internal class SkryonVpnAutoConnectWorker(
 
         // Never prompt for VPN consent from a background worker, and never
         // attempt to replace another running VPN app.
-        if (VpnService.prepare(applicationContext) != null) return Result.success()
+        if (VpnService.prepare(applicationContext) != null) {
+            // Android consent or a different VPN owner must not be bypassed.
+            Log.w(AppConfig.TAG, "AutoConnect: Android VPN permission is not available")
+            return Result.success()
+        }
 
         // The service core lives in another process. Android may hide the
         // disallowed VPN app's own network from ConnectivityManager; its
@@ -161,7 +170,10 @@ internal class SkryonVpnAutoConnectWorker(
             return Result.success()
         }
 
-        val profile = EmeryAccessManager.loadProfile() ?: return Result.success()
+        val profile = EmeryAccessManager.loadProfile() ?: run {
+            Log.w(AppConfig.TAG, "AutoConnect: no registered Skryon device profile")
+            return Result.success()
+        }
         val session = MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "")
             ?.trim().orEmpty()
         if (shouldRecoverStaleVpnLease(
@@ -177,6 +189,7 @@ internal class SkryonVpnAutoConnectWorker(
             val released = EmeryBackendClient.releaseVpnSession(profile.accessKey, session)
             val reason = released.exceptionOrNull()?.message.orEmpty()
             if (released.isFailure && reason !in setOf("vpn_session_mismatch", "vpn_session_expired")) {
+                Log.w(AppConfig.TAG, "AutoConnect: old session release refused (${reason.ifBlank { "unknown" }})")
                 return if (isRetryableSkryonReconnectFailure(reason)) Result.retry() else Result.success()
             }
             if (SkryonVpnConnectionIntent.isUserConnectionStarting()) return Result.retry()
@@ -208,6 +221,10 @@ internal class SkryonVpnAutoConnectWorker(
             return if (isRetryableSkryonReconnectFailure(error.message)) Result.retry() else Result.success()
         }
         if (!SkryonVpnConnectionIntent.shouldRetry(true, V2RayServiceManager.isRunning())) {
+            return Result.success()
+        }
+        if (!confirmed.vpnEnabled) {
+            Log.w(AppConfig.TAG, "AutoConnect: VPN access disabled for registered device")
             return Result.success()
         }
 
@@ -243,6 +260,7 @@ internal class SkryonVpnAutoConnectWorker(
         // active; EmeryVpnSync has already selected the desired profile.
         val started = V2RayServiceManager.startVService(applicationContext)
         if (!started) {
+            Log.w(AppConfig.TAG, "AutoConnect: Android VPN service start declined")
             EmeryBackendClient.releaseVpnSession(confirmed.accessKey, connection.sessionId)
             if (MmkvManager.decodeSettingsString(SKRYON_VPN_SESSION_ID_PREF, "") == connection.sessionId) {
                 MmkvManager.encodeSettings(SKRYON_VPN_SESSION_ID_PREF, "")
@@ -250,6 +268,7 @@ internal class SkryonVpnAutoConnectWorker(
             return Result.retry()
         }
         startRequested = true
+        Log.i(AppConfig.TAG, "AutoConnect: authenticated session acquired and VPN service requested")
         return Result.success()
         } finally {
             if (!startRequested) {
