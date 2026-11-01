@@ -369,6 +369,14 @@ def test_code_wide_acquire_budget_cannot_be_reset_by_registering_new_device(
         platform="android",
         app_version="718",
     )
+    # Free the single concurrent VPN slot without requesting a new lease.
+    # This isolates the code-wide anti-abuse budget from the tariff limit.
+    with sqlite3.connect(registered_assignment["database_path"]) as connection:
+        connection.execute(
+            "UPDATE code_devices SET vpn_session_expires_at_epoch = ? WHERE device_id = ?",
+            (int(time.time()) - 1, registered_assignment["device_id"]),
+        )
+        connection.commit()
     # The fixture consumed one code-wide slot; a different registered device
     # consumes the second. Further acquires must be rejected for both.
     device_auth.acquire_vpn_session(code, second_device)
