@@ -10,10 +10,20 @@ enum class VpnConnectionState {
     Connected,
 }
 
+enum class VpnRegionAvailability {
+    /** A fresh response from the server says this region can accept assignments. */
+    AVAILABLE,
+    /** A fresh response from the server says no node can accept assignments. */
+    UNAVAILABLE,
+    /** Cached name, failed refresh, or no authoritative status yet. */
+    CHECKING,
+}
+
 data class VpnLocationOption(
     val id: String,
     val title: String,
     val importText: String = "",
+    val availability: VpnRegionAvailability = VpnRegionAvailability.CHECKING,
 ) {
     private fun sourceLocationLabel(): String {
         if (importText.isNotBlank() && '#' in importText) {
@@ -266,6 +276,7 @@ data class VpnMainUiState(
     val elapsedSeconds: Long = 0L,
     val locationsLoading: Boolean = false,
     val locationsError: String = "",
+    val regionsLastUpdatedAtMillis: Long = 0L,
 ) {
     val formattedDuration: String
         get() {
@@ -291,9 +302,16 @@ data class VpnMainUiState(
 
     val connectButtonEnabled: Boolean
         get() = when (connectionState) {
-            VpnConnectionState.Disconnected -> activationKey.isNotBlank() && (
-                selectedLocation.id.toLongOrNull() != null || selectedLocation.importText.isNotBlank()
-            )
+            VpnConnectionState.Disconnected -> activationKey.isNotBlank() &&
+                if (randomRegion) {
+                    locations.any {
+                        it.id.toLongOrNull() != null &&
+                            it.availability == VpnRegionAvailability.AVAILABLE
+                    }
+                } else {
+                    selectedLocation.id.toLongOrNull() != null &&
+                        selectedLocation.availability == VpnRegionAvailability.AVAILABLE
+                }
             VpnConnectionState.Connecting -> false
             VpnConnectionState.Connected -> true
         }
@@ -312,9 +330,9 @@ object VpnDemoData {
     )
 
     val locations: List<VpnLocationOption> = listOf(
-        VpnLocationOption(id = "1", title = "Singapore"),
-        VpnLocationOption(id = "2", title = "Amsterdam"),
-        VpnLocationOption(id = "3", title = "Frankfurt"),
+        VpnLocationOption(id = "1", title = "Singapore", availability = VpnRegionAvailability.AVAILABLE),
+        VpnLocationOption(id = "2", title = "Amsterdam", availability = VpnRegionAvailability.AVAILABLE),
+        VpnLocationOption(id = "3", title = "Frankfurt", availability = VpnRegionAvailability.AVAILABLE),
     )
 
     fun disconnectedState(): VpnMainUiState = VpnMainUiState(
