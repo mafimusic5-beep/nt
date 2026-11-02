@@ -45,6 +45,16 @@ object EmeryBackendClient {
         .retryOnConnectionFailure(true)
         .build()
 
+    // Region directory requests are deliberately cheap and bounded: a
+    // slow backend must never freeze the picker for the global API timeout.
+    // This client is only used for the public, idempotent region GET.
+    private val regionsClient = client.newBuilder()
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
+        .callTimeout(3, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .build()
+
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
     private fun authorizedGet(
@@ -262,7 +272,7 @@ object EmeryBackendClient {
             .get()
             .build()
         try {
-            client.newCall(request).execute().use { response ->
+            regionsClient.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (!response.isSuccessful) return@withContext Result.failure(IllegalStateException("http_${response.code}"))
                 val parsed = JsonUtil.fromJson(raw, Array<VpnServerItemApiResponseBody>::class.java)?.toList()
@@ -272,7 +282,8 @@ object EmeryBackendClient {
                         id = it.id,
                         city = it.city?.ifBlank { "Unknown" } ?: "Unknown",
                         healthStatus = it.healthStatus ?: "unknown",
-                        isAvailable = it.isAvailable != false,
+                        // Missing server-side availability is UNKNOWN, never a permit.
+                        isAvailable = it.isAvailable == true,
                         activeConnections = it.activeConnections,
                         connectionsLimit = it.connectionsLimit,
                     )
