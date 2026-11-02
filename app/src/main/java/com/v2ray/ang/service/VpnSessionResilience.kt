@@ -28,6 +28,21 @@ internal fun vpnHeartbeatAction(reason: String?): VpnHeartbeatAction {
     }
 }
 
+/**
+ * Avoid polling floods from overlapping Android network callbacks, but never
+ * delay the first signed heartbeat after a confirmed physical-network outage.
+ * No additional clock-based grace period is applied when connectivity returns.
+ */
+internal fun vpnHeartbeatGapDelayMs(
+    lastHeartbeatAtMs: Long,
+    nowElapsedMs: Long,
+    minimumGapMs: Long,
+    resumedAfterOffline: Boolean,
+): Long {
+    if (resumedAfterOffline || lastHeartbeatAtMs <= 0L) return 0L
+    return (minimumGapMs - (nowElapsedMs - lastHeartbeatAtMs)).coerceIn(0L, minimumGapMs)
+}
+
 /** Compare a recovered lease's server profile with the running tunnel without persisting credentials. */
 internal fun vpnImportFingerprint(preparedImportText: String): String =
     MessageDigest.getInstance("SHA-256")
