@@ -32,16 +32,24 @@ class BootReceiver : BroadcastReceiver() {
 
         val applicationContext = context.applicationContext
         val premiumProfile = EmeryAccessManager.loadProfile()
-        // Preserve the explicit OFF action, including after a device reboot.
-        // For premium VPN, auto-start is only allowed after an explicit
-        // connection was armed by the user. Manual profiles keep old behavior.
+        // Restore a previously requested VPN after reboot, but never override
+        // an explicit user disconnect. Enabling the boot toggle alone does not
+        // silently reconnect a VPN the user intentionally turned off.
         if (premiumProfile != null && !SkryonVpnConnectionIntent.isArmed()) {
             Log.i(AppConfig.TAG, "BootReceiver: User explicitly disconnected premium VPN")
             return
         }
         if (premiumProfile == null) {
-            if (MmkvManager.getSelectServer().isNullOrEmpty()) {
+            val selectedGuid = MmkvManager.getSelectServer()
+            if (selectedGuid.isNullOrEmpty()) {
                 Log.w(AppConfig.TAG, "BootReceiver: No server selected")
+                return
+            }
+            // A cached premium VLESS profile must not be treated as a free
+            // manual configuration when its registered-device profile is gone.
+            // All Skryon pool starts require a newly signed backend lease.
+            if (selectedGuid in MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID)) {
+                Log.w(AppConfig.TAG, "BootReceiver: Refusing unauthenticated cached Skryon pool profile")
                 return
             }
             Log.i(AppConfig.TAG, "BootReceiver: Starting saved non-premium V2Ray profile")

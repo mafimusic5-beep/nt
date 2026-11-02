@@ -441,8 +441,9 @@ fun VpnMainScreen(
                         autoConnectEnabled = enabled
                         MmkvManager.encodeStartOnBoot(enabled)
                         if (enabled) {
-                            // Manual OFF remains authoritative: enabling the
-                            // toggle does not secretly re-arm a stopped VPN.
+                            // The user explicitly enabled auto-start: persist
+                            // permission to restore VPN after the next boot.
+                            SkryonVpnConnectionIntent.armForAutoStart()
                             SkryonVpnAutoConnectScheduler.ensureScheduled(context)
                             // If the user already requested an active VPN, restore
                             // it promptly when this toggle is re-enabled.

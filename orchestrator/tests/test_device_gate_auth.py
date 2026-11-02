@@ -308,3 +308,95 @@ def test_internal_authorize_endpoint_requires_separate_gate_key(monkeypatch):
     response = api.device_gate_authorize(payload, request)
 
     assert response.status_code == 403
+
+def test_boot_reacquires_expired_lease_instead_of_reusing_old_session(registered_assignment):
+    with sqlite3.connect(registered_assignment["database_path"]) as connection:
+        previous = connection.execute(
+            "SELECT vpn_session_id FROM code_devices WHERE device_id = ?",
+            (registered_assignment["device_id"],),
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE code_devices SET vpn_session_expires_at_epoch = ? WHERE device_id = ?",
+            (int(time.time()) - 1, registered_assignment["device_id"]),
+        )
+        connection.commit()
+
+    recovered = device_auth.acquire_vpn_session(
+        registered_assignment["code"], registered_assignment["device_id"],
+    )
+    assert recovered["session_id"] != previous
+    assert recovered["expires_at_epoch"] > int(time.time())
+
+
+def test_authenticated_acquire_is_rate_limited_without_revoking_active_lease(
+    registered_assignment, monkeypatch,
+):
+    monkeypatch.setattr(device_auth, "VPN_ACQUIRE_LIMIT_PER_DEVICE", 2)
+    code = registered_assignment["code"]
+    device = registered_assignment["device_id"]
+    # The fixture already acquired the first session for this installation.
+    second = device_auth.acquire_vpn_session(code, device)
+    with pytest.raises(device_auth.DeviceAuthError) as error:
+        device_auth.acquire_vpn_session(code, device)
+
+    assert error.value.reason == "vpn_session_acquire_rate_limited"
+    assert error.value.status_code == 429
+    assert device_auth.heartbeat_vpn_session(code, device, second["session_id"])["ok"]
+
+
+def test_code_wide_acquire_budget_cannot_be_reset_by_registering_new_device(
+    registered_assignment, monkeypatch,
+):
+    monkeypatch.setattr(device_auth, "VPN_ACQUIRE_LIMIT_PER_CODE", 2)
+    code = registered_assignment["code"]
+    second_device = "other-registered-device"
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    timestamp = str(int(time.time() * 1000))
+    nonce = uuid.uuid4().hex
+    device_auth.register_device(
+        raw_code=code,
+        path="/api/activate",
+        device_id=second_device,
+        device_name="Test Android",
+        public_key_base64=_public_key_base64(private_key),
+        timestamp=timestamp,
+        nonce=nonce,
+        signature_base64=_sign(
+            private_key,
+            _activation_canonical(code, second_device, timestamp, nonce),
+        ),
+        signature_algorithm="SHA256withECDSA",
+        platform="android",
+        app_version="718",
+    )
+    # Free the single concurrent VPN slot without requesting a new lease.
+    # This isolates the code-wide anti-abuse budget from the tariff limit.
+    with sqlite3.connect(registered_assignment["database_path"]) as connection:
+        connection.execute(
+            "UPDATE code_devices SET vpn_session_expires_at_epoch = ? WHERE device_id = ?",
+            (int(time.time()) - 1, registered_assignment["device_id"]),
+        )
+        connection.commit()
+    # The fixture consumed one code-wide slot; a different registered device
+    # consumes the second. Further acquires must be rejected for both.
+    device_auth.acquire_vpn_session(code, second_device)
+    with pytest.raises(device_auth.DeviceAuthError) as error:
+        device_auth.acquire_vpn_session(code, registered_assignment["device_id"])
+
+    assert error.value.reason == "vpn_session_acquire_rate_limited"
+    assert error.value.status_code == 429
+
+
+def test_revoked_device_cannot_acquire_after_reboot(registered_assignment):
+    with sqlite3.connect(registered_assignment["database_path"]) as connection:
+        connection.execute(
+            "UPDATE code_devices SET active = 0 WHERE device_id = ?",
+            (registered_assignment["device_id"],),
+        )
+        connection.commit()
+
+    with pytest.raises(device_auth.DeviceAuthError) as error:
+        device_auth.acquire_vpn_session(
+            registered_assignment["code"], registered_assignment["device_id"],
+        )
+    assert error.value.reason == "device_not_registered"

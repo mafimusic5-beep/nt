@@ -117,6 +117,11 @@ object EmeryBackendClient {
             client.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (response.code == 404 || response.code == 405) {
+                    // Background boot recovery must never downgrade a strict
+                    // signed device-inventory check to legacy key-only auth.
+                    if (requireDeviceInventory) {
+                        return@withContext Result.failure(IllegalStateException("device_inventory_unavailable"))
+                    }
                     return@withContext EmeryAuthClient.verifyAccessKey(key)
                 }
                 if (response.code == 401 || response.code == 403) {
@@ -133,13 +138,17 @@ object EmeryBackendClient {
                     return@withContext Result.failure(IllegalStateException("http_${response.code}"))
                 }
                 val parsed = JsonUtil.fromJson(raw, ProfileApiResponseBody::class.java)
-                    ?: return@withContext EmeryAuthClient.verifyAccessKey(key)
+                    ?: return@withContext if (requireDeviceInventory) {
+                        Result.failure(IllegalStateException("device_inventory_invalid"))
+                    } else {
+                        EmeryAuthClient.verifyAccessKey(key)
+                    }
                 val expires = parsed.expiresAt.orEmpty()
                 val local = EmeryAccessManager.loadProfile()
                 val currentDeviceId = EmeryDeviceIdentity.deviceId()
                 val serverDeviceId = parsed.deviceId?.trim().orEmpty()
                 if (requireDeviceInventory && serverDeviceId.isBlank()) {
-                    return@withContext EmeryAuthClient.verifyAccessKey(key)
+                    return@withContext Result.failure(IllegalStateException("device_inventory_invalid"))
                 }
                 if (serverDeviceId.isNotBlank() && serverDeviceId != currentDeviceId) {
                     return@withContext Result.failure(IllegalStateException("device_mismatch"))
@@ -149,7 +158,9 @@ object EmeryBackendClient {
                 val serverDevices = parsed.devices.orEmpty().mapNotNull { it.toDeviceRecord(currentDeviceId) }
                 val devices = when {
                     serverDevices.isNotEmpty() -> serverDevices
-                    requireDeviceInventory -> return@withContext EmeryAuthClient.verifyAccessKey(key)
+                    requireDeviceInventory -> return@withContext Result.failure(
+                        IllegalStateException("device_inventory_invalid")
+                    )
                     else -> local?.devices.orEmpty()
                 }
 
@@ -194,7 +205,11 @@ object EmeryBackendClient {
                 )
             }
         } catch (_: IOException) {
-            EmeryAuthClient.verifyAccessKey(key)
+            if (requireDeviceInventory) {
+                Result.failure(IllegalStateException("network"))
+            } else {
+                EmeryAuthClient.verifyAccessKey(key)
+            }
         }
     }
 

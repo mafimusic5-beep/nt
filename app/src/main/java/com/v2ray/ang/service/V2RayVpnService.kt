@@ -183,9 +183,43 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(AppConfig.TAG, "StartCore-VPN: Service command received")
+        // Never start a cached signed Skryon pool config in legacy/manual mode
+        // after the registered-device identity has been cleared or revoked.
+        val selectedGuid = MmkvManager.getSelectServer()
+        if (selectedGuid != null &&
+            selectedGuid in MmkvManager.decodeServerList(AppConfig.EMERY_BACKEND_SUBSCRIPTION_ID) &&
+            EmeryAccessManager.loadProfile() == null
+        ) {
+            Log.w(AppConfig.TAG, "StartCore-VPN: Cached Skryon pool lacks registered device")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
         if (EmeryAccessManager.loadProfile() != null) {
+            // Android Always-on / OS restarts do not carry the internal start
+            // marker. Do not boot a saved premium tunnel with an expired lease.
+            // Only the signed backend acquire flow in AutoConnectWorker may
+            // launch a background premium session.
+            if (intent?.hasExtra(SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT) != true) {
+                // A duplicate OS callback must never tear down an already-live
+                // tunnel. Its running lease is maintained by the heartbeat job.
+                if (isRunning) {
+                    Log.i(AppConfig.TAG, "StartCore-VPN: ignoring duplicate OS start on live tunnel")
+                    return START_STICKY
+                }
+                if (SkryonVpnConnectionIntent.shouldRetry(
+                        networkAvailable = true,
+                        vpnAlreadyRunning = false,
+                    )
+                ) {
+                    SkryonVpnAutoConnectScheduler.ensureScheduled(applicationContext)
+                    SkryonVpnAutoConnectScheduler.requestOnce(applicationContext)
+                }
+                Log.i(AppConfig.TAG, "StartCore-VPN: OS start delegated to authenticated recovery")
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
             val explicitStart = intent?.getBooleanExtra(
                 SkryonVpnConnectionIntent.EXTRA_EXPLICIT_VPN_CONNECT,
                 false,

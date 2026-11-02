@@ -49,6 +49,11 @@ internal object SkryonVpnConnectionIntent {
         now = System.currentTimeMillis(),
     )
 
+    /** Enabling auto-start explicitly opts in to future boot recovery. */
+    fun armForAutoStart() {
+        MmkvManager.encodeSettings(KEY_USER_REQUESTED_VPN, true)
+    }
+
     fun markUserConnected() {
         MmkvManager.encodeSettings(KEY_USER_REQUESTED_VPN, true)
         MmkvManager.encodeSettings(KEY_CONNECT_IN_PROGRESS_SINCE, System.currentTimeMillis())
