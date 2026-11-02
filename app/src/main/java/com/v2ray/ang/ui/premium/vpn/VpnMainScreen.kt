@@ -145,6 +145,7 @@ fun VpnMainRoute(
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
         onAutoReconnectClick = viewModel::onAutoReconnectClick,
         onRegionRefresh = viewModel::refreshLocations,
+        onNetworkLost = viewModel::markRegionsUnverifiedAfterNetworkLoss,
         onActivationCodeSubmit = viewModel::activateReplacementCode,
         checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
@@ -161,6 +162,7 @@ fun VpnMainScreen(
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     onAutoReconnectClick: () -> Unit = onConnectClick,
     onRegionRefresh: () -> Unit = {},
+    onNetworkLost: () -> Unit = {},
     checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
         PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
     },
@@ -230,7 +232,7 @@ fun VpnMainScreen(
     // Physical connectivity transitions should update the directory promptly
     // instead of waiting for the next 15s poll.
     LaunchedEffect(physicalLinkAvailable) {
-        if (physicalLinkAvailable) onRegionRefresh()
+        if (physicalLinkAvailable) onRegionRefresh() else onNetworkLost()
     }
 
     // When the physical network comes back, retry the last selected pool once
