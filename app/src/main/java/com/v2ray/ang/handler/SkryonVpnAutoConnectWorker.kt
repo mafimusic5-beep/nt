@@ -50,6 +50,12 @@ internal fun isRetryableSkryonReconnectFailure(reason: String?): Boolean {
         "http_429",
         "vpn_session_acquire_rate_limited",
         "server_capacity_unavailable",
+        // The node-health aggregator can briefly mark all nodes unhealthy
+        // during a VPS/app cold start. Retry instead of silently giving up.
+        "pool_no_healthy_nodes",
+        "no_healthy_nodes",
+        "no_server",
+        "assigned_node_missing",
         "pool_backend_unreachable",
         "credential_install_failed",
         "server_config_unavailable",
@@ -259,7 +265,17 @@ internal class SkryonVpnAutoConnectWorker(
         // This is a background auto-start, NOT a new manual user action.
         // Starting without a GUID keeps the explicit/automatic service gate
         // active; EmeryVpnSync has already selected the desired profile.
-        val started = V2RayServiceManager.startVService(applicationContext)
+        val started = try {
+            V2RayServiceManager.startVService(applicationContext)
+        } catch (error: Exception) {
+            // ForegroundServiceStartNotAllowedException and other Android
+            // background restrictions must be retried, never crash Worker.
+            Log.w(
+                AppConfig.TAG,
+                "AutoConnect: foreground VPN start rejected (${error.javaClass.simpleName})",
+            )
+            false
+        }
         if (!started) {
             Log.w(AppConfig.TAG, "AutoConnect: Android VPN service start declined")
             EmeryBackendClient.releaseVpnSession(confirmed.accessKey, connection.sessionId)
