@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -100,6 +101,11 @@ import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.util.Utils
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @Composable
@@ -112,6 +118,18 @@ fun VpnMainRoute(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val lifecycleOwner = ViewTreeLifecycleOwner.get(LocalView.current)
+
+    // The screen reflects server-side changes without having to reopen it.
+    // Only poll while the UI is STARTED, never every 15s in the background.
+    LaunchedEffect(viewModel, lifecycleOwner) {
+        lifecycleOwner?.lifecycle?.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                viewModel.refreshLocations()
+                delay(15_000L)
+            }
+        }
+    }
     val connectionQualityChecker = remember(context) {
         PreVpnConnectionQualityChecker(context)
     }
@@ -126,6 +144,7 @@ fun VpnMainRoute(
         },
         onDisconnectClick = { viewModel.onDisconnectClick(stopVpnService) },
         onAutoReconnectClick = viewModel::onAutoReconnectClick,
+        onRegionRefresh = viewModel::refreshLocations,
         onActivationCodeSubmit = viewModel::activateReplacementCode,
         checkPreVpnConnection = connectionQualityChecker::assess,
         modifier = modifier,
@@ -141,6 +160,7 @@ fun VpnMainScreen(
     onDisconnectClick: () -> Unit,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     onAutoReconnectClick: () -> Unit = onConnectClick,
+    onRegionRefresh: () -> Unit = {},
     checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
         PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
     },
@@ -205,6 +225,12 @@ fun VpnMainScreen(
                 mainHandler.removeCallbacksAndMessages(null)
             }
         }
+    }
+
+    // Physical connectivity transitions should update the directory promptly
+    // instead of waiting for the next 15s poll.
+    LaunchedEffect(physicalLinkAvailable) {
+        if (physicalLinkAvailable) onRegionRefresh()
     }
 
     // When the physical network comes back, retry the last selected pool once
@@ -399,6 +425,10 @@ fun VpnMainScreen(
                             uiState.activationKey.isBlank() -> "Ключ доступа не найден"
                             uiState.locationsLoading -> "Регион загружается"
                             uiState.locationsError.isNotBlank() -> uiState.locationsError
+                            uiState.regionsLastUpdatedAtMillis == 0L -> "Проверяем доступность серверов"
+                            !uiState.randomRegion &&
+                                uiState.selectedLocation.availability == VpnRegionAvailability.UNAVAILABLE ->
+                                "В выбранном регионе нет доступных серверов"
                             else -> "Регион недоступен"
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -779,6 +809,18 @@ private fun RegionSelectorCard(
                                     style = MaterialTheme.typography.titleMedium,
                                     color = AppUiColors.TextPrimary,
                                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = when (location.availability) {
+                                        VpnRegionAvailability.AVAILABLE -> "Доступен по данным сервера"
+                                        VpnRegionAvailability.UNAVAILABLE -> "Недоступен"
+                                        VpnRegionAvailability.CHECKING -> "Проверяем доступность"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (location.availability == VpnRegionAvailability.AVAILABLE)
+                                        AppUiColors.PositiveStrong else AppUiColors.TextSecondary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
