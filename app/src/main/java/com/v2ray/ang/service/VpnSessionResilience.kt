@@ -18,8 +18,19 @@ internal fun vpnHeartbeatAction(reason: String?): VpnHeartbeatAction {
     val code = reason.orEmpty().trim().lowercase()
     return when {
         code == "vpn_session_expired" || code == "vpn_session_mismatch" -> VpnHeartbeatAction.REACQUIRE
-        code in setOf("network", "timeout", "temporarily_unavailable", "http_408", "http_425", "http_429") ->
-            VpnHeartbeatAction.RETRY
+        code in setOf(
+            "network", "timeout", "temporarily_unavailable",
+            "http_408", "http_425", "http_429",
+            // A signed lease reacquire may temporarily fail while the
+            // physical internet returns but node-health data catches up.
+            // Keep the protected tunnel and retry; never treat this as a
+            // confirmed user/device revocation.
+            "vpn_session_acquire_rate_limited",
+            "pool_no_healthy_nodes", "no_healthy_nodes",
+            "server_capacity_unavailable", "pool_backend_unreachable",
+            "assignment_install_in_progress", "assignment_maintenance_in_progress",
+            "assignment_state_changed_retry", "credential_install_failed",
+        ) -> VpnHeartbeatAction.RETRY
         code.startsWith("http_5") && code.length == 8 && code.substring(5).all(Char::isDigit) ->
             VpnHeartbeatAction.RETRY
         // Other failures (banned, expired subscription, device revocation, 401,

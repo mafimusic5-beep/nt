@@ -33,6 +33,35 @@ class VpnSessionFastRecoveryTest {
     }
 
     @Test
+    fun temporarilyUnhealthyPoolKeepsCurrentVpnWhileRetryingSignedSession() {
+        for (reason in listOf(
+            "pool_no_healthy_nodes",
+            "no_healthy_nodes",
+            "server_capacity_unavailable",
+            "pool_backend_unreachable",
+            "vpn_session_acquire_rate_limited",
+            "credential_install_failed",
+        )) {
+            assertEquals(reason, VpnHeartbeatAction.RETRY, vpnHeartbeatAction(reason))
+        }
+    }
+
+    @Test
+    fun revokedAccessNeverBecomesAnAutomaticRecovery() {
+        for (reason in listOf(
+            "device_signature_invalid",
+            "device_timestamp_invalid",
+            "device_not_registered",
+            "http_403",
+            "banned",
+            "reacquire_profile_changed",
+        )) {
+            assertEquals(reason, VpnHeartbeatAction.STOP, vpnHeartbeatAction(reason))
+        }
+        assertEquals(VpnHeartbeatAction.REACQUIRE, vpnHeartbeatAction("vpn_session_expired"))
+    }
+
+    @Test
     fun negativeElapsedClockMovementNeverProducesAWaitLongerThanDebounce() {
         assertEquals(
             2_000L,
