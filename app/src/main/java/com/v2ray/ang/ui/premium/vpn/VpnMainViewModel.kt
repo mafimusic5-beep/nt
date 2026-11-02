@@ -20,7 +20,6 @@ import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
 import com.v2ray.ang.handler.V2RayServiceManager
 import com.v2ray.ang.network.EmeryBackendClient
-import com.v2ray.ang.network.EmeryPoolClient
 import com.v2ray.ang.security.EmeryDeviceGateConfig
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_PREF
@@ -57,6 +56,9 @@ import org.json.JSONObject
 class VpnMainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
+        // Availability is authoritative only while a recent HTTP response exists.
+        // Keep names visible from the local snapshot when connectivity fails.
+        const val REGION_STATUS_MAX_AGE_MS = 30_000L
         const val DEFAULT_ACCESS_KEY = "DEV"
         const val DEFAULT_REGION_TITLE = "Регион"
         const val SERVICE_STATE_RECHECK_DELAY_MS = 1_500L
@@ -152,6 +154,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     init {
         registerServiceStateReceiver()
         requestServiceState()
+        val cached = VpnRegionDirectoryCache.load()
+        if (cached.isNotEmpty()) applyLocations(cached, "")
         refreshLocations()
         startSkryonConfigSync()
     }
@@ -495,8 +499,12 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         MmkvManager.encodeSettings(SKRYON_SERVER_GUID_PREF, guid)
         MmkvManager.encodeSettings(SKRYON_SERVER_ID_PREF, serverId)
 
-        savedSkryonConfigLocation()?.let { location ->
-            applyLocations(listOf(location), "")
+        // Syncing one assigned VLESS config is NOT a directory update.
+        // Never overwrite a fresh multi-region list with just this server.
+        if (_uiState.value.locations.none { it.id.toLongOrNull() != null }) {
+            savedSkryonConfigLocation()?.let { location ->
+                applyLocations(listOf(location), "")
+            }
         }
         timerJob?.cancel()
         _uiState.update { state ->
@@ -529,19 +537,31 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun refreshLocations() {
-        serversJob?.cancel()
+        // UI creation, lifecycle resume, and network callbacks can coincide.
+        // Do not cancel a valid request and restart it repeatedly.
+        if (serversJob?.isActive == true) return
         serversJob = viewModelScope.launch {
+            val now = System.currentTimeMillis()
             _uiState.update { state ->
+                val stale = state.regionsLastUpdatedAtMillis <= 0L ||
+                    now - state.regionsLastUpdatedAtMillis > REGION_STATUS_MAX_AGE_MS
                 state.copy(
-                    activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
-                    locationsLoading = true,
-                    locationsError = "",
+                    activationKey = savedActivationCode().ifBlank {
+                        state.activationKey.ifBlank { DEFAULT_ACCESS_KEY }
+                    },
+                    // Never hide a previously loaded directory behind a spinner.
+                    locationsLoading = state.locations.none { it.id.toLongOrNull() != null },
+                    locations = if (stale) state.locations.map { it.copy(
+                        availability = VpnRegionAvailability.CHECKING,
+                    ) } else state.locations,
+                    selectedLocation = if (stale) state.selectedLocation.copy(
+                        availability = VpnRegionAvailability.CHECKING,
+                    ) else state.selectedLocation,
+                    regionsLastUpdatedAtMillis = if (stale) 0L else state.regionsLastUpdatedAtMillis,
                 )
             }
 
-            // Always refresh the available pool list. Returning only the last
-            // assigned server would hide the manual region picker on reconnect.
-            val result = withTimeoutOrNull(4_000L) {
+            val result = withTimeoutOrNull(3_500L) {
                 EmeryBackendClient.fetchVpnServers()
             } ?: Result.failure(IllegalStateException("server_list_timeout"))
             result.fold(
@@ -549,86 +569,74 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     val updateMessage = servers
                         .firstOrNull { it.healthStatus == "upgrade_required" }
                         ?.city
-                        ?.trim()
-                        .orEmpty()
+                        ?.trim().orEmpty()
                     if (updateMessage.isNotBlank()) {
                         removeSyncedSkryonConfig(updateMessage)
-                    } else {
-                        val locations = servers
-                            .filter { it.isAvailable }
-                            .map { server ->
-                                VpnLocationOption(
-                                    id = server.id.toString(),
-                                    title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
-                                )
-                            }
-                            .distinctBy { it.id }
-
-                        if (locations.isNotEmpty()) {
-                            applyLocations(locations, "")
-                        } else {
-                            refreshPoolLocationsFallback("Серверы пока недоступны")
+                        return@fold
+                    }
+                    // A directory is NOT the same thing as a list of working
+                    // endpoints: show offline regions too, with their real
+                    // server-reported state. "Auto" is a pseudo-location, not a
+                    // country; the picker already has "Random region".
+                    val locations = servers
+                        .asSequence()
+                        .filter { it.id > 0L && !it.city.equals("auto", ignoreCase = true) }
+                        .map { server ->
+                            VpnLocationOption(
+                                id = server.id.toString(),
+                                title = serverRegionTitle(
+                                    server.city.ifBlank { "Server #${server.id}" },
+                                    server.id.toInt(),
+                                ),
+                                availability = if (
+                                    server.isAvailable &&
+                                    server.healthStatus.lowercase() in setOf("healthy", "degraded")
+                                ) VpnRegionAvailability.AVAILABLE else VpnRegionAvailability.UNAVAILABLE,
+                            )
                         }
+                        .distinctBy { it.id }
+                        .toList()
+                    if (locations.isNotEmpty()) {
+                        VpnRegionDirectoryCache.save(locations)
+                        applyLocations(locations, "", System.currentTimeMillis())
+                    } else {
+                        useCachedRegionsWithoutAvailability("Список регионов пока пуст")
                     }
                 },
                 onFailure = { error ->
                     VpnUiDebugLogger.log(
                         hypothesisId = "H6",
                         location = "VpnMainViewModel.kt:refreshLocations",
-                        message = "server list fetch failed",
+                        message = "live server list refresh failed",
                         data = JSONObject().put("error", error.message ?: "unknown"),
                     )
-                    refreshPoolLocationsFallback("Не удалось загрузить серверы")
+                    useCachedRegionsWithoutAvailability("Не удалось проверить доступность регионов")
                 },
             )
         }
     }
 
-    private suspend fun refreshPoolLocationsFallback(fallbackError: String) {
-        val activatedLocation = savedSkryonConfigLocation()
-        if (activatedLocation != null) {
-            applyLocations(listOf(activatedLocation), "")
-            return
+    private fun useCachedRegionsWithoutAvailability(error: String) {
+        val previouslyShown = _uiState.value.locations
+            .filter { it.id.toLongOrNull() != null }
+            .map { it.copy(availability = VpnRegionAvailability.CHECKING) }
+        val cached = previouslyShown.ifEmpty { VpnRegionDirectoryCache.load() }
+        val fallback = cached.ifEmpty {
+            listOfNotNull(savedSkryonConfigLocation()?.copy(
+                availability = VpnRegionAvailability.CHECKING,
+            ))
         }
-
-        val key = _uiState.value.activationKey.ifBlank { DEFAULT_ACCESS_KEY }
-        val poolResult = withTimeoutOrNull(8_000L) {
-            EmeryPoolClient.fetchPoolImportText(key)
-        } ?: Result.failure(IllegalStateException("pool_list_timeout"))
-        poolResult.fold(
-            onSuccess = { importText ->
-                val locations = importText
-                    .lineSequence()
-                    .map { it.trim() }
-                    .filter { isImportProfileLink(it) }
-                    .distinct()
-                    .mapIndexed { index, link ->
-                        VpnLocationOption(
-                            id = "pool-${index + 1}",
-                            title = titleFromConfigLink(link, index + 1),
-                            importText = link,
-                        )
-                    }
-                    .toList()
-
-                applyLocations(
-                    locations.ifEmpty { VpnDemoData.unavailableLocations },
-                    if (locations.isEmpty()) fallbackError else "",
-                )
-            },
-            onFailure = { error ->
-                VpnUiDebugLogger.log(
-                    hypothesisId = "H6",
-                    location = "VpnMainViewModel.kt:refreshPoolLocationsFallback",
-                    message = "pool list fetch failed",
-                    data = JSONObject().put("error", error.message ?: "unknown"),
-                )
-                applyLocations(VpnDemoData.unavailableLocations, fallbackError)
-            },
+        applyLocations(
+            fallback.ifEmpty { VpnDemoData.unavailableLocations },
+            error,
         )
     }
 
-    private fun applyLocations(locations: List<VpnLocationOption>, error: String) {
+    private fun applyLocations(
+        locations: List<VpnLocationOption>,
+        error: String,
+        fetchedAtMillis: Long = 0L,
+    ) {
         val safeLocations = locations.ifEmpty { VpnDemoData.unavailableLocations }
         _uiState.update { state ->
             val pinnedId = SkryonRegionPreference.pinnedServerId()?.toString()
@@ -654,6 +662,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 selectedLocation = selected,
                 locationsLoading = false,
                 locationsError = error,
+                regionsLastUpdatedAtMillis = fetchedAtMillis,
             )
         }
     }
@@ -1167,7 +1176,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         val normalizedState = state.copy(
             activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
         )
-        val availableIds = normalizedState.locations.mapNotNull { it.id.toLongOrNull() }
+        // The chooser may display offline and cached regions, but must
+        // never send those IDs as an allegedly connectable pool.
+        val availableIds = normalizedState.locations
+            .filter { it.availability == VpnRegionAvailability.AVAILABLE }
+            .mapNotNull { it.id.toLongOrNull() }
         val preferredId = if (normalizedState.randomRegion) null else SkryonRegionPreference.pinnedServerId()
         val serverId = chooseRegionPoolId(preferredId, availableIds)
             ?: return Result.failure(IllegalStateException("server_selection_refresh_required"))
