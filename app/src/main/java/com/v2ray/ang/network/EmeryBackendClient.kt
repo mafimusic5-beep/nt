@@ -55,6 +55,16 @@ object EmeryBackendClient {
         .retryOnConnectionFailure(false)
         .build()
 
+    // Heartbeats must not hold the network-change recovery loop for the
+    // general API's 30-second read timeout when the physical link drops.
+    // Retry/lease reacquisition is owned by the service, not by OkHttp.
+    private val heartbeatClient = client.newBuilder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .callTimeout(6, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .build()
+
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
     private fun authorizedGet(
@@ -358,7 +368,14 @@ object EmeryBackendClient {
         val bodyJson = JsonUtil.toJson(VpnSessionControlRequestBody(session)) ?: "{}"
         val request = authorizedPost(path, key, bodyJson)
         try {
-            client.newCall(request).execute().use { response ->
+            // On loss/return of Wi-Fi or mobile data, this bounded heartbeat
+            // cannot stall the rest of the recovery process for 30 seconds.
+            val requestClient = if (path == "/api/vpn/session/heartbeat") {
+                heartbeatClient
+            } else {
+                client
+            }
+            requestClient.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 val parsed = JsonUtil.fromJson(raw, VpnSessionControlResponseBody::class.java)
                 val reason = parsed?.reason.orEmpty().ifBlank { parsed?.error.orEmpty() }

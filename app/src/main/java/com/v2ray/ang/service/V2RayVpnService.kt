@@ -623,8 +623,9 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     nextDelayMs = SESSION_HEARTBEAT_RETRY_INTERVAL_MS
                     continue
                 }
-                if (wasOffline) {
-                    Log.i(AppConfig.TAG, "StartCore-VPN: Underlying network returned; checking lease")
+                val resumedAfterOffline = wasOffline
+                if (resumedAfterOffline) {
+                    Log.i(AppConfig.TAG, "StartCore-VPN: Underlying network returned; checking lease immediately")
                     wasOffline = false
                 }
 
@@ -637,10 +638,13 @@ class V2RayVpnService : VpnService(), ServiceControl {
                 }
                 // Several callback events can fire together during Wi-Fi
                 // association. Keep backend requests bounded.
-                val elapsedSinceHeartbeatMs = SystemClock.elapsedRealtime() - lastHeartbeatAtMs
-                if (lastHeartbeatAtMs > 0L && elapsedSinceHeartbeatMs < MIN_HEARTBEAT_GAP_MS) {
-                    delay(MIN_HEARTBEAT_GAP_MS - elapsedSinceHeartbeatMs)
-                }
+                val gapDelayMs = vpnHeartbeatGapDelayMs(
+                    lastHeartbeatAtMs = lastHeartbeatAtMs,
+                    nowElapsedMs = SystemClock.elapsedRealtime(),
+                    minimumGapMs = MIN_HEARTBEAT_GAP_MS,
+                    resumedAfterOffline = resumedAfterOffline,
+                )
+                if (gapDelayMs > 0L) delay(gapDelayMs)
                 if (!isActive || !isRunning || stopInProgress) break
                 lastHeartbeatAtMs = SystemClock.elapsedRealtime()
                 val heartbeat = EmeryBackendClient.heartbeatVpnSession(accessKey, sessionId)

@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -277,10 +278,16 @@ object V2RayServiceManager {
             return false
         }
 
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) {
-            context.toast(R.string.toast_warning_pref_proxysharing_short)
-        } else {
-            context.toast(R.string.toast_services_start)
+        // WorkManager executes automatic recovery on a background coroutine
+        // thread without a prepared Looper. Toasty requires the main Looper
+        // and previously crashed the entire boot recovery before VPN startup.
+        // Background reconnect should never show an interactive toast.
+        if (explicitUserStart && Looper.myLooper() == Looper.getMainLooper()) {
+            if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) {
+                context.toast(R.string.toast_warning_pref_proxysharing_short)
+            } else {
+                context.toast(R.string.toast_services_start)
+            }
         }
 
         val isVpnMode = SettingsManager.isVpnMode()

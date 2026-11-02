@@ -1109,55 +1109,14 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         return stopped
     }
 
-    private fun isBlockingAccessFailure(reason: String): Boolean {
-        val normalized = reason.trim().lowercase()
-        return normalized in setOf(
-            "not_found",
-            "expired",
-            "banned",
-            "blocked",
-            "revoked",
-            "invalid_or_expired_key",
-            "vpn_disabled",
-            "upgrade_required",
-        )
-    }
+    private fun isBlockingAccessFailure(reason: String): Boolean =
+        isBlockingSkryonAccessFailure(reason)
 
-    private fun deviceAccessError(reason: String): String {
-        return when (reason) {
-            "device_not_registered", "device_confirmation_missing" ->
-                "Это устройство не зарегистрировано для тарифа"
-            "device_mismatch", "device_inventory_mismatch" ->
-                "Сервер не подтвердил текущее устройство"
-            "device_counter_missing", "device_counter_mismatch" ->
-                "Сервер не подтвердил список устройств"
-            "plan_limit_mismatch" ->
-                "Лимит одновременных подключений не соответствует тарифу"
-            "invalid_or_expired_key", "not_found", "expired", "banned", "blocked", "revoked" ->
-                "Код доступа недействителен или истёк"
-            "vpn_disabled" ->
-                "Доступ к VPN отключён"
-            "upgrade_required" ->
-                "Требуется обновить приложение"
-            "network" ->
-                "Не удалось проверить устройство. Проверьте интернет"
-            else -> "Не удалось подтвердить доступ этого устройства"
-        }
-    }
+    private fun deviceAccessError(reason: String): String =
+        skryonAccessFailureMessage(reason)
 
-    private fun vpnConnectError(reason: String): String {
-        return when (reason) {
-            "server_capacity_unavailable" ->
-                "В этом регионе пока нет свободных мест. Новый сервер уже подготавливается"
-            "device_assignment_region_locked" ->
-                "Для устройства уже подготовлен другой сервер. Выберите регион из активированного профиля"
-            "assignment_install_in_progress", "assignment_maintenance_in_progress", "assignment_state_changed_retry" ->
-                "Персональный доступ обновляется. Повторите через несколько секунд"
-            "credential_install_failed", "pool_backend_unreachable" ->
-                "Сервер подготавливает персональный доступ. Попробуйте немного позже"
-            else -> "Не удалось подключиться к серверу"
-        }
-    }
+    private fun vpnConnectError(reason: String): String =
+        skryonConnectFailureMessage(reason)
 
     private fun scheduleAutomaticRecovery() {
         if (SkryonVpnConnectionIntent.shouldRetry(
