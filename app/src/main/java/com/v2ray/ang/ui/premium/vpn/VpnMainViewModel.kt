@@ -651,6 +651,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 // some other country. Keep the chosen ID visible to the user.
                 ?: pinnedId?.let { id ->
                     state.selectedLocation.takeIf { it.id == id }
+                        ?.copy(availability = VpnRegionAvailability.CHECKING)
                         ?: VpnLocationOption(id = id, title = "Выбранный регион недоступен")
                 }
                 ?: safeLocations.firstOrNull { it.id == state.selectedLocation.id }
