@@ -102,7 +102,7 @@ import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.util.Utils
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -118,7 +118,7 @@ fun VpnMainRoute(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    val lifecycleOwner = ViewTreeLifecycleOwner.get(LocalView.current)
+    val lifecycleOwner = LocalView.current.findViewTreeLifecycleOwner()
 
     // The screen reflects server-side changes without having to reopen it.
     // Only poll while the UI is STARTED, never every 15s in the background.
