@@ -596,11 +596,17 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         }
                         .distinctBy { it.id }
                         .toList()
+                    // A successful empty directory is authoritative too.
+                    // Do not keep deleted regions visible forever from cache.
+                    VpnRegionDirectoryCache.save(locations)
                     if (locations.isNotEmpty()) {
-                        VpnRegionDirectoryCache.save(locations)
                         applyLocations(locations, "", System.currentTimeMillis())
                     } else {
-                        useCachedRegionsWithoutAvailability("Список регионов пока пуст")
+                        applyLocations(
+                            VpnDemoData.unavailableLocations,
+                            "Серверы пока недоступны",
+                            System.currentTimeMillis(),
+                        )
                     }
                 },
                 onFailure = { error ->
