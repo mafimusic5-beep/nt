@@ -616,6 +616,13 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun markRegionsUnverifiedAfterNetworkLoss() {
+        // A live snapshot ceases to be authoritative when the underlay is
+        // lost. Keep only public names; no offline region may appear online.
+        serversJob?.cancel()
+        useCachedRegionsWithoutAvailability("Нет сети. Проверим регионы после подключения")
+    }
+
     private fun useCachedRegionsWithoutAvailability(error: String) {
         val previouslyShown = _uiState.value.locations
             .filter { it.id.toLongOrNull() != null }
