@@ -45,6 +45,12 @@ object EmeryBackendClient {
         .retryOnConnectionFailure(true)
         .build()
 
+    // A region status request is metadata-only. Keep its timeout independent
+    // of potentially slow authenticated VPN session requests.
+    private val regionClient = client.newBuilder()
+        .callTimeout(3, TimeUnit.SECONDS)
+        .build()
+
     private fun baseUrl(): String = EmeryApiConfig.baseUrl()
 
     private fun authorizedGet(
@@ -259,10 +265,13 @@ object EmeryBackendClient {
         val request = Request.Builder()
             .url("${baseUrl()}/api/vpn/servers")
             .header(AppConfig.SKRYON_APP_VERSION_HEADER, BuildConfig.SKRYON_VERSION_CODE.toString())
+            // Poll status from the authoritative API, not an intermediary's stale cache.
+            .header("Cache-Control", "no-cache")
             .get()
             .build()
         try {
-            client.newCall(request).execute().use { response ->
+            // Region metadata must not block the UI on slow backend calls.
+            regionClient.newCall(request).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (!response.isSuccessful) return@withContext Result.failure(IllegalStateException("http_${response.code}"))
                 val parsed = JsonUtil.fromJson(raw, Array<VpnServerItemApiResponseBody>::class.java)?.toList()
@@ -272,7 +281,8 @@ object EmeryBackendClient {
                         id = it.id,
                         city = it.city?.ifBlank { "Unknown" } ?: "Unknown",
                         healthStatus = it.healthStatus ?: "unknown",
-                        isAvailable = it.isAvailable != false,
+                        // Missing status is NOT evidence that a node is online.
+                        isAvailable = it.isAvailable == true,
                         activeConnections = it.activeConnections,
                         connectionsLimit = it.connectionsLimit,
                     )

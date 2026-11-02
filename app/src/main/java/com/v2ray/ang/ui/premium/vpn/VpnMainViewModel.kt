@@ -150,6 +150,10 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     init {
+        // Cached labels appear immediately; their availability remains unknown
+        // until the first successful public API refresh.
+        val lastKnownRegions = VpnRegionCatalogCache.read()
+        if (lastKnownRegions.isNotEmpty()) applyLocations(lastKnownRegions, "")
         registerServiceStateReceiver()
         requestServiceState()
         refreshLocations()
@@ -535,7 +539,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 state.copy(
                     activationKey = savedActivationCode().ifBlank { state.activationKey.ifBlank { DEFAULT_ACCESS_KEY } },
                     locationsLoading = true,
-                    locationsError = "",
+                    regionStatusError = "",
                 )
             }
 
@@ -554,19 +558,24 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     if (updateMessage.isNotBlank()) {
                         removeSyncedSkryonConfig(updateMessage)
                     } else {
+                        // The catalog is NOT a VPN session. Show every real
+                        // region immediately, including currently offline ones;
+                        // only actual Connect performs authenticated acquisition.
                         val locations = servers
-                            .filter { it.isAvailable }
+                            .filter { it.id > 0L && !it.city.equals("Auto", ignoreCase = true) }
                             .map { server ->
                                 VpnLocationOption(
                                     id = server.id.toString(),
                                     title = serverRegionTitle(server.city.ifBlank { "Server #${server.id}" }, server.id.toInt()),
+                                    isAvailable = server.isAvailable,
                                 )
                             }
                             .distinctBy { it.id }
 
                         if (locations.isNotEmpty()) {
+                            VpnRegionCatalogCache.write(locations)
                             applyLocations(locations, "")
-                        } else {
+                        } else if (!markRegionAvailabilityUnknown("Серверы пока недоступны")) {
                             refreshPoolLocationsFallback("Серверы пока недоступны")
                         }
                     }
@@ -578,10 +587,29 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                         message = "server list fetch failed",
                         data = JSONObject().put("error", error.message ?: "unknown"),
                     )
-                    refreshPoolLocationsFallback("Не удалось загрузить серверы")
+                    if (!markRegionAvailabilityUnknown("Не удалось обновить статус регионов")) {
+                        refreshPoolLocationsFallback("Не удалось загрузить серверы")
+                    }
                 },
             )
         }
+    }
+
+    /**
+     * On a failed status refresh we may continue showing known region names,
+     * but must NOT keep painting stale health as live availability.
+     */
+    private fun markRegionAvailabilityUnknown(message: String): Boolean {
+        if (_uiState.value.locations.none { it.id.toLongOrNull() != null }) return false
+        _uiState.update { state ->
+            state.copy(
+                locations = state.locations.map { it.copy(isAvailable = null) },
+                selectedLocation = state.selectedLocation.copy(isAvailable = null),
+                locationsLoading = false,
+                regionStatusError = message,
+            )
+        }
+        return true
     }
 
     private suspend fun refreshPoolLocationsFallback(fallbackError: String) {
@@ -653,7 +681,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 locations = safeLocations,
                 selectedLocation = selected,
                 locationsLoading = false,
-                locationsError = error,
+                regionStatusError = error,
             )
         }
     }
@@ -830,6 +858,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
             it.id == location || it.title == location
         } ?: return
         val poolId = selected.id.toLongOrNull() ?: return
+        if (selected.isAvailable == false) return
         SkryonRegionPreference.pinServer(poolId)
         VpnUiDebugLogger.log(
             hypothesisId = "H5",
@@ -1167,9 +1196,20 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         val normalizedState = state.copy(
             activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
         )
-        val availableIds = normalizedState.locations.mapNotNull { it.id.toLongOrNull() }
+        // Prefer recently verified online nodes. If the public status API is
+        // temporarily unavailable, an unknown cached region may still be tried:
+        // the authenticated /session/acquire endpoint is the final authority.
+        val verifiedIds = availableRegionIds(normalizedState.locations)
+        val candidateIds = verifiedIds.ifEmpty {
+            normalizedState.locations.filter { it.isAvailable == null }
+                .mapNotNull { it.id.toLongOrNull() }
+        }
         val preferredId = if (normalizedState.randomRegion) null else SkryonRegionPreference.pinnedServerId()
-        val serverId = chooseRegionPoolId(preferredId, availableIds)
+        if (preferredId != null && normalizedState.locations.any {
+                it.id == preferredId.toString() && it.isAvailable == false
+            }
+        ) return Result.failure(IllegalStateException("server_selection_refresh_required"))
+        val serverId = chooseRegionPoolId(preferredId, candidateIds)
             ?: return Result.failure(IllegalStateException("server_selection_refresh_required"))
         return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
     }

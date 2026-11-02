@@ -80,6 +80,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -100,6 +103,8 @@ import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
 import com.v2ray.ang.util.Utils
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @Composable
@@ -112,6 +117,19 @@ fun VpnMainRoute(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Region catalog is public metadata. Refresh it only while this screen is
+    // foregrounded; never create VPN sessions just to enumerate regions.
+    LaunchedEffect(viewModel, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                viewModel.refreshLocations()
+                delay(15_000L)
+            }
+        }
+    }
+
     val connectionQualityChecker = remember(context) {
         PreVpnConnectionQualityChecker(context)
     }
@@ -119,6 +137,7 @@ fun VpnMainRoute(
         uiState = uiState,
         locations = uiState.locations,
         onLocationSelected = viewModel::onLocationSelected,
+        onRegionListOpened = viewModel::refreshLocations,
         onConnectClick = {
             requestVpnPermission {
                 viewModel.onConnectClick(startVpnService)
@@ -141,6 +160,7 @@ fun VpnMainScreen(
     onDisconnectClick: () -> Unit,
     onActivationCodeSubmit: suspend (String) -> Result<Unit>,
     onAutoReconnectClick: () -> Unit = onConnectClick,
+    onRegionListOpened: () -> Unit = {},
     checkPreVpnConnection: suspend () -> PreVpnConnectionAssessment = {
         PreVpnConnectionAssessment(PreVpnConnectionQuality.Good)
     },
@@ -356,10 +376,10 @@ fun VpnMainScreen(
                         maxLines = 2,
                     )
                 }
-                if (uiState.locationsError.isNotBlank()) {
+                if (uiState.locationsError.isNotBlank() || uiState.regionStatusError.isNotBlank()) {
                     Spacer(Modifier.height(if (tight) 8.dp else 12.dp))
                     Text(
-                        text = uiState.locationsError,
+                        text = uiState.locationsError.ifBlank { uiState.regionStatusError },
                         style = MaterialTheme.typography.bodySmall,
                         color = AppUiColors.TextSecondary,
                         textAlign = TextAlign.Center,
@@ -375,6 +395,7 @@ fun VpnMainScreen(
                     compact = compact,
                     tight = tight,
                     onLocationSelected = onLocationSelected,
+                    onRegionListOpened = onRegionListOpened,
                 )
                 Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
                 PrimaryConnectButton(
@@ -399,6 +420,7 @@ fun VpnMainScreen(
                             uiState.activationKey.isBlank() -> "Ключ доступа не найден"
                             uiState.locationsLoading -> "Регион загружается"
                             uiState.locationsError.isNotBlank() -> uiState.locationsError
+                            uiState.regionStatusError.isNotBlank() -> uiState.regionStatusError
                             else -> "Регион недоступен"
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -691,6 +713,7 @@ private fun RegionSelectorCard(
     compact: Boolean,
     tight: Boolean,
     onLocationSelected: (String) -> Unit,
+    onRegionListOpened: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selectedCode = if (randomRegion) "VPN" else selectedLocation.countryCodeLabel()
@@ -708,8 +731,9 @@ private fun RegionSelectorCard(
                 .background(Color.White.copy(alpha = 0.96f))
                 .border(1.dp, AppUiColors.Border.copy(alpha = 0.45f), cardShape)
                 .tvRemoteHighlight(cardShape)
-                .clickable(enabled = locations.isNotEmpty()) {
+                .clickable {
                     expanded = true
+                    onRegionListOpened()
                 }
                 .padding(horizontal = if (compact) 16.dp else 18.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -739,12 +763,18 @@ private fun RegionSelectorCard(
         }
 
         DropdownMenu(
-            expanded = expanded && locations.isNotEmpty(),
+            expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier
                 .width(menuWidth)
                 .background(Color.White),
         ) {
+            Text(
+                text = "Статус регионов • обновление каждые 15 с",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppUiColors.TextSecondary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
             DropdownMenuItem(
                 text = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -782,9 +812,26 @@ private fun RegionSelectorCard(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = when (location.isAvailable) {
+                                        true -> "Доступен"
+                                        false -> "Недоступен"
+                                        null -> "Проверяем доступность"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = when (location.isAvailable) {
+                                        true -> AppUiColors.PositiveStrong
+                                        false -> Color(0xFFB42318)
+                                        null -> AppUiColors.TextSecondary
+                                    },
+                                )
                             }
                         }
                     },
+                    // Unknown is selectable; the signed server still checks
+                    // capacity and entitlement when Connect is pressed.
+                    enabled = location.isAvailable != false,
                     onClick = {
                         expanded = false
                         onLocationSelected(location.id)
