@@ -20,6 +20,8 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationPrepareRequest,
     PoolReservationReleaseRequest,
     PoolReservationReleaseResponse,
+    PoolReservationQuarantineRequest,
+    PoolReservationQuarantineResponse,
     PoolReservationResponse,
 )
 from src.backend.services.xray_credential_service import (
@@ -449,6 +451,81 @@ class PoolAssignmentService:
             assignment_id=assignment.id,
             status=assignment.status,
             confirmed_at=assignment.confirmed_at,
+        )
+
+    def quarantine_offline(
+        self, req: PoolReservationQuarantineRequest,
+    ) -> PoolReservationQuarantineResponse:
+        """Detach a DOWN node from *legacy* device selection without pretending
+        its Xray credential was remotely revoked.
+
+        The authenticated legacy bridge MUST mark its pool_status non-active
+        first. That immediately disables future per-connection gateway proofs.
+        The old row, UUID, port and capacity reservation remain intact for
+        maintenance to remove when the VPS becomes reachable again.
+        """
+        self._require_enabled()
+        assignment = self.db.get(VpnAssignment, req.assignment_id)
+        if assignment is None or assignment.subject_type != "legacy_device":
+            raise HTTPException(status_code=404, detail="assignment_not_found")
+        old_node = self.db.get(VpnNode, assignment.node_id)
+        destination = self.db.get(VpnNode, req.destination_node_id)
+        if old_node is None or destination is None:
+            raise HTTPException(status_code=409, detail="assigned_node_missing")
+        if old_node.id == destination.id:
+            raise HTTPException(status_code=409, detail="same_node_failover_denied")
+        if old_node.health_status != "down":
+            raise HTTPException(status_code=409, detail="offline_failover_requires_down_node")
+        if (
+            destination.status != "active"
+            or destination.health_status not in {"healthy", "degraded"}
+            or destination.current_clients >= destination.capacity_clients
+            or (
+                settings.device_bound_gate_enabled
+                and VlessDeviceConfigBuilder.gate_endpoint(destination) is None
+            )
+        ):
+            raise HTTPException(status_code=409, detail="destination_node_unavailable")
+
+        # The unique subject is moved to an explicitly recognizable, reversible
+        # tombstone. Do NOT drop the old row or free its slot before Xray cleanup.
+        retired_key = f"retired:{assignment.id}:{req.subject_key}"
+        if assignment.subject_key == retired_key and assignment.status in {
+            "revocation_pending", "revoked",
+        }:
+            return PoolReservationQuarantineResponse(
+                assignment_id=assignment.id, status="quarantined",
+            )
+        if assignment.subject_key != req.subject_key:
+            raise HTTPException(status_code=409, detail="assignment_subject_mismatch")
+        if assignment.status not in {"revocation_pending", "revoked"}:
+            raise HTTPException(status_code=409, detail="assignment_not_released")
+        if assignment.status == "revocation_pending" and not assignment.device_gate_enforced:
+            raise HTTPException(status_code=409, detail="device_gate_not_enforced")
+
+        # Compare-and-swap prevents maintenance or another failover attempt
+        # silently changing our source row between validation and commit.
+        changed = self.db.execute(
+            update(VpnAssignment)
+            .where(
+                VpnAssignment.id == assignment.id,
+                VpnAssignment.subject_key == req.subject_key,
+                VpnAssignment.status == assignment.status,
+            )
+            .values(subject_key=retired_key)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if changed != 1:
+            self.db.rollback()
+            raise HTTPException(status_code=409, detail="assignment_state_changed_retry")
+        self.audit.write(
+            "system", "pool_bridge", "vpn_assignment_offline_quarantined",
+            "vpn_assignment", str(assignment.id),
+            {"old_node_id": old_node.id, "destination_node_id": destination.id},
+        )
+        self.db.commit()
+        return PoolReservationQuarantineResponse(
+            assignment_id=assignment.id, status="quarantined",
         )
 
     def release(self, req: PoolReservationReleaseRequest) -> PoolReservationReleaseResponse:
