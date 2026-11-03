@@ -44,7 +44,7 @@ def test_central_gate_rejects_old_assignment_before_detach(registered_assignment
     assert current_assignment_id() is None
 
 
-def setup_bridge(monkeypatch, *, quarantine_raises=False, normal_release=False):
+def setup_bridge(monkeypatch, *, quarantine_raises=False, normal_release=False, preflight_down=True):
     events = []
     entitlement = {
         "code": "ABC-123",
@@ -79,6 +79,11 @@ def setup_bridge(monkeypatch, *, quarantine_raises=False, normal_release=False):
         events.append(("prepare-new", kwargs["node_id"]))
         return {"pool_assignment_id": 51, "pool_status": "active"}
 
+    def probe(assignment, subject, destination):
+        events.append(("probe", assignment, destination))
+        return preflight_down
+
+    monkeypatch.setattr(bridge, "probe_offline_assignment", probe)
     monkeypatch.setattr(bridge, "release_assignment", release)
     monkeypatch.setattr(storage, "quarantine_device_pool_assignment", deny_gate)
     monkeypatch.setattr(bridge, "quarantine_offline_assignment", quarantine)
@@ -94,7 +99,7 @@ def test_offline_failover_denies_gate_before_quarantine_and_new_prepare(monkeypa
     result = bridge.refresh_stored_assignment("ABC-123", "device-id", node_id=5)
     assert result["pool_assignment_id"] == 51
     assert events == [
-        ("remote-release", 50),
+        ("probe", 50, 5),
         ("central-deny", 50),
         ("remote-quarantine", 50, 5),
         ("clear-old", 50),
@@ -107,25 +112,34 @@ def test_failed_quarantine_never_prepares_new_assignment(monkeypatch):
     with pytest.raises(bridge.PoolBridgeError, match="destination_node_unavailable"):
         bridge.refresh_stored_assignment("ABC-123", "device-id", node_id=5)
     assert [entry[0] for entry in events] == [
-        "remote-release", "central-deny", "remote-quarantine",
+        "probe", "central-deny", "remote-quarantine",
     ]
 
 
 def test_normal_switch_does_not_quarantine(monkeypatch):
-    events = setup_bridge(monkeypatch, normal_release=True)
+    events = setup_bridge(monkeypatch, normal_release=True, preflight_down=False)
     result = bridge.refresh_stored_assignment("ABC-123", "device-id", node_id=5)
     assert result["pool_assignment_id"] == 51
     assert [entry[0] for entry in events] == [
-        "remote-release", "clear-old", "prepare-new",
+        "probe", "remote-release", "clear-old", "prepare-new",
     ]
 
 
 def test_remote_release_errors_other_than_timeout_fail_closed(monkeypatch):
-    events = setup_bridge(monkeypatch)
+    events = setup_bridge(monkeypatch, preflight_down=False)
     def non_offline_failure(assignment):
         events.append(("remote-release", assignment))
         raise bridge.PoolBridgeError("assignment_maintenance_in_progress", 409)
     monkeypatch.setattr(bridge, "release_assignment", non_offline_failure)
     with pytest.raises(bridge.PoolBridgeError, match="assignment_maintenance_in_progress"):
         bridge.refresh_stored_assignment("ABC-123", "device-id", node_id=5)
-    assert [entry[0] for entry in events] == ["remote-release"]
+    assert [entry[0] for entry in events] == ["probe", "remote-release"]
+
+
+def test_probe_fallback_when_health_flips_during_release(monkeypatch):
+    events = setup_bridge(monkeypatch, preflight_down=False)
+    bridge.refresh_stored_assignment("ABC-123", "device-id", node_id=5)
+    assert [entry[0] for entry in events] == [
+        "probe", "remote-release", "central-deny",
+        "remote-quarantine", "clear-old", "prepare-new",
+    ]
