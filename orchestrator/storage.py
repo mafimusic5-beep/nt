@@ -187,7 +187,7 @@ def quarantine_device_pool_assignment(code: str, device_id: str, assignment_id: 
             UPDATE code_devices
                SET pool_status = 'revocation_pending', pool_updated_at = ?
              WHERE code = ? AND device_id = ? AND pool_assignment_id = ?
-               AND pool_status IN ('active', 'revocation_pending')
+               AND pool_status IN ('active', 'pending', 'revocation_pending')
             """,
             (now_iso(), format_code(code), device_id.strip()[:128], assignment_id),
         )
