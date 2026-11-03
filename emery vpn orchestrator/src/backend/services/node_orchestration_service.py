@@ -167,14 +167,19 @@ class NodeOrchestrationService:
         rows: list[dict] = []
         for region_code, nodes in grouped.items():
             connectable_nodes = [node for node in nodes if self._is_connectable(node)]
-            best = sorted(nodes, key=self._region_display_sort_key)[0]
+            # Recovery can probe DOWN VPS independently, but users should only
+            # see regions that are actually connectable right now.
+            if not connectable_nodes:
+                continue
+            # Do not ever publish an offline node's ID as a selectable region.
+            best = sorted(connectable_nodes, key=self._region_display_sort_key)[0]
             region_name = best.name if best.provider == "skryon-legacy" else normalize_node_city(best)
             rows.append(
                 {
                     "id": best.id,
                     "city": region_name,
                     "health_status": best.health_status,
-                    "is_available": bool(connectable_nodes),
+                    "is_available": True,
                     "region_code": region_code,
                     "region_name": region_name,
                     "available_nodes": len(connectable_nodes),
