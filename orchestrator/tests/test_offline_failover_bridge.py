@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+import sqlite3
 
 import pool_reservation_bridge as bridge
 import storage
@@ -23,21 +24,24 @@ def test_central_gate_rejects_old_assignment_before_detach(registered_assignment
 
     with pytest.raises(DeviceAuthError, match="device_gate_not_authorized"):
         _authorize(device, device["private_key"])
-    assert storage.get_device_pool_assignment(
-        device["code"], device["device_id"],
-    )["pool_assignment_id"] == 17
+    def current_assignment_id():
+        with sqlite3.connect(device["database_path"]) as con:
+            return con.execute(
+                "SELECT pool_assignment_id FROM code_devices WHERE device_id = ?",
+                (device["device_id"],),
+            ).fetchone()[0]
+
+    assert current_assignment_id() == 17
 
     # Stale cleanup must never erase a newly allocated pool credential.
     storage.clear_device_pool_assignment(
         device["code"], device["device_id"], expected_assignment_id=18,
     )
-    assert storage.get_device_pool_assignment(
-        device["code"], device["device_id"],
-    )["pool_assignment_id"] == 17
+    assert current_assignment_id() == 17
     storage.clear_device_pool_assignment(
         device["code"], device["device_id"], expected_assignment_id=17,
     )
-    assert storage.get_device_pool_assignment(device["code"], device["device_id"]) is None
+    assert current_assignment_id() is None
 
 
 def setup_bridge(monkeypatch, *, quarantine_raises=False, normal_release=False):
