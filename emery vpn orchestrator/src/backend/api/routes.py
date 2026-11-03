@@ -35,6 +35,7 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationReleaseResponse,
     PoolReservationQuarantineRequest,
     PoolReservationQuarantineResponse,
+    PoolOfflineFailoverProbeResponse,
     PoolReservationResponse,
 )
 from src.backend.utils.debug_log import agent_log
@@ -223,6 +224,18 @@ def internal_release_pool_assignment(
     db: Session = Depends(get_db),
 ):
     return PoolAssignmentService(db).release(payload)
+
+
+@router.post(
+    "/internal/pool/assignments/offline-probe",
+    response_model=PoolOfflineFailoverProbeResponse,
+    dependencies=[Depends(require_pool_bridge_api_key)],
+)
+def internal_probe_offline_failover(
+    payload: PoolReservationQuarantineRequest,
+    db: Session = Depends(get_db),
+):
+    return PoolAssignmentService(db).probe_offline_failover(payload)
 
 
 @router.post(
