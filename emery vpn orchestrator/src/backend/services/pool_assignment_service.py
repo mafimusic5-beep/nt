@@ -317,6 +317,15 @@ class PoolAssignmentService:
             ):
                 raise HTTPException(status_code=409, detail="assignment_node_mismatch")
             if assignment.status == "active" and assignment.device_gate_enforced:
+                assigned_node = self.db.get(VpnNode, assignment.node_id)
+                # Do not hand a cached DOWN-node URI back to a reconnecting
+                # client. Recovery is independent of the current selection.
+                if (
+                    assigned_node is None
+                    or assigned_node.status != "active"
+                    or assigned_node.health_status not in {"healthy", "degraded"}
+                ):
+                    raise HTTPException(status_code=409, detail="assigned_node_unavailable")
                 self.db.commit()
                 return self._response(assignment)
             if assignment.status == "active":
