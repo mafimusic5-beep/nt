@@ -336,8 +336,12 @@ def refresh_stored_assignment(
                 # Healthy node switching still requires confirmed Xray removal.
                 release_assignment(old_assignment_id)
             except PoolBridgeError as exc:
-                # Health may have flipped to DOWN between probe and release.
+                # A failed SSH removal does NOT prove the node is DOWN.
+                # Re-read authoritative health; never disable an active user's
+                # gateway on an ambiguous transport failure.
                 if exc.reason != 'assignment_release_failed':
+                    raise
+                if not probe_offline_assignment(old_assignment_id, subject, int(node_id)):
                     raise
                 down = True
 
