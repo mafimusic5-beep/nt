@@ -26,7 +26,7 @@ from urllib.request import urlopen
 
 ROOT = Path("/opt/nt")
 BASE = "db1b824e483c42389c4b3b81944551c2d43d59dd"
-HEAD = "a2e7c54220a31ac313cff9894f9d23f560f5c30f"
+HEAD = "29aa5c759c03767f22c95588d8d990d1a565a55d"
 REPO = "mafimusic5-beep/nt"
 FILES = [
     "orchestrator/api.py",
