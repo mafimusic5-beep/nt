@@ -22,6 +22,7 @@ from src.backend.schemas.pool_bridge import (
     PoolReservationReleaseResponse,
     PoolReservationQuarantineRequest,
     PoolReservationQuarantineResponse,
+    PoolOfflineFailoverProbeResponse,
     PoolReservationResponse,
 )
 from src.backend.services.xray_credential_service import (
@@ -462,6 +463,38 @@ class PoolAssignmentService:
             confirmed_at=assignment.confirmed_at,
         )
 
+    def probe_offline_failover(
+        self, req: PoolReservationQuarantineRequest,
+    ) -> PoolOfflineFailoverProbeResponse:
+        """Read-only eligibility check. The legacy bridge MUST revoke old
+        central gate admission before invoking the mutating quarantine call.
+        """
+        self._require_enabled()
+        old = self.db.get(VpnAssignment, req.assignment_id)
+        if old is None or old.subject_type != "legacy_device":
+            return PoolOfflineFailoverProbeResponse(eligible=False)
+        if old.subject_key not in {
+            req.subject_key, f"retired:{old.id}:{req.subject_key}",
+        }:
+            return PoolOfflineFailoverProbeResponse(eligible=False)
+        source = self.db.get(VpnNode, old.node_id)
+        destination = self.db.get(VpnNode, req.destination_node_id)
+        eligible = bool(
+            source is not None and destination is not None
+            and source.id != destination.id
+            and source.health_status == "down"
+            and destination.status == "active"
+            and destination.health_status in {"healthy", "degraded"}
+            and destination.current_clients < destination.capacity_clients
+            and old.status in {"active", "revocation_pending", "revoked"}
+            and (old.device_gate_enforced or old.status == "revoked")
+            and (
+                not settings.device_bound_gate_enabled
+                or VlessDeviceConfigBuilder.gate_endpoint(destination) is not None
+            )
+        )
+        return PoolOfflineFailoverProbeResponse(eligible=eligible)
+
     def quarantine_offline(
         self, req: PoolReservationQuarantineRequest,
     ) -> PoolReservationQuarantineResponse:
@@ -507,9 +540,9 @@ class PoolAssignmentService:
             )
         if assignment.subject_key != req.subject_key:
             raise HTTPException(status_code=409, detail="assignment_subject_mismatch")
-        if assignment.status not in {"revocation_pending", "revoked"}:
+        if assignment.status not in {"active", "revocation_pending", "revoked"}:
             raise HTTPException(status_code=409, detail="assignment_not_released")
-        if assignment.status == "revocation_pending" and not assignment.device_gate_enforced:
+        if assignment.status != "revoked" and not assignment.device_gate_enforced:
             raise HTTPException(status_code=409, detail="device_gate_not_enforced")
 
         # Compare-and-swap prevents maintenance or another failover attempt
@@ -521,7 +554,11 @@ class PoolAssignmentService:
                 VpnAssignment.subject_key == req.subject_key,
                 VpnAssignment.status == assignment.status,
             )
-            .values(subject_key=retired_key)
+            .values(
+                subject_key=retired_key,
+                status="revocation_pending" if assignment.status == "active" else assignment.status,
+                prepare_expires_at=None,
+            )
             .execution_options(synchronize_session=False)
         ).rowcount
         if changed != 1:
