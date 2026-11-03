@@ -138,8 +138,26 @@ def test_remote_release_errors_other_than_timeout_fail_closed(monkeypatch):
 
 def test_probe_fallback_when_health_flips_during_release(monkeypatch):
     events = setup_bridge(monkeypatch, preflight_down=False)
+
+    def probe(assignment_id, subject_key, destination_id):
+        events.append(("probe", assignment_id, destination_id))
+        return sum(event[0] == "probe" for event in events) > 1
+
+    monkeypatch.setattr(bridge, "probe_offline_assignment", probe)
     bridge.refresh_stored_assignment("ABC-123", "device-id", node_id=5)
     assert [entry[0] for entry in events] == [
-        "probe", "remote-release", "central-deny",
+        "probe", "remote-release", "probe", "central-deny",
         "remote-quarantine", "clear-old", "prepare-new",
     ]
+
+
+def test_ssh_failure_while_source_is_healthy_never_revokes_access(monkeypatch):
+    events = setup_bridge(monkeypatch, preflight_down=False)
+    with pytest.raises(bridge.PoolBridgeError, match="assignment_release_failed"):
+        bridge.refresh_stored_assignment("ABC-123", "device-id", node_id=5)
+    assert [entry[0] for entry in events] == [
+        "probe", "remote-release", "probe",
+    ]
+    assert not any(event[0] in {"central-deny", "remote-quarantine",
+                                 "clear-old", "prepare-new"} for event in events)
+
