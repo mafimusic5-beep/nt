@@ -486,7 +486,7 @@ class PoolAssignmentService:
             and destination.status == "active"
             and destination.health_status in {"healthy", "degraded"}
             and destination.current_clients < destination.capacity_clients
-            and old.status in {"active", "revocation_pending", "revoking", "revoked"}
+            and old.status in {"active", "pending", "revocation_pending", "revoking", "revoked"}
             and (old.device_gate_enforced or old.status == "revoked")
             and (
                 not settings.device_bound_gate_enabled
@@ -540,7 +540,7 @@ class PoolAssignmentService:
             )
         if assignment.subject_key != req.subject_key:
             raise HTTPException(status_code=409, detail="assignment_subject_mismatch")
-        if assignment.status not in {"active", "revocation_pending", "revoking", "revoked"}:
+        if assignment.status not in {"active", "pending", "revocation_pending", "revoking", "revoked"}:
             raise HTTPException(status_code=409, detail="assignment_not_released")
         if assignment.status != "revoked" and not assignment.device_gate_enforced:
             raise HTTPException(status_code=409, detail="device_gate_not_enforced")
@@ -556,7 +556,7 @@ class PoolAssignmentService:
             )
             .values(
                 subject_key=retired_key,
-                status="revocation_pending" if assignment.status in {"active", "revoking"} else assignment.status,
+                status="revocation_pending" if assignment.status in {"active", "pending", "revoking"} else assignment.status,
                 prepare_expires_at=None,
             )
             .execution_options(synchronize_session=False)
