@@ -240,6 +240,21 @@ def release_assignment(assignment_id: int) -> dict[str, Any]:
     return result
 
 
+def probe_offline_assignment(
+    assignment_id: int, subject_key: str, destination_node_id: int,
+) -> bool:
+    """Read-only: verify the old node is DOWN and a healthy replacement exists."""
+    result = _request(
+        '/api/v1/internal/pool/assignments/offline-probe',
+        {
+            'assignment_id': assignment_id,
+            'subject_key': subject_key,
+            'destination_node_id': destination_node_id,
+        },
+    )
+    return result.get('eligible') is True
+
+
 def quarantine_offline_assignment(
     assignment_id: int,
     subject_key: str,
@@ -312,29 +327,31 @@ def refresh_stored_assignment(
         and int(stored.get('pool_node_id') or 0) != int(node_id)
     ):
         old_assignment_id = int(stored.get('pool_assignment_id') or 0)
-        try:
-            # Normal switching still requires actual Xray credential removal.
-            release_assignment(old_assignment_id)
-        except PoolBridgeError as exc:
-            # This is NOT a general bypass for failed revocations. Only a
-            # health-confirmed DOWN node with a verified device gate can be
-            # quarantined. Fail closed for all other errors.
-            if exc.reason != 'assignment_release_failed':
-                raise
+        subject = _subject_key(entitlement['code'], device_id)
+        # Consult central HEALTH state before attempting SSH to a known-dead
+        # VPS. This keeps failover quick, rather than always timing out on SSH.
+        down = probe_offline_assignment(old_assignment_id, subject, int(node_id))
+        if not down:
+            try:
+                # Healthy node switching still requires confirmed Xray removal.
+                release_assignment(old_assignment_id)
+            except PoolBridgeError as exc:
+                # Health may have flipped to DOWN between probe and release.
+                if exc.reason != 'assignment_release_failed':
+                    raise
+                down = True
+
+        if down:
             from storage import quarantine_device_pool_assignment
 
+            # Revoke old *central* gate authorization FIRST; never make new
+            # credentials while the previous assignment can still authorize.
             if not quarantine_device_pool_assignment(
                 entitlement['code'], device_id, old_assignment_id,
             ):
                 raise PoolBridgeError('assignment_changed_during_failover', 409)
-            # The old central gate now denies new connections *before* the
-            # modern pool frees the subject for a new reservation. The old
-            # credential/port/capacity record stays for eventual cleanup.
-            quarantine_offline_assignment(
-                old_assignment_id,
-                _subject_key(entitlement['code'], device_id),
-                int(node_id),
-            )
+            # Old modern credential remains counted for deferred remote cleanup.
+            quarantine_offline_assignment(old_assignment_id, subject, int(node_id))
         clear_device_pool_assignment(
             entitlement['code'], device_id, expected_assignment_id=old_assignment_id,
         )
