@@ -139,3 +139,44 @@ def test_cached_down_node_assignment_is_not_returned(db_session):
     with pytest.raises(HTTPException, match="assigned_node_unavailable"):
         service.prepare(request("a"))
     assert db_session.get(VpnAssignment, prepared.assignment_id).status == "active"
+
+
+def test_fast_down_node_probe_quarantines_active_assignment_without_ssh(db_session):
+    old, prepared, service = confirmed_assignment(db_session)
+    new = add_node(db_session)
+    old.health_status = "down"
+    db_session.commit()
+    req = quarantine_request(prepared, new.id)
+    assert service.probe_offline_failover(req).eligible is True
+
+    old_assignment = db_session.get(VpnAssignment, prepared.assignment_id)
+    old_uuid = old_assignment.client_uuid
+    result = service.quarantine_offline(req)
+    assert result.status == "quarantined"
+    db_session.refresh(old_assignment)
+    assert old_assignment.status == "revocation_pending"
+    assert old_assignment.client_uuid == old_uuid
+    assert old_assignment.subject_key != "a" * 64
+    # No transport.remove occurs during quarantine: only maintenance does that.
+    assert service.transport.removed == []
+    assert service.probe_offline_failover(req).eligible is True
+
+    next_assignment = service.prepare(
+        request("a").model_copy(update={"node_id": new.id}),
+    )
+    assert next_assignment.assignment_id != prepared.assignment_id
+    assert next_assignment.node_id == new.id
+
+
+def test_offline_probe_rejects_healthy_node_or_unprotected_credentials(db_session):
+    old, prepared, service = confirmed_assignment(db_session)
+    new = add_node(db_session)
+    req = quarantine_request(prepared, new.id)
+    assert service.probe_offline_failover(req).eligible is False
+    old.health_status = "down"
+    db_session.commit()
+    assert service.probe_offline_failover(req).eligible is True
+    assignment = db_session.get(VpnAssignment, prepared.assignment_id)
+    assignment.device_gate_enforced = False
+    db_session.commit()
+    assert service.probe_offline_failover(req).eligible is False
