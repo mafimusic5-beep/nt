@@ -199,3 +199,21 @@ def test_revoking_lease_can_be_quarantined_while_down(db_session):
     db_session.refresh(old)
     assert old.current_clients == 1  # no premature capacity release
     assert service.transport.removed == []  # no SSH during failover
+
+
+def test_pending_gate_assignment_can_switch_after_node_goes_down(db_session):
+    old, prepared, service = confirmed_assignment(db_session)
+    destination = add_node(db_session)
+    assignment = db_session.get(VpnAssignment, prepared.assignment_id)
+    old.health_status = "down"
+    assignment.status = "pending"
+    db_session.commit()
+    req = quarantine_request(prepared, destination.id)
+    assert service.probe_offline_failover(req).eligible is True
+    assert service.quarantine_offline(req).status == "quarantined"
+    db_session.refresh(assignment)
+    assert assignment.status == "revocation_pending"
+    assert assignment.subject_key.startswith("retired:")
+    db_session.refresh(old)
+    assert old.current_clients == 1
+    assert service.transport.removed == []
