@@ -180,3 +180,22 @@ def test_offline_probe_rejects_healthy_node_or_unprotected_credentials(db_sessio
     assignment.device_gate_enforced = False
     db_session.commit()
     assert service.probe_offline_failover(req).eligible is False
+
+
+def test_revoking_lease_can_be_quarantined_while_down(db_session):
+    old, prepared, service = confirmed_assignment(db_session)
+    destination = add_node(db_session)
+    assignment = db_session.get(VpnAssignment, prepared.assignment_id)
+    old.health_status = "down"
+    assignment.status = "revoking"  # maintenance claimed an SSH retry
+    db_session.commit()
+    req = quarantine_request(prepared, destination.id)
+    assert service.probe_offline_failover(req).eligible
+    result = service.quarantine_offline(req)
+    assert result.status == "quarantined"
+    db_session.refresh(assignment)
+    assert assignment.status == "revocation_pending"
+    assert assignment.subject_key.startswith(f"retired:{assignment.id}:")
+    db_session.refresh(old)
+    assert old.current_clients == 1  # no premature capacity release
+    assert service.transport.removed == []  # no SSH during failover
