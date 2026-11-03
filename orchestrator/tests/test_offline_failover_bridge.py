@@ -161,3 +161,23 @@ def test_ssh_failure_while_source_is_healthy_never_revokes_access(monkeypatch):
     assert not any(event[0] in {"central-deny", "remote-quarantine",
                                  "clear-old", "prepare-new"} for event in events)
 
+
+
+def test_pending_gate_record_is_denyable_and_remains_registered(registered_assignment):
+    device = registered_assignment
+    with sqlite3.connect(device["database_path"]) as con:
+        con.execute(
+            "UPDATE code_devices SET pool_status='pending' WHERE device_id=?",
+            (device["device_id"],),
+        )
+    assert storage.quarantine_device_pool_assignment(
+        device["code"], device["device_id"], 17,
+    )
+    with sqlite3.connect(device["database_path"]) as con:
+        row = con.execute(
+            "SELECT pool_assignment_id, pool_status, active FROM code_devices WHERE device_id=?",
+            (device["device_id"],),
+        ).fetchone()
+    assert row == (17, "revocation_pending", 1)
+    with pytest.raises(DeviceAuthError, match="device_gate_not_authorized"):
+        _authorize(device, device["private_key"])
