@@ -1,0 +1,94 @@
+name: Offline node failover safety checks
+
+on:
+  push:
+    branches:
+      - fix/down-node-safe-gate-failover-20261104
+    paths:
+      - 'orchestrator/**'
+      - 'emery vpn orchestrator/src/**'
+      - 'emery vpn orchestrator/tests/**'
+      - 'tools/stage-safe-offline-failover.py'
+      - '.github/workflows/offline-node-failover-tests.yml'
+  pull_request:
+    paths:
+      - 'orchestrator/**'
+      - 'emery vpn orchestrator/src/**'
+      - 'emery vpn orchestrator/tests/**'
+      - 'tools/stage-safe-offline-failover.py'
+      - '.github/workflows/offline-node-failover-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  central-device-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: orchestrator/requirements.txt
+      - name: Install requirements
+        run: python -m pip install -r orchestrator/requirements.txt pytest==8.4.2
+      - name: Run gate, lease and failover regressions
+        env:
+          PYTHONPATH: orchestrator
+        run: |
+          python -m compileall -q orchestrator
+          python -m pytest -q \
+            orchestrator/tests/test_offline_failover_bridge.py \
+            orchestrator/tests/test_pool_reservation_bridge.py \
+            orchestrator/tests/test_device_gate_auth.py \
+            orchestrator/tests/test_device_recovery.py
+
+  modern-pool:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: emery vpn orchestrator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: emery vpn orchestrator/requirements.txt
+      - name: Install requirements
+        run: python -m pip install -r requirements.txt
+      - name: Run node health, capacity, and failover regressions
+        run: |
+          python -m compileall -q src tests
+          python -m pytest -q \
+            tests/test_offline_failover.py \
+            tests/test_pool_assignments.py \
+            tests/test_region_sync.py \
+            tests/test_region_pool_balancing.py \
+            tests/test_capacity_policy.py
+
+  deployment-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify production patch applies with zero fuzz
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/skryon-base db1b824e483c42389c4b3b81944551c2d43d59dd
+          sudo mkdir -p /opt/nt
+          while IFS= read -r path; do
+            sudo mkdir -p "/opt/nt/$(dirname "$path")"
+            sudo cp "/tmp/skryon-base/$path" "/opt/nt/$path"
+          done <<'FILES'
+          orchestrator/api.py
+          orchestrator/storage.py
+          orchestrator/pool_reservation_bridge.py
+          emery vpn orchestrator/src/backend/schemas/pool_bridge.py
+          emery vpn orchestrator/src/backend/api/routes.py
+          emery vpn orchestrator/src/backend/services/pool_assignment_service.py
+          emery vpn orchestrator/src/backend/services/node_orchestration_service.py
+          FILES
+          sudo python3 tools/stage-safe-offline-failover.py --check
