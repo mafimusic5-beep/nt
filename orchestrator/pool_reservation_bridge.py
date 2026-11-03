@@ -240,6 +240,31 @@ def release_assignment(assignment_id: int) -> dict[str, Any]:
     return result
 
 
+def quarantine_offline_assignment(
+    assignment_id: int,
+    subject_key: str,
+    destination_node_id: int,
+) -> dict[str, Any]:
+    """Called only after the legacy gate record is made non-active.
+
+    The old Xray credential remains recorded as revocation_pending until the
+    recovery/maintenance agent can contact that VPS and remove it remotely.
+    """
+    if assignment_id <= 0 or destination_node_id <= 0:
+        raise PoolBridgeError('invalid_pool_assignment', 503)
+    result = _request(
+        '/api/v1/internal/pool/assignments/quarantine',
+        {
+            'assignment_id': assignment_id,
+            'subject_key': subject_key,
+            'destination_node_id': destination_node_id,
+        },
+    )
+    if result.get('status') != 'quarantined':
+        raise PoolBridgeError('offline_assignment_quarantine_failed', 503)
+    return result
+
+
 def confirm_persisted_assignment(assignment: dict[str, Any]) -> dict[str, Any]:
     """Confirm after the local transaction; leave retry data on failure."""
 
@@ -286,8 +311,33 @@ def refresh_stored_assignment(
         and node_id is not None
         and int(stored.get('pool_node_id') or 0) != int(node_id)
     ):
-        release_assignment(int(stored.get('pool_assignment_id') or 0))
-        clear_device_pool_assignment(entitlement['code'], device_id)
+        old_assignment_id = int(stored.get('pool_assignment_id') or 0)
+        try:
+            # Normal switching still requires actual Xray credential removal.
+            release_assignment(old_assignment_id)
+        except PoolBridgeError as exc:
+            # This is NOT a general bypass for failed revocations. Only a
+            # health-confirmed DOWN node with a verified device gate can be
+            # quarantined. Fail closed for all other errors.
+            if exc.reason != 'assignment_release_failed':
+                raise
+            from storage import quarantine_device_pool_assignment
+
+            if not quarantine_device_pool_assignment(
+                entitlement['code'], device_id, old_assignment_id,
+            ):
+                raise PoolBridgeError('assignment_changed_during_failover', 409)
+            # The old central gate now denies new connections *before* the
+            # modern pool frees the subject for a new reservation. The old
+            # credential/port/capacity record stays for eventual cleanup.
+            quarantine_offline_assignment(
+                old_assignment_id,
+                _subject_key(entitlement['code'], device_id),
+                int(node_id),
+            )
+        clear_device_pool_assignment(
+            entitlement['code'], device_id, expected_assignment_id=old_assignment_id,
+        )
         stored = None
 
     if stored and stored.get('pool_status') == 'pending' and stored.get('pool_confirmation_token'):
