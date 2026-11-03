@@ -67,6 +67,10 @@ class PoolReservationQuarantineResponse(BaseModel):
 
 
 
+class PoolOfflineFailoverProbeResponse(BaseModel):
+    eligible: bool
+
+
 class PoolPolicyApplyRequest(BaseModel):
     assignment_id: int = Field(gt=0)
     traffic_policy: str = Field(pattern=r"^(international|russia)$")
