@@ -240,6 +240,46 @@ def release_assignment(assignment_id: int) -> dict[str, Any]:
     return result
 
 
+def probe_offline_assignment(
+    assignment_id: int, subject_key: str, destination_node_id: int,
+) -> bool:
+    """Read-only: verify the old node is DOWN and a healthy replacement exists."""
+    result = _request(
+        '/api/v1/internal/pool/assignments/offline-probe',
+        {
+            'assignment_id': assignment_id,
+            'subject_key': subject_key,
+            'destination_node_id': destination_node_id,
+        },
+    )
+    return result.get('eligible') is True
+
+
+def quarantine_offline_assignment(
+    assignment_id: int,
+    subject_key: str,
+    destination_node_id: int,
+) -> dict[str, Any]:
+    """Called only after the legacy gate record is made non-active.
+
+    The old Xray credential remains recorded as revocation_pending until the
+    recovery/maintenance agent can contact that VPS and remove it remotely.
+    """
+    if assignment_id <= 0 or destination_node_id <= 0:
+        raise PoolBridgeError('invalid_pool_assignment', 503)
+    result = _request(
+        '/api/v1/internal/pool/assignments/quarantine',
+        {
+            'assignment_id': assignment_id,
+            'subject_key': subject_key,
+            'destination_node_id': destination_node_id,
+        },
+    )
+    if result.get('status') != 'quarantined':
+        raise PoolBridgeError('offline_assignment_quarantine_failed', 503)
+    return result
+
+
 def confirm_persisted_assignment(assignment: dict[str, Any]) -> dict[str, Any]:
     """Confirm after the local transaction; leave retry data on failure."""
 
@@ -286,8 +326,39 @@ def refresh_stored_assignment(
         and node_id is not None
         and int(stored.get('pool_node_id') or 0) != int(node_id)
     ):
-        release_assignment(int(stored.get('pool_assignment_id') or 0))
-        clear_device_pool_assignment(entitlement['code'], device_id)
+        old_assignment_id = int(stored.get('pool_assignment_id') or 0)
+        subject = _subject_key(entitlement['code'], device_id)
+        # Consult central HEALTH state before attempting SSH to a known-dead
+        # VPS. This keeps failover quick, rather than always timing out on SSH.
+        down = probe_offline_assignment(old_assignment_id, subject, int(node_id))
+        if not down:
+            try:
+                # Healthy node switching still requires confirmed Xray removal.
+                release_assignment(old_assignment_id)
+            except PoolBridgeError as exc:
+                # A failed SSH removal does NOT prove the node is DOWN.
+                # Re-read authoritative health; never disable an active user's
+                # gateway on an ambiguous transport failure.
+                if exc.reason != 'assignment_release_failed':
+                    raise
+                if not probe_offline_assignment(old_assignment_id, subject, int(node_id)):
+                    raise
+                down = True
+
+        if down:
+            from storage import quarantine_device_pool_assignment
+
+            # Revoke old *central* gate authorization FIRST; never make new
+            # credentials while the previous assignment can still authorize.
+            if not quarantine_device_pool_assignment(
+                entitlement['code'], device_id, old_assignment_id,
+            ):
+                raise PoolBridgeError('assignment_changed_during_failover', 409)
+            # Old modern credential remains counted for deferred remote cleanup.
+            quarantine_offline_assignment(old_assignment_id, subject, int(node_id))
+        clear_device_pool_assignment(
+            entitlement['code'], device_id, expected_assignment_id=old_assignment_id,
+        )
         stored = None
 
     if stored and stored.get('pool_status') == 'pending' and stored.get('pool_confirmation_token'):

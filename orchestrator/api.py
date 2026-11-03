@@ -355,7 +355,7 @@ def vpn_session_acquire(payload: VpnSessionAcquireRequest, request: Request):
                 continue
             try:
                 release_assignment(assignment_id)
-                clear_device_pool_assignment(raw_code, stale_device_id)
+                clear_device_pool_assignment(raw_code, stale_device_id, expected_assignment_id=assignment_id)
             except PoolBridgeError:
                 pass
         try:
@@ -445,7 +445,7 @@ def vpn_session_release(payload: VpnSessionControlRequest, request: Request):
     if pool_bridge_enabled() and assignment_id > 0:
         try:
             release_assignment(assignment_id)
-            clear_device_pool_assignment(raw_code, device_id)
+            clear_device_pool_assignment(raw_code, device_id, expected_assignment_id=assignment_id)
         except PoolBridgeError:
             cleanup_pending = True
     return {'ok': True, 'cleanup_pending': cleanup_pending}

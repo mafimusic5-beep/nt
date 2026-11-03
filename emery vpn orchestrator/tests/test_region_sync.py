@@ -36,6 +36,6 @@ def test_disabling_node_changes_old_client_revision_and_hides_server(db_session)
     after_rows = SubscriptionService(db_session).list_vpn_servers()
 
     assert result["detail"] == "disabled"
-    assert after_count == 1
+    assert after_count == 0
     assert after_revision != before_revision
-    assert after_rows[0]["is_available"] is False
+    assert after_rows == []  # DOWN/disabled regions are not user-visible

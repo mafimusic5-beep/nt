@@ -52,6 +52,25 @@ class PoolReservationReleaseResponse(BaseModel):
     status: str
 
 
+
+class PoolReservationQuarantineRequest(BaseModel):
+    """Authenticated bridge request after it has disabled old gate admission."""
+
+    assignment_id: int = Field(gt=0)
+    subject_key: str = Field(pattern=r"^[a-f0-9]{64}$")
+    destination_node_id: int = Field(gt=0)
+
+
+class PoolReservationQuarantineResponse(BaseModel):
+    assignment_id: int
+    status: str
+
+
+
+class PoolOfflineFailoverProbeResponse(BaseModel):
+    eligible: bool
+
+
 class PoolPolicyApplyRequest(BaseModel):
     assignment_id: int = Field(gt=0)
     traffic_policy: str = Field(pattern=r"^(international|russia)$")

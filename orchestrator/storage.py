@@ -170,11 +170,41 @@ def save_device_pool_assignment(code: str, device_id: str, assignment: Dict[str,
         save_device_pool_assignment_in_connection(con, code, device_id, assignment)
 
 
-def clear_device_pool_assignment(code: str, device_id: str) -> None:
+def quarantine_device_pool_assignment(code: str, device_id: str, assignment_id: int) -> bool:
+    """Deny all future gate proofs for one *specific* old assignment first.
+
+    Changing pool_status from 'active' is the central access revocation.
+    Subscriptions, registration and session concurrency limits are untouched.
+    Do not clear this record until the pool has durably quarantined the old
+    server credential for subsequent remote cleanup.
+    """
+    if assignment_id <= 0:
+        return False
     with connect() as con:
         _ensure_pool_assignment_columns(con)
+        updated = con.execute(
+            """
+            UPDATE code_devices
+               SET pool_status = 'revocation_pending', pool_updated_at = ?
+             WHERE code = ? AND device_id = ? AND pool_assignment_id = ?
+               AND pool_status IN ('active', 'pending', 'revocation_pending')
+            """,
+            (now_iso(), format_code(code), device_id.strip()[:128], assignment_id),
+        )
+        return updated.rowcount == 1
+
+
+def clear_device_pool_assignment(
+    code: str, device_id: str, expected_assignment_id: int | None = None,
+) -> None:
+    with connect() as con:
+        _ensure_pool_assignment_columns(con)
+        condition = " AND pool_assignment_id = ?" if expected_assignment_id is not None else ""
+        params = (now_iso(), format_code(code), device_id.strip()[:128])
+        if expected_assignment_id is not None:
+            params += (int(expected_assignment_id),)
         con.execute(
-            '''
+            f'''
             UPDATE code_devices
             SET pool_assignment_id = NULL,
                 pool_status = '',
@@ -193,9 +223,9 @@ def clear_device_pool_assignment(code: str, device_id: str) -> None:
                 pool_entitlement_hash = '',
                 pool_entitlement_expires_at = '',
                 pool_updated_at = ?
-            WHERE code = ? AND device_id = ?
+            WHERE code = ? AND device_id = ?{condition}
             ''',
-            (now_iso(), format_code(code), device_id.strip()[:128]),
+            params,
         )
 
 
