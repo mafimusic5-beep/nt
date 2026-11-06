@@ -1,0 +1,37 @@
+name: Xray loopback API routing safety
+
+on:
+  push:
+    branches:
+      - fix/xray-api-route-loop-20261106
+  pull_request:
+    paths:
+      - 'emery vpn orchestrator/src/backend/services/traffic_policy_service.py'
+      - 'emery vpn orchestrator/tests/test_xray_api_route_repair.py'
+      - 'emery vpn orchestrator/tests/test_traffic_policy_service.py'
+      - 'tools/repair-xray-api-route.py'
+      - '.github/workflows/xray-api-route-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  routing-regressions:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: emery vpn orchestrator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: emery vpn orchestrator/requirements.txt
+      - name: Dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Validate script and all routing regressions
+        run: |
+          python -m py_compile ../tools/repair-xray-api-route.py
+          python -m py_compile src/backend/services/traffic_policy_service.py
+          python -m pytest -q tests/test_traffic_policy_service.py tests/test_xray_api_route_repair.py
