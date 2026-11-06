@@ -182,3 +182,25 @@ def test_manual_vps_direct_bootstrap_uses_single_ipv4_egress_family():
     assert '"settings":{"domainStrategy":"UseIPv4"}' in script
     assert "sendThrough" not in script
     assert "wg-quick@" not in script
+
+
+def test_policy_script_dispatches_loopback_xray_api_before_any_other_route():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"international","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert '"inboundTag": ["api"]' in script
+    assert '"outboundTag": "api"' in script
+    assert 'routing["rules"] = [api_dispatch_rule] + managed_rules + preserved_rules' in script
+    assert 'preserved_fingerprints = set()' in script
+    assert 'if fingerprint in preserved_fingerprints:' in script
+    # A listener can be reachable on TCP yet gRPC hang if Xray proxies API
+    # requests back into the same loopback listener via the default outbound.
+    assert 'api_dispatch_rule = {' in script
+
+
+def test_policy_script_removes_historical_api_rule_before_reinstall_first():
+    script = TrafficPolicyService._remote_script(
+        '{"assignment_id":42,"traffic_policy":"russia","config_path":"/usr/local/etc/xray/config.json"}'
+    )
+    assert 'if item.get("outboundTag") == "api" and inbound_tags == ["api"]:' in script
+    assert 'routing["rules"] = [api_dispatch_rule] + managed_rules + preserved_rules' in script
