@@ -391,11 +391,26 @@ config["api"] = desired_api
 
 routing = config.setdefault("routing", {})
 routing["domainStrategy"] = "IPIfNonMatch"
+# The loopback RoutingService listener is an Xray *inbound*. Without this
+# first-priority dispatch rule its gRPC requests are forwarded by the default
+# freedom outbound straight back to 127.0.0.1:10085 (a self-proxy loop).
+# A LISTEN socket by itself is NOT evidence that the control API works.
+api_dispatch_rule = {
+    "type": "field",
+    "ruleTag": "skryon-api-dispatch",
+    "inboundTag": ["api"],
+    "outboundTag": "api",
+}
 preserved_rules = []
+preserved_fingerprints = set()
 for item in list(routing.get("rules") or []):
     inbound_tags = item.get("inboundTag") or []
     if isinstance(inbound_tags, str):
         inbound_tags = [inbound_tags]
+    # Remove old placements of the dispatch rule so it is always installed
+    # FIRST, before broad legacy private-IP blocks. Keep unrelated rules.
+    if item.get("outboundTag") == "api" and inbound_tags == ["api"]:
+        continue
     touches_managed = any(str(value).startswith("emery-device-") for value in inbound_tags)
     if touches_managed or str(item.get("ruleTag") or "").startswith(POLICY_RULE_PREFIX):
         continue
@@ -412,6 +427,13 @@ for item in list(routing.get("rules") or []):
                 migrated.append(value)
         item = dict(item)
         item["ip"] = migrated
+    # Historical bootstrap/policy runs accumulated hundreds of duplicate
+    # untagged private-IP blocks. Rewriting all of them on every connection
+    # made hot API updates very expensive. Preserve one copy, not 300.
+    fingerprint = json.dumps(item, sort_keys=True, separators=(",", ":"))
+    if fingerprint in preserved_fingerprints:
+        continue
+    preserved_fingerprints.add(fingerprint)
     preserved_rules.append(item)
 
 # Six node-wide rules at most, regardless of whether there are 1, 20, or 100
@@ -473,7 +495,7 @@ if all_tags:
             "outboundTag": "direct",
         }
     )
-routing["rules"] = managed_rules + preserved_rules
+routing["rules"] = [api_dispatch_rule] + managed_rules + preserved_rules
 
 candidate_text = json.dumps(config, ensure_ascii=False, indent=2) + chr(10)
 state_text = json.dumps(policies, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + chr(10)
