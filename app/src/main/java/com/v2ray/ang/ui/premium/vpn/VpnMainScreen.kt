@@ -1,6 +1,7 @@
 package com.v2ray.ang.ui.premium.vpn
 
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -58,6 +59,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import com.v2ray.ang.ui.premium.vpn.TvCrispText as Text
 import androidx.compose.material3.TextButton
+import androidx.core.content.FileProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -90,6 +92,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.dto.CheckUpdateResult
 import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.RegionalPolicyManager
@@ -97,6 +101,7 @@ import com.v2ray.ang.handler.RegionalPolicyMode
 import com.v2ray.ang.handler.SkryonRegionPreference
 import com.v2ray.ang.handler.SkryonVpnConnectionIntent
 import com.v2ray.ang.handler.SkryonVpnAutoConnectScheduler
+import com.v2ray.ang.handler.UpdateCheckerManager
 import com.v2ray.ang.handler.shouldAutoReconnectVpn
 import com.v2ray.ang.ui.premium.SKRYON_ACTIVATION_CODE_LENGTH
 import com.v2ray.ang.ui.premium.sanitizeSkryonActivationCode
@@ -104,6 +109,7 @@ import com.v2ray.ang.util.Utils
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -1138,6 +1144,10 @@ private fun AdvancedPage(
 
         Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
 
+        AppUpdateCard(compact = compact, tight = tight)
+
+        Spacer(Modifier.height(if (tight) 12.dp else 16.dp))
+
         DnsSettingsCard(
             dnsValue = dnsValue,
             statusText = statusText,
@@ -1533,6 +1543,121 @@ private fun DnsSettingsCard(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+}
+
+/**
+ * Manual APK update entry point for the SKRYON TV/phone Compose application.
+ * The OS installer asks the user to approve the actual package replacement.
+ */
+@Composable
+private fun AppUpdateCard(compact: Boolean, tight: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checkingOrDownloading by remember { mutableStateOf(false) }
+    var statusText by remember { mutableStateOf("") }
+    var offeredUpdate by remember { mutableStateOf<CheckUpdateResult?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(if (compact) 18.dp else 22.dp))
+            .padding(if (tight) 14.dp else 18.dp),
+    ) {
+        Text(
+            text = "Обновление приложения",
+            style = MaterialTheme.typography.titleMedium,
+            color = AppUiColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Текущая версия: ${BuildConfig.VERSION_NAME}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = AppUiColors.TextSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            enabled = !checkingOrDownloading,
+            onClick = {
+                scope.launch {
+                    checkingOrDownloading = true
+                    statusText = ""
+                    try {
+                        val result = UpdateCheckerManager.checkForUpdate()
+                        if (result.hasUpdate) {
+                            offeredUpdate = result
+                        } else {
+                            statusText = "Установлена последняя версия"
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        statusText = "Не удалось проверить обновление. Проверьте интернет и повторите."
+                    } finally {
+                        checkingOrDownloading = false
+                    }
+                }
+            },
+            modifier = Modifier.tvRemoteHighlight(RoundedCornerShape(12.dp)),
+        ) {
+            Text(if (checkingOrDownloading) "Подождите…" else "Проверить обновление")
+        }
+        if (statusText.isNotBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text(statusText, color = AppUiColors.TextSecondary, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+
+    offeredUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { if (!checkingOrDownloading) offeredUpdate = null },
+            title = { Text("Доступна версия ${update.latestVersion.orEmpty()}") },
+            text = { Text(update.releaseNotes?.take(400).orEmpty().ifBlank { "Исправления и улучшения SKRYON." }) },
+            confirmButton = {
+                TextButton(
+                    enabled = !checkingOrDownloading,
+                    onClick = {
+                        offeredUpdate = null
+                        val apkUrl = update.downloadUrl
+                        if (apkUrl.isNullOrBlank()) {
+                            statusText = "Для этой версии не опубликован подходящий APK."
+                        } else {
+                            scope.launch {
+                                checkingOrDownloading = true
+                                statusText = "Скачиваем обновление…"
+                                try {
+                                    val apk = UpdateCheckerManager.downloadApk(context, apkUrl)
+                                        ?: error("APK download failed")
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.cache",
+                                        apk,
+                                    )
+                                    val installerIntent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, "application/vnd.android.package-archive")
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(installerIntent)
+                                    statusText = "Подтвердите установку в системном окне Android."
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    statusText = "Не удалось скачать или открыть обновление. Проверьте интернет и разрешение на установку APK."
+                                } finally {
+                                    checkingOrDownloading = false
+                                }
+                            }
+                        }
+                    },
+                ) { Text("Обновить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { offeredUpdate = null }) { Text("Позже") }
+            },
+        )
     }
 }
 
