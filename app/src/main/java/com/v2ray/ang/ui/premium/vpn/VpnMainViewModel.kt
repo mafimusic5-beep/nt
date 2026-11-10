@@ -561,7 +561,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
 
-            val result = withTimeoutOrNull(3_500L) {
+            val result = withTimeoutOrNull(8_500L) {
                 EmeryBackendClient.fetchVpnServers()
             } ?: Result.failure(IllegalStateException("server_list_timeout"))
             result.fold(
@@ -1149,13 +1149,19 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         val normalizedState = state.copy(
             activationKey = state.activationKey.ifBlank { savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY } },
         )
-        // The chooser may display offline and cached regions, but must
-        // never send those IDs as an allegedly connectable pool.
-        val availableIds = normalizedState.locations
-            .filter { it.availability == VpnRegionAvailability.AVAILABLE }
-            .mapNotNull { it.id.toLongOrNull() }
-        val preferredId = if (normalizedState.randomRegion) null else SkryonRegionPreference.pinnedServerId()
-        val serverId = chooseRegionPoolId(preferredId, availableIds)
+        // Match the button policy: cached IDs may request a lease, but never
+        // start a tunnel from cached config or bypass server-side authorization.
+        // Read the latest directory after access/policy checks have completed.
+        val selection = _uiState.value.copy(
+            randomRegion = normalizedState.randomRegion,
+            selectedLocation = normalizedState.selectedLocation,
+        )
+        val candidateIds = selection.connectionCandidates.mapNotNull { it.id.toLongOrNull() }
+        val preferredId = if (selection.randomRegion) null else selection.selectedLocation.id.toLongOrNull()
+        if (candidateIds.isEmpty() || (preferredId != null && preferredId !in candidateIds)) {
+            return Result.failure(IllegalStateException("server_selection_refresh_required"))
+        }
+        val serverId = chooseRegionPoolId(preferredId, candidateIds)
             ?: return Result.failure(IllegalStateException("server_selection_refresh_required"))
         return EmeryVpnSync.connectToServer(normalizedState.activationKey, serverId)
     }

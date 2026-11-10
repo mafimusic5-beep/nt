@@ -49,9 +49,9 @@ object EmeryBackendClient {
     // slow backend must never freeze the picker for the global API timeout.
     // This client is only used for the public, idempotent region GET.
     private val regionsClient = client.newBuilder()
-        .connectTimeout(2, TimeUnit.SECONDS)
-        .readTimeout(3, TimeUnit.SECONDS)
-        .callTimeout(3, TimeUnit.SECONDS)
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
+        .callTimeout(8, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
         .build()
 

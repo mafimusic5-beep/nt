@@ -300,18 +300,24 @@ data class VpnMainUiState(
             VpnConnectionState.Connected -> "Disconnect"
         }
 
+    // Directory health is advisory. CHECKING may still request an authenticated
+    // lease; only the backend can authorize a session. Prefer fresh live pools.
+    val connectionCandidates: List<VpnLocationOption>
+        get() {
+            val known = locations.filter { (it.id.toLongOrNull() ?: 0L) > 0L }
+            if (!randomRegion) {
+                return known.filter {
+                    it.id == selectedLocation.id &&
+                        it.availability != VpnRegionAvailability.UNAVAILABLE
+                }
+            }
+            val live = known.filter { it.availability == VpnRegionAvailability.AVAILABLE }
+            return live.ifEmpty { known.filter { it.availability == VpnRegionAvailability.CHECKING } }
+        }
+
     val connectButtonEnabled: Boolean
         get() = when (connectionState) {
-            VpnConnectionState.Disconnected -> activationKey.isNotBlank() &&
-                if (randomRegion) {
-                    locations.any {
-                        it.id.toLongOrNull() != null &&
-                            it.availability == VpnRegionAvailability.AVAILABLE
-                    }
-                } else {
-                    selectedLocation.id.toLongOrNull() != null &&
-                        selectedLocation.availability == VpnRegionAvailability.AVAILABLE
-                }
+            VpnConnectionState.Disconnected -> activationKey.isNotBlank() && connectionCandidates.isNotEmpty()
             VpnConnectionState.Connecting -> false
             VpnConnectionState.Connected -> true
         }
