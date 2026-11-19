@@ -194,6 +194,18 @@ class V2RayVpnService : VpnService(), ServiceControl {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        // A repeated start (including an explicit Connect or OS replay) must
+        // NEVER rebuild the live TUN. Re-establishing the interface closes the
+        // old descriptor, disconnects every app and needlessly resets Xray.
+        // Wi-Fi/mobile outages are already handled by the live service.
+        if (stopInProgress) {
+            Log.i(AppConfig.TAG, "StartCore-VPN: ignoring start during shutdown")
+            return START_NOT_STICKY
+        }
+        if (shouldKeepExistingVpnInterface(isRunning, stopInProgress)) {
+            Log.i(AppConfig.TAG, "StartCore-VPN: retaining live interface on duplicate start")
+            return START_STICKY
+        }
         // Android Always-on VPN can relaunch us after STOP. Respect the
         // explicitly persisted user preference before starting a new tunnel.
         if (EmeryAccessManager.loadProfile() != null) {

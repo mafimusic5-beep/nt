@@ -294,68 +294,90 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         )
 
         trafficVerificationJob = viewModelScope.launch {
-            val result = withTimeoutOrNull(TUNNEL_VERIFY_TIMEOUT_MS) {
-                tunnelVerifier.verify { probe ->
+            var failedChecks = 0
+            // Once the TUN is established, a bad or absent radio link must
+            // never trigger a STOP/start cycle. Wait for packets to flow again.
+            while (isActive) {
+                val result = withTimeoutOrNull(TUNNEL_VERIFY_TIMEOUT_MS) {
+                    tunnelVerifier.verify { probe ->
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H-TRAFFIC",
+                            location = "VpnTunnelTrafficVerifier.kt:verify",
+                            message = "tunnel traffic probe",
+                            runId = "vpn-connect",
+                            data = JSONObject()
+                                .put("attempt", probe.attempt)
+                                .put("stage", probe.stage)
+                                .put("reason", probe.reason)
+                                .put("quality", if (probe.ok) "verified" else "pending"),
+                        )
+                    }
+                }
+
+                if (attempt != connectionAttempt || _uiState.value.connectionState != VpnConnectionState.Connecting) {
+                    return@launch
+                }
+
+                if (result?.ok == true) {
+                    awaitingStartConfirmation = false
+                    preserveConnectionFailure = false
+                    _uiState.update { state ->
+                        state.copy(
+                            activationKey = state.activationKey.ifBlank {
+                                savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
+                            },
+                            connectionState = VpnConnectionState.Connected,
+                            locationsError = "",
+                        )
+                    }
+                    SkryonVpnConnectionIntent.finishUserConnectionAttempt()
+                    SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
+                    startTimer()
                     VpnUiDebugLogger.log(
                         hypothesisId = "H-TRAFFIC",
-                        location = "VpnTunnelTrafficVerifier.kt:verify",
-                        message = "tunnel traffic probe",
+                        location = "VpnMainViewModel.kt:onDaemonStarted",
+                        message = "tunnel traffic verified",
                         runId = "vpn-connect",
                         data = JSONObject()
-                            .put("attempt", probe.attempt)
-                            .put("stage", probe.stage)
-                            .put("reason", probe.reason)
-                            .put("quality", if (probe.ok) "verified" else "pending"),
+                            .put("attempt", result.attempt)
+                            .put("reason", result.reason)
+                            .put("quality", "verified"),
                     )
-                }
-            }
-
-            if (attempt != connectionAttempt || _uiState.value.connectionState != VpnConnectionState.Connecting) {
-                return@launch
-            }
-
-            if (result?.ok == true) {
-                awaitingStartConfirmation = false
-                preserveConnectionFailure = false
-                _uiState.update { state ->
-                    state.copy(
-                        activationKey = state.activationKey.ifBlank {
-                            savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
-                        },
-                        connectionState = VpnConnectionState.Connected,
-                        locationsError = "",
+                    return@launch
+                } else {
+                    awaitingStartConfirmation = false
+                    preserveConnectionFailure = true
+                    val reason = result?.reason ?: "verification_timeout"
+                    VpnUiDebugLogger.log(
+                        hypothesisId = "H-TRAFFIC",
+                        location = "VpnMainViewModel.kt:onDaemonStarted",
+                        message = "tunnel traffic verification failed",
+                        runId = "vpn-connect",
+                        data = JSONObject()
+                            .put("attempt", result?.attempt ?: 0)
+                            .put("reason", reason)
+                            .put("quality", "failed"),
                     )
-                }
-                SkryonVpnConnectionIntent.finishUserConnectionAttempt()
-                SkryonVpnAutoConnectScheduler.ensureScheduled(getApplication())
-                startTimer()
-                VpnUiDebugLogger.log(
-                    hypothesisId = "H-TRAFFIC",
-                    location = "VpnMainViewModel.kt:onDaemonStarted",
-                    message = "tunnel traffic verified",
-                    runId = "vpn-connect",
-                    data = JSONObject()
-                        .put("attempt", result.attempt)
-                        .put("reason", result.reason)
-                        .put("quality", "verified"),
-                )
-            } else {
-                awaitingStartConfirmation = false
-                preserveConnectionFailure = true
-                val reason = result?.reason ?: "verification_timeout"
-                VpnUiDebugLogger.log(
-                    hypothesisId = "H-TRAFFIC",
-                    location = "VpnMainViewModel.kt:onDaemonStarted",
-                    message = "tunnel traffic verification failed",
-                    runId = "vpn-connect",
-                    data = JSONObject()
-                        .put("attempt", result?.attempt ?: 0)
-                        .put("reason", reason)
-                        .put("quality", "failed"),
-                )
-                setDisconnectedWithError("VPN запущен, но трафик через туннель не проходит")
-                if (daemonRunning == true) {
-                    V2RayServiceManager.stopVService(getApplication())
+                    if (shouldRetainVpnAfterProbeFailure(
+                            daemonRunning = daemonRunning == true,
+                            userWantsVpn = SkryonVpnConnectionIntent.isArmed(),
+                            stopRequested = stopRequested,
+                        )
+                    ) {
+                        failedChecks++
+                        _uiState.update { state ->
+                            if (state.connectionState == VpnConnectionState.Connecting) {
+                                state.copy(locationsError = "Туннель включён. Ожидаем восстановление интернета")
+                            } else state
+                        }
+                        delay(vpnProbeRetryDelayMs(failedChecks))
+                        continue
+                    }
+                    // Only an actual service stop, a manual OFF or revoked VPN
+                    // permission may end verification. Do not stop a live TUN just
+                    // because HTTPS was unreachable on a weak physical network.
+                    setDisconnectedWithError("VPN запущен, но трафик через туннель не проходит")
+                    return@launch
                 }
             }
         }
