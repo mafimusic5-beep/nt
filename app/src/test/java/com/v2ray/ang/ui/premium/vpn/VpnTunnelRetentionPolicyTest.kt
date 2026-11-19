@@ -21,6 +21,14 @@ class VpnTunnelRetentionPolicyTest {
     }
 
     @Test
+    fun uiRecreationKeepsLiveTunInsteadOfAcquiringAnotherSession() {
+        assertTrue(shouldResumeExistingVpnTunnel(true, true, false))
+        assertFalse(shouldResumeExistingVpnTunnel(false, true, false))
+        assertFalse(shouldResumeExistingVpnTunnel(true, false, false))
+        assertFalse(shouldResumeExistingVpnTunnel(true, true, true))
+    }
+
+    @Test
     fun repeatedVerificationIsBackedOffAndNeverSpins() {
         assertEquals(2_000L, vpnProbeRetryDelayMs(1))
         assertEquals(4_000L, vpnProbeRetryDelayMs(2))

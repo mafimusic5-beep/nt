@@ -346,7 +346,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 } else {
                     awaitingStartConfirmation = false
-                    preserveConnectionFailure = true
+                    // A transport outage is not a terminal connection failure.
+                    // Preserve error state only if verification truly cannot continue.
                     val reason = result?.reason ?: "verification_timeout"
                     VpnUiDebugLogger.log(
                         hypothesisId = "H-TRAFFIC",
@@ -376,6 +377,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     // Only an actual service stop, a manual OFF or revoked VPN
                     // permission may end verification. Do not stop a live TUN just
                     // because HTTPS was unreachable on a weak physical network.
+                    preserveConnectionFailure = true
                     setDisconnectedWithError("VPN запущен, но трафик через туннель не проходит")
                     return@launch
                 }
@@ -952,6 +954,23 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
 
         connectJob = viewModelScope.launch {
             refreshDaemonStateIfUnknown()
+            // The UI can temporarily report Disconnected after an Activity
+            // recreation even when the other process still owns a working TUN.
+            // Attaching to its traffic verification must not acquire a second
+            // lease or stop/recreate the existing VPN.
+            if (shouldResumeExistingVpnTunnel(
+                    serviceAlive = SkryonVpnConnectionIntent.isVpnServiceAlive(),
+                    sessionPresent = !MmkvManager.decodeSettingsString(
+                        SKRYON_VPN_SESSION_ID_PREF, "",
+                    ).isNullOrBlank(),
+                    stopRequested = stopRequested,
+                )
+            ) {
+                daemonRunning = true
+                awaitingStartConfirmation = true
+                onDaemonStarted()
+                return@launch
+            }
 
             val accessVerification = EmeryBackendClient.fetchProfile(
                 accessKey = currentState.activationKey,
@@ -1141,6 +1160,8 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         skryonConnectFailureMessage(reason)
 
     private fun scheduleAutomaticRecovery() {
+        // A stale UI state is not evidence that the separate VPN process died.
+        if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return
         if (SkryonVpnConnectionIntent.shouldRetry(
                 networkAvailable = true,
                 vpnAlreadyRunning = false,
