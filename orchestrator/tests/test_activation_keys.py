@@ -540,22 +540,32 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         self.assertFalse(checkout_routes.checkout_secret_valid('wrong'))
         self.assertTrue(checkout_routes.checkout_secret_valid('test-checkout-secret'))
 
-    def test_renewal_rejects_banned_key_and_unsafe_plan_downgrade(self) -> None:
+    def test_renewal_preserves_family_plan_despite_requested_downgrade_and_rejects_banned_key(self) -> None:
         family_code = self.create_code('family', 5)
         for index in range(3):
             device_id = f'family-device-{index}'
             self.register(code=family_code, device_id=device_id)
             device_auth.acquire_vpn_session(family_code, device_id)
-        conflict = checkout_routes.issue_renewal(
+        before = storage.get_activation_code(family_code)
+        # Renewal intentionally keeps the authenticated code's paid plan.
+        # A caller must not be able to lower the quota for an active family.
+        renewed = checkout_routes.issue_renewal(
             family_code,
             'personal',
             customer='tests',
             months=1,
         )
-        self.assertFalse(conflict['ok'])
-        self.assertEqual('device_limit_conflict', conflict['reason'])
-        self.assertEqual(3, conflict['usedDevices'])
-        self.assertEqual(1, conflict['maxDevices'])
+        after = storage.get_activation_code(family_code)
+        self.assertTrue(renewed['ok'])
+        self.assertEqual('family', renewed['plan'])
+        self.assertEqual(5, renewed['maxDevices'])
+        self.assertEqual('family', after['plan'])
+        self.assertEqual(5, after['max_devices'])
+        self.assertEqual(3, after['used_devices'])
+        self.assertGreater(
+            storage.parse_iso(after['expires_at']),
+            storage.parse_iso(before['expires_at']),
+        )
 
         banned_code = self.create_code('personal', 1)
         storage.revoke_activation_code(banned_code)
@@ -568,7 +578,7 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         self.assertFalse(banned['ok'])
         self.assertEqual('banned', banned['reason'])
 
-    def test_valid_renewal_can_upgrade_plan(self) -> None:
+    def test_renewal_cannot_upgrade_plan_from_untrusted_request(self) -> None:
         code = self.create_code('personal', 1)
         self.register(code=code, device_id='upgrade-device')
         before = storage.get_activation_code(code)
@@ -580,9 +590,10 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         )
         after = storage.get_activation_code(code)
         self.assertTrue(result['ok'])
-        self.assertEqual(5, result['maxDevices'])
-        self.assertEqual('family', after['plan'])
-        self.assertEqual(5, after['max_devices'])
+        self.assertEqual('personal', result['plan'])
+        self.assertEqual(1, result['maxDevices'])
+        self.assertEqual('personal', after['plan'])
+        self.assertEqual(1, after['max_devices'])
         self.assertGreater(
             storage.parse_iso(after['expires_at']),
             storage.parse_iso(before['expires_at']),
