@@ -286,6 +286,18 @@ data class VpnMainUiState(
             return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
         }
 
+    /**
+     * Lightweight connection-stage hint shared by handheld and TV screens.
+     * Connecting is not proof of a working tunnel; Connected is set only
+     * after verified traffic. Error text is already shown via locationsError.
+     */
+    val connectionNotice: String
+        get() = when {
+            connectionState != VpnConnectionState.Connecting -> ""
+            locationsError.isNotBlank() -> ""
+            else -> "Подключаем VPN и проверяем соединение…"
+        }
+
     val protectionLabel: String
         get() = when (connectionState) {
             VpnConnectionState.Connected -> "Protected"
