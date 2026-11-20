@@ -10,6 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -540,22 +541,32 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         self.assertFalse(checkout_routes.checkout_secret_valid('wrong'))
         self.assertTrue(checkout_routes.checkout_secret_valid('test-checkout-secret'))
 
-    def test_renewal_rejects_banned_key_and_unsafe_plan_downgrade(self) -> None:
+    def test_renewal_preserves_family_plan_despite_requested_downgrade_and_rejects_banned_key(self) -> None:
         family_code = self.create_code('family', 5)
         for index in range(3):
             device_id = f'family-device-{index}'
             self.register(code=family_code, device_id=device_id)
             device_auth.acquire_vpn_session(family_code, device_id)
-        conflict = checkout_routes.issue_renewal(
+        before = storage.get_activation_code(family_code)
+        # Renewal intentionally keeps the authenticated code's paid plan.
+        # A caller must not be able to lower the quota for an active family.
+        renewed = checkout_routes.issue_renewal(
             family_code,
             'personal',
             customer='tests',
             months=1,
         )
-        self.assertFalse(conflict['ok'])
-        self.assertEqual('device_limit_conflict', conflict['reason'])
-        self.assertEqual(3, conflict['usedDevices'])
-        self.assertEqual(1, conflict['maxDevices'])
+        after = storage.get_activation_code(family_code)
+        self.assertTrue(renewed['ok'])
+        self.assertEqual('family', renewed['plan'])
+        self.assertEqual(5, renewed['maxDevices'])
+        self.assertEqual('family', after['plan'])
+        self.assertEqual(5, after['max_devices'])
+        self.assertEqual(3, after['used_devices'])
+        self.assertGreater(
+            storage.parse_iso(after['expires_at']),
+            storage.parse_iso(before['expires_at']),
+        )
 
         banned_code = self.create_code('personal', 1)
         storage.revoke_activation_code(banned_code)
@@ -568,7 +579,27 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         self.assertFalse(banned['ok'])
         self.assertEqual('banned', banned['reason'])
 
-    def test_valid_renewal_can_upgrade_plan(self) -> None:
+    def test_renewal_rejects_an_overoccupied_existing_plan(self) -> None:
+        code = self.create_code('personal', 1)
+        # A malformed/out-of-sync subscription must not be renewed with a
+        # smaller quota than its currently occupied slots.
+        with patch.object(checkout_routes, 'get_activation_code', return_value={
+            'status': 'active',
+            'plan': 'personal',
+            'used_devices': 2,
+        }):
+            refused = checkout_routes.issue_renewal(
+                code,
+                'family',
+                customer='tests',
+                months=1,
+            )
+        self.assertFalse(refused['ok'])
+        self.assertEqual('device_limit_conflict', refused['reason'])
+        self.assertEqual(2, refused['usedDevices'])
+        self.assertEqual(1, refused['maxDevices'])
+
+    def test_renewal_cannot_upgrade_plan_from_untrusted_request(self) -> None:
         code = self.create_code('personal', 1)
         self.register(code=code, device_id='upgrade-device')
         before = storage.get_activation_code(code)
@@ -580,9 +611,10 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         )
         after = storage.get_activation_code(code)
         self.assertTrue(result['ok'])
-        self.assertEqual(5, result['maxDevices'])
-        self.assertEqual('family', after['plan'])
-        self.assertEqual(5, after['max_devices'])
+        self.assertEqual('personal', result['plan'])
+        self.assertEqual(1, result['maxDevices'])
+        self.assertEqual('personal', after['plan'])
+        self.assertEqual(1, after['max_devices'])
         self.assertGreater(
             storage.parse_iso(after['expires_at']),
             storage.parse_iso(before['expires_at']),
