@@ -68,6 +68,7 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
         const val CONFIG_SYNC_POLL_DELAY_MS = 30_000L
         const val CONFIG_SYNC_ACCESS_RETRY_DELAY_MS = 30_000L
         const val TUNNEL_VERIFY_TIMEOUT_MS = 12_000L
+        const val SERVICE_LIVENESS_CHECK_SECONDS = 5L
     }
 
     private val _uiState = MutableStateFlow(
@@ -209,6 +210,25 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                 .put("runtimeRunning", daemonRunning == true)
                 .put("reason", if (daemonRunning == null) "no_service_response" else "service_response"),
         )
+    }
+
+    /**
+     * The UI lives in a different process from the VPN service. A remembered
+     * daemonRunning=true is not proof that Android still has an active core.
+     * If the MMKV liveness pulse expired, ask the core directly before
+     * declaring the tunnel lost. Never stop the VPN just to run this check.
+     */
+    private suspend fun isVpnDaemonResponsive(): Boolean {
+        if (SkryonVpnConnectionIntent.isVpnServiceAlive()) return true
+        val waiter = CompletableDeferred<Boolean>()
+        stateWaiter = waiter
+        requestServiceState()
+        val coreRespondedRunning = try {
+            withTimeoutOrNull(SERVICE_STATE_RECHECK_DELAY_MS) { waiter.await() } == true
+        } finally {
+            if (stateWaiter === waiter) stateWaiter = null
+        }
+        return coreRespondedRunning || SkryonVpnConnectionIntent.isVpnServiceAlive()
     }
 
     private fun scheduleServiceStateRecheck() {
@@ -359,8 +379,10 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                             .put("reason", reason)
                             .put("quality", "failed"),
                     )
+                    val serviceResponsive = isVpnDaemonResponsive()
                     if (shouldRetainVpnAfterProbeFailure(
                             daemonRunning = daemonRunning == true,
+                            serviceHeartbeatAlive = serviceResponsive,
                             userWantsVpn = SkryonVpnConnectionIntent.isArmed(),
                             stopRequested = stopRequested,
                         )
@@ -1264,6 +1286,39 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                                 savedActivationCode().ifBlank { DEFAULT_ACCESS_KEY }
                             },
                         )
+                    }
+                }
+
+                // An Android service process may die without delivering a
+                // STOP broadcast to this UI process. Catch it while Connected,
+                // but do not mistake a failed website for a stopped VPN.
+                val current = _uiState.value
+                if (current.connectionState == VpnConnectionState.Connected &&
+                    current.elapsedSeconds > 0L &&
+                    current.elapsedSeconds % SERVICE_LIVENESS_CHECK_SECONDS == 0L &&
+                    !SkryonVpnConnectionIntent.isVpnServiceAlive()
+                ) {
+                    val responsive = isVpnDaemonResponsive()
+                    if (shouldReportUnexpectedVpnStop(
+                            wasConnected = _uiState.value.connectionState == VpnConnectionState.Connected,
+                            serviceHeartbeatAlive = SkryonVpnConnectionIntent.isVpnServiceAlive(),
+                            coreRespondedRunning = responsive,
+                            userWantsVpn = SkryonVpnConnectionIntent.isArmed(),
+                            stopRequested = stopRequested,
+                        )
+                    ) {
+                        VpnUiDebugLogger.log(
+                            hypothesisId = "H-LIFECYCLE",
+                            location = "VpnMainViewModel.kt:startTimer",
+                            message = "verified tunnel service no longer responds; requesting recovery",
+                            runId = "vpn-lifecycle",
+                            data = JSONObject().put("elapsedSeconds", current.elapsedSeconds),
+                        )
+                        daemonRunning = false
+                        // Leave the signed session to the recovery worker;
+                        // an asynchronous release could revoke a new lease.
+                        setDisconnectedWithError("VPN-сервис перестал отвечать. Восстанавливаем подключение")
+                        return@launch
                     }
                 }
             }
