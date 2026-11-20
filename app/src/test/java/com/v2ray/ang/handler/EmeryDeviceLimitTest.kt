@@ -35,7 +35,11 @@ class EmeryDeviceLimitTest {
         assertFalse(validateDeviceLimit("Личный", devicesUsed = 1, devicesLimit = 2))
         assertFalse(validateDeviceLimit("Личный+", devicesUsed = 1, devicesLimit = 5))
         assertFalse(validateDeviceLimit("Семейный", devicesUsed = 1, devicesLimit = 2))
-        assertFalse(validateDeviceLimit("Личный", devicesUsed = 0, devicesLimit = 1))
+        // A newly activated subscription can legitimately have no registered devices.
+        assertTrue(validateDeviceLimit("Личный", devicesUsed = 0, devicesLimit = 1))
+        assertTrue(validateDeviceLimit("Личный+", devicesUsed = 0, devicesLimit = 2))
+        assertTrue(validateDeviceLimit("Семейный", devicesUsed = 0, devicesLimit = 5))
+        assertFalse(validateDeviceLimit("Личный", devicesUsed = -1, devicesLimit = 1))
         assertFalse(validateDeviceLimit("Личный+", devicesUsed = 3, devicesLimit = 2))
     }
 }

@@ -43,6 +43,18 @@ class UtilsTest {
         assertTrue(Utils.isIpAddress("2001:4321::1"))
         assertTrue(Utils.isIpAddress("240e:1234:abcd:12::6666"))
         assertTrue(Utils.isIpAddress("240e:1234:abcd:12::/64"))
+        assertFalse(Utils.isIpAddress("[::1]:0"))
+        assertFalse(Utils.isIpAddress("[::1]:65536"))
+        assertFalse(Utils.isIpAddress("[::1]:abc"))
+        assertFalse(Utils.isIpAddress("[::1]extra"))
+        assertFalse(Utils.isIpAddress("127.0.0.1:0"))
+        assertFalse(Utils.isIpAddress("127.0.0.1:99999"))
+        assertFalse(Utils.isIpAddress("127.0.0.1/33"))
+        assertFalse(Utils.isIpAddress("2001:db8::1/129"))
+        assertFalse(Utils.isIpAddress("127.0.0.1/24/25"))
+        assertFalse(Utils.isIpAddress("127.0.0.1:80/24"))
+        assertTrue(Utils.isIpAddress("192.168.0.1/32"))
+        assertTrue(Utils.isIpAddress("::1/128"))
     }
 
     @Test
@@ -57,6 +69,15 @@ class UtilsTest {
 
         assertFalse(Utils.isIpInCidr("invalid-ip", "192.168.1.0/24"))
         assertFalse(Utils.isIpInCidr("192.168.1.1", "invalid-cidr"))
+        assertFalse(Utils.isIpInCidr("192.168.1.1", "192.168.1.0/-1"))
+        assertFalse(Utils.isIpInCidr("192.168.1.1", "192.168.1.0/33"))
+        assertFalse(Utils.isIpInCidr("192.168.1.1", "192.168.1.0/not-a-prefix"))
+        assertFalse(Utils.isIpInCidr("192.168.1.1", "192.168.1.0/24/1"))
+        assertFalse(Utils.isIpInCidr("192.168.1.1", "bad.example/24"))
+        assertFalse(Utils.isIpInCidr("::1", "::/0"))
+        assertTrue(Utils.isIpInCidr("10.20.30.40", "0.0.0.0/0"))
+        assertTrue(Utils.isIpInCidr("192.168.1.1", "192.168.1.1/32"))
+        assertFalse(Utils.isIpInCidr("192.168.1.2", "192.168.1.1/32"))
     }
 
 }
