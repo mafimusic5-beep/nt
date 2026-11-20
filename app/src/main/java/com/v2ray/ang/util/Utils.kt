@@ -551,10 +551,7 @@ object Utils {
     fun isGoogleFlavor(): Boolean = BuildConfig.FLAVOR == "playstore"
 
     /**
-     * Converts an InetAddress to its long representation
-     *
-     * @param ip The InetAddress to convert
-     * @return The long representation of the IP address
+     * Convert an already validated IPv4 literal to an unsigned 32-bit value.
      */
     private fun ipv4AddressToLong(ip: String): Long =
         ip.split('.').fold(0L) { result, octet -> (result shl 8) or octet.toLong() }
