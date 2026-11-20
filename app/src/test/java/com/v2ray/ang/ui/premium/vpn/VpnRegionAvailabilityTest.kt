@@ -59,6 +59,15 @@ class VpnRegionAvailabilityTest {
     }
 
     @Test
+    fun `tv connection notice appears only while connecting without an error`() {
+        val connecting = VpnMainUiState(connectionState = VpnConnectionState.Connecting)
+        assertTrue(connecting.connectionNotice.isNotBlank())
+        assertTrue(connecting.copy(locationsError = "Сервер недоступен").connectionNotice.isBlank())
+        assertTrue(connecting.copy(connectionState = VpnConnectionState.Connected).connectionNotice.isBlank())
+        assertTrue(connecting.copy(connectionState = VpnConnectionState.Disconnected).connectionNotice.isBlank())
+    }
+
+    @Test
     fun `manual pin cannot borrow another regions availability`() {
         val state = VpnMainUiState(
             activationKey = "test",
