@@ -3,9 +3,24 @@ package com.v2ray.ang.ui.premium.vpn
 /** A failed traffic probe is not permission to tear down an already running Android TUN. */
 internal fun shouldRetainVpnAfterProbeFailure(
     daemonRunning: Boolean,
+    serviceHeartbeatAlive: Boolean,
     userWantsVpn: Boolean,
     stopRequested: Boolean,
-): Boolean = daemonRunning && userWantsVpn && !stopRequested
+): Boolean = daemonRunning && serviceHeartbeatAlive && userWantsVpn && !stopRequested
+
+/**
+ * Only a missing service heartbeat AND a failed direct core-state query prove
+ * that a previously verified VPN is no longer alive. Never guess from a
+ * failed HTTPS probe or stop a functioning tunnel to check it.
+ */
+internal fun shouldReportUnexpectedVpnStop(
+    wasConnected: Boolean,
+    serviceHeartbeatAlive: Boolean,
+    coreRespondedRunning: Boolean,
+    userWantsVpn: Boolean,
+    stopRequested: Boolean,
+): Boolean = wasConnected && !serviceHeartbeatAlive && !coreRespondedRunning &&
+    userWantsVpn && !stopRequested
 
 /** UI recreation must reuse a surviving Android VPN rather than acquiring another lease. */
 internal fun shouldResumeExistingVpnTunnel(
