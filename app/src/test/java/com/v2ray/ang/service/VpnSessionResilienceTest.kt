@@ -6,6 +6,13 @@ import org.junit.Test
 
 class VpnSessionResilienceTest {
     @Test
+    fun `duplicate start never recreates a live TUN even after network loss`() {
+        assertEquals(true, shouldKeepExistingVpnInterface(interfaceEstablished = true, stopping = false))
+        assertEquals(false, shouldKeepExistingVpnInterface(interfaceEstablished = false, stopping = false))
+        assertEquals(false, shouldKeepExistingVpnInterface(interfaceEstablished = true, stopping = true))
+    }
+
+    @Test
     fun `network interruptions never revoke an active VPN`() {
         for (reason in listOf("network", "timeout", "http_408", "http_429", "http_500", "http_502", "http_503", "http_504")) {
             assertEquals(reason, VpnHeartbeatAction.RETRY, vpnHeartbeatAction(reason))

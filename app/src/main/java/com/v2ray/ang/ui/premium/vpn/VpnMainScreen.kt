@@ -253,7 +253,8 @@ fun VpnMainScreen(
                 enabled = autoConnectEnabled,
                 userRequestedConnection = SkryonVpnConnectionIntent.isArmed(),
                 networkAvailable = physicalLinkAvailable,
-                vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected,
+                vpnAlreadyRunning = uiState.connectionState != VpnConnectionState.Disconnected ||
+                    SkryonVpnConnectionIntent.isVpnServiceAlive(),
             )
         ) {
             automaticRetryAttemptedThisOnlinePeriod = true

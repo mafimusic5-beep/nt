@@ -9,6 +9,12 @@ internal enum class VpnHeartbeatAction {
     STOP,
 }
 
+/** An OS/foreground duplicate START is not a request to recreate a live TUN. */
+internal fun shouldKeepExistingVpnInterface(
+    interfaceEstablished: Boolean,
+    stopping: Boolean,
+): Boolean = interfaceEstablished && !stopping
+
 /**
  * Only a confirmed access/session failure may terminate an active VPN.
  * A 90-second server lease may expire during an outage, so recover through the
