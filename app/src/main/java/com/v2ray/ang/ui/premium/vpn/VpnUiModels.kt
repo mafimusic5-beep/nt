@@ -286,6 +286,17 @@ data class VpnMainUiState(
             return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
         }
 
+    /**
+     * A TV-compatible connection status message. Do not display this alongside
+     * a more specific connection error; TV surfaces locationsError separately.
+     */
+    val connectionNotice: String
+        get() = if (connectionState == VpnConnectionState.Connecting && locationsError.isBlank()) {
+            "Проверяем подключение VPN"
+        } else {
+            ""
+        }
+
     val protectionLabel: String
         get() = when (connectionState) {
             VpnConnectionState.Connected -> "Protected"
