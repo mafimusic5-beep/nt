@@ -21,7 +21,6 @@ import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.security.EmeryDeviceIdentity
 import java.io.IOException
 import java.security.MessageDigest
-import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.URI
 import java.net.URLDecoder
@@ -160,41 +159,49 @@ object Utils {
      * @return True if the string is a valid IP address, false otherwise.
      */
     fun isIpAddress(value: String?): Boolean {
-        if (value.isNullOrEmpty()) return false
+        if (value.isNullOrBlank()) return false
+        val raw = value.trim()
+        val addressParts = raw.split("/")
+        if (addressParts.size !in 1..2) return false
+        val prefixLength = if (addressParts.size == 2) {
+            addressParts[1].toIntOrNull() ?: return false
+        } else null
+        var address = addressParts[0]
+        var hasPort = false
 
-        try {
-            var addr = value.trim()
-            if (addr.isEmpty()) return false
-
-            //CIDR
-            if (addr.contains("/")) {
-                val arr = addr.split("/")
-                if (arr.size == 2 && arr[1].toIntOrNull() != null && arr[1].toInt() > -1) {
-                    addr = arr[0]
-                }
+        if (address.startsWith("[")) {
+            val closingBracket = address.indexOf(']')
+            if (closingBracket <= 1) return false
+            val suffix = address.substring(closingBracket + 1)
+            if (suffix.isNotEmpty()) {
+                if (!suffix.startsWith(":") || !isValidIpPort(suffix.substring(1))) return false
+                hasPort = true
             }
-
-            // Handle IPv4-mapped IPv6 addresses
-            if (addr.startsWith("::ffff:") && '.' in addr) {
-                addr = addr.drop(7)
-            } else if (addr.startsWith("[::ffff:") && '.' in addr) {
-                addr = addr.drop(8).replace("]", "")
-            }
-
-            val octets = addr.split('.')
-            if (octets.size == 4) {
-                if (octets[3].contains(":")) {
-                    addr = addr.substring(0, addr.indexOf(":"))
-                }
-                return isIpv4Address(addr)
-            }
-
-            return isIpv6Address(addr)
-        } catch (e: Exception) {
-            Log.e(AppConfig.TAG, "Failed to validate IP address", e)
+            address = address.substring(1, closingBracket)
+            if (':' !in address) return false
+        } else if (address.count { it == ':' } == 1 && '.' in address) {
+            // IPv4:port, but never confuse the colons in an IPv6 address for a port.
+            val port = address.substringAfter(':')
+            if (!isValidIpPort(port)) return false
+            address = address.substringBefore(':')
+            hasPort = true
+        }
+        // An IP network prefix and a socket port cannot describe the same address.
+        if (hasPort && prefixLength != null) return false
+        if (prefixLength != null && prefixLength !in 0..(if (':' in address) 128 else 32)) {
             return false
         }
+
+        // IPv4-mapped IPv6 literals are valid only when the embedded IPv4 is valid.
+        if (address.startsWith("::ffff:", ignoreCase = true) && '.' in address) {
+            return isIpv4Address(address.substringAfterLast(':'))
+        }
+        return isIpv4Address(address) || isIpv6Address(address)
     }
+
+    private fun isValidIpPort(value: String): Boolean =
+        value.isNotEmpty() && value.all { it in '0'..'9' } &&
+            (value.toIntOrNull() ?: -1) in 1..65535
 
     /**
      * Check if a string is a pure IP address (IPv4 or IPv6).
@@ -549,43 +556,23 @@ object Utils {
      * @param ip The InetAddress to convert
      * @return The long representation of the IP address
      */
-    private fun inetAddressToLong(ip: InetAddress): Long {
-        val bytes = ip.address
-        var result: Long = 0
-        for (i in bytes.indices) {
-            result = result shl 8 or (bytes[i].toInt() and 0xff).toLong()
-        }
-        return result
-    }
+    private fun ipv4AddressToLong(ip: String): Long =
+        ip.split('.').fold(0L) { result, octet -> (result shl 8) or octet.toLong() }
 
     /**
-     * Check if an IP address is within a CIDR range
-     *
-     * @param ip The IP address to check
-     * @param cidr The CIDR notation range (e.g., "192.168.1.0/24")
-     * @return True if the IP is within the CIDR range, false otherwise
+     * Check if an IPv4 address belongs to an IPv4 CIDR range.
+     * Invalid or non-IPv4 input is rejected without DNS lookups or Android-only logging.
      */
     fun isIpInCidr(ip: String, cidr: String): Boolean {
-        try {
-            if (!isIpAddress(ip)) return false
-
-            // Parse CIDR (e.g., "192.168.1.0/24")
-            val (cidrIp, prefixLen) = cidr.split("/")
-            val prefixLength = prefixLen.toInt()
-
-            // Convert IP and CIDR's IP portion to Long
-            val ipLong = inetAddressToLong(InetAddress.getByName(ip))
-            val cidrIpLong = inetAddressToLong(InetAddress.getByName(cidrIp))
-
-            // Calculate subnet mask (e.g., /24 → 0xFFFFFF00)
-            val mask = if (prefixLength == 0) 0L else (-1L shl (32 - prefixLength))
-
-            // Check if they're in the same subnet
-            return (ipLong and mask) == (cidrIpLong and mask)
-        } catch (e: Exception) {
-            Log.e(AppConfig.TAG, "Failed to check if IP is in CIDR", e)
+        val components = cidr.split('/')
+        if (components.size != 2) return false
+        val prefixLength = components[1].toIntOrNull() ?: return false
+        if (prefixLength !in 0..32 || !isIpv4Address(ip) || !isIpv4Address(components[0])) {
             return false
         }
+        val mask = if (prefixLength == 0) 0L
+            else (0xffff_ffffL shl (32 - prefixLength)) and 0xffff_ffffL
+        return (ipv4AddressToLong(ip) and mask) == (ipv4AddressToLong(components[0]) and mask)
     }
 
     /**
