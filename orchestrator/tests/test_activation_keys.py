@@ -10,6 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -577,6 +578,26 @@ class ActivationKeyLifecycleTests(unittest.TestCase):
         )
         self.assertFalse(banned['ok'])
         self.assertEqual('banned', banned['reason'])
+
+    def test_renewal_rejects_an_overoccupied_existing_plan(self) -> None:
+        code = self.create_code('personal', 1)
+        # A malformed/out-of-sync subscription must not be renewed with a
+        # smaller quota than its currently occupied slots.
+        with patch.object(checkout_routes, 'get_activation_code', return_value={
+            'status': 'active',
+            'plan': 'personal',
+            'used_devices': 2,
+        }):
+            refused = checkout_routes.issue_renewal(
+                code,
+                'family',
+                customer='tests',
+                months=1,
+            )
+        self.assertFalse(refused['ok'])
+        self.assertEqual('device_limit_conflict', refused['reason'])
+        self.assertEqual(2, refused['usedDevices'])
+        self.assertEqual(1, refused['maxDevices'])
 
     def test_renewal_cannot_upgrade_plan_from_untrusted_request(self) -> None:
         code = self.create_code('personal', 1)
