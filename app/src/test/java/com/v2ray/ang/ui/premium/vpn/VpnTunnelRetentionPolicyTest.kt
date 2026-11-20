@@ -9,15 +9,41 @@ class VpnTunnelRetentionPolicyTest {
     @Test
     fun temporaryInternetLossKeepsTheEstablishedVpnAndAllowsVerificationRetry() {
         assertTrue(shouldRetainVpnAfterProbeFailure(
-            daemonRunning = true, userWantsVpn = true, stopRequested = false,
+            daemonRunning = true, serviceHeartbeatAlive = true,
+            userWantsVpn = true, stopRequested = false,
+        ))
+    }
+
+    @Test
+    fun staleUiRunningFlagCannotKeepRetryingAfterTheVpnProcessDied() {
+        assertFalse(shouldRetainVpnAfterProbeFailure(
+            daemonRunning = true, serviceHeartbeatAlive = false,
+            userWantsVpn = true, stopRequested = false,
+        ))
+        assertFalse(shouldRetainVpnAfterProbeFailure(
+            daemonRunning = false, serviceHeartbeatAlive = true,
+            userWantsVpn = true, stopRequested = false,
         ))
     }
 
     @Test
     fun manualOffOrActualServiceDeathStopsRetrying() {
-        assertFalse(shouldRetainVpnAfterProbeFailure(true, false, false))
-        assertFalse(shouldRetainVpnAfterProbeFailure(true, true, true))
-        assertFalse(shouldRetainVpnAfterProbeFailure(false, true, false))
+        assertFalse(shouldRetainVpnAfterProbeFailure(true, true, false, false))
+        assertFalse(shouldRetainVpnAfterProbeFailure(true, true, true, true))
+        assertFalse(shouldRetainVpnAfterProbeFailure(false, false, true, false))
+    }
+
+    @Test
+    fun silentCoreDeathIsDetectedButAnUnresponsiveWebsiteIsNotProofOfDeath() {
+        assertTrue(shouldReportUnexpectedVpnStop(
+            wasConnected = true, serviceHeartbeatAlive = false,
+            coreRespondedRunning = false, userWantsVpn = true, stopRequested = false,
+        ))
+        assertFalse(shouldReportUnexpectedVpnStop(true, true, false, true, false))
+        assertFalse(shouldReportUnexpectedVpnStop(true, false, true, true, false))
+        assertFalse(shouldReportUnexpectedVpnStop(true, false, false, false, false))
+        assertFalse(shouldReportUnexpectedVpnStop(true, false, false, true, true))
+        assertFalse(shouldReportUnexpectedVpnStop(false, false, false, true, false))
     }
 
     @Test
