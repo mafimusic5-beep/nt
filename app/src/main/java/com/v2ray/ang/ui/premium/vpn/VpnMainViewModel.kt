@@ -400,7 +400,11 @@ class VpnMainViewModel(application: Application) : AndroidViewModel(application)
                     // permission may end verification. Do not stop a live TUN just
                     // because HTTPS was unreachable on a weak physical network.
                     preserveConnectionFailure = true
-                    setDisconnectedWithError("VPN запущен, но трафик через туннель не проходит")
+                    if (!serviceResponsive) daemonRunning = false
+                    setDisconnectedWithError(
+                        if (serviceResponsive) "VPN запущен, но трафик через туннель не проходит"
+                        else "VPN-сервис перестал отвечать. Восстанавливаем подключение",
+                    )
                     return@launch
                 }
             }
